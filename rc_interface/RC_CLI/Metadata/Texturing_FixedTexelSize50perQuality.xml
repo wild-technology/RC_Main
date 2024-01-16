@@ -1,0 +1,9 @@
+<Configuration id="{54A4029C-DE57-43F6-8F81-75C62E159021}">
+  <entry key="unwrapButtonDisabled" value="0"/>
+  <entry key="unwrapGutter" value="10"/>
+  <entry key="unwrapFixedTexelSizeType" value="1"/>
+  <entry key="unwrapStyle" value="FixedTexelSize"/>
+  <entry key="unwrapFillTextures" value="0x0"/>
+  <entry key="unwrapMaxTexResolution" value="8192"/>
+  <entry key="unwrapLargeTriangleRemovalThr" value="400"/>
+</Configuration>

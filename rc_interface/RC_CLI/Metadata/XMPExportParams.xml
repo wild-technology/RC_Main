@@ -1,0 +1,8 @@
+<Configuration id="{EC40D990-B2AF-42A4-9637-1208A0FD1322}">
+  <entry key="xmpMerge" value="true"/>
+  <entry key="xmpExGps" value="true"/>
+  <entry key="xmpFlags" value="true"/>
+  <entry key="xmpCalibGroups" value="true"/>
+  <entry key="xmpCamera" value="3"/>
+  <entry key="xmpRig" value="true"/>
+</Configuration>
