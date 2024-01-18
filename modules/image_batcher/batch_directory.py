@@ -168,7 +168,7 @@ class BatchDirectory(RCModule):
 
 		return flight_log_info
 
-	def batch_files(self, input_dir, output_dir, files, batch_size, overlap_percent, flight_log_path=None, prefix="default"):
+	def batch_files(self, input_dir, output_dir, files, batch_size, overlap_percent, flight_log_path=None, prefix=None):
 		if not files or len(files) == 0:
 			raise ValueError('Input directory is not specified')
 		if batch_size <= 0:
@@ -192,7 +192,11 @@ class BatchDirectory(RCModule):
 		batches = []
 
 		for i in range(num_batches):
-			batch_folder_dir = os.path.join(output_dir, prefix, 'batch_' + str(i + 1))
+			batch_folder_dir = None
+			if prefix is not None:
+				batch_folder_dir = os.path.join(output_dir, prefix, 'batch_' + str(i + 1))
+			else:
+				batch_folder_dir = os.path.join(output_dir, 'batch_' + str(i + 1))
 
 			start_index, end_index = self.calculate_indices(i, batch_size, overlap_size, files)
 			start_timestamp, end_timestamp, start_file_metadata = self.get_file_metadata(files, start_index, end_index)
@@ -311,7 +315,7 @@ class BatchDirectory(RCModule):
 		else:
 			flight_log_path = os.path.join(self.params['output_dir'].get_value(), "flight_log.csv")
 
-		if not os.path.isfile(flight_log_path) and not 'batch_flight_log_path' in self.params:
+		if not 'batch_flight_log_path' in self.params and not os.path.isfile(flight_log_path):
 			return False, 'Flight log does not exist'
 		# Flight log is optional when not continuing from Georeference Images, set it to None if it doesn't exist
 		elif 'batch_flight_log_path' in self.params:
