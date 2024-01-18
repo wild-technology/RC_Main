@@ -1,7 +1,7 @@
 import sys
-import os
 import logging
 import argparse
+import inquirer
 
 from module_base.parameter import Parameter
 
@@ -26,8 +26,21 @@ def initialize_modules(logger) -> dict[str, RCModule]:
 		'Batch Directory': BatchDirectory(logger)
 	}
 
-	# replace this with a list of enabled modules by asking the user, not necessary for now
-	enabled_modules = available_modules.copy()
+	module_choices = [
+		inquirer.Checkbox(
+			'modules',
+			message='Select modules to enable (arrow keys to move, space to select, enter to confirm)',
+			choices=[module_name for module_name in available_modules.keys()],
+			default=[module_name for module_name in available_modules.keys()],
+			carousel=True
+		)
+	]
+
+	answers = inquirer.prompt(module_choices)
+
+	enabled_modules = {}
+	for module_name in answers['modules']:
+		enabled_modules[module_name] = available_modules[module_name]
 
 	return enabled_modules
 
