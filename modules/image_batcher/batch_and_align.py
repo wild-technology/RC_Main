@@ -146,7 +146,6 @@ def main(argv):
 		return
 
 	if not os.path.isdir(args.output_dir):
-		logger.warning('Output directory does not exist. Creating directory: %s', args.output_dir)
 		os.makedirs(args.output_dir)
 
 	if args.flight_log is not None and not os.path.isfile(args.flight_log):

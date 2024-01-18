@@ -1,0 +1,11 @@
+/.idea
+
+/__pycache__
+/modules/__pycache__
+/modules/extract_images/__pycache__
+/modules/georeference/__pycache__
+/modules/image_batcher/__pycache__
+/modules/realitycapture_interface/__pycache__
+
+/modules/realitycapture_interface/RC_CLI/Errors/errors.txt
+/modules/realitycapture_interface/RC_CLI/Errors/progress.txt
