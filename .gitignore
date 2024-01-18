@@ -1,6 +1,7 @@
 /.idea
 
 /__pycache__
+/module_base/__pycache__
 /modules/__pycache__
 /modules/extract_images/__pycache__
 /modules/georeference/__pycache__
