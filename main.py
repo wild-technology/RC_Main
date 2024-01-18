@@ -20,18 +20,16 @@ def initialize_modules(logger) -> dict[str, RCModule]:
 	"""
 	Initializes the modules and returns a dict of the active modules.
 	"""
-	modules: dict[str, RCModule] = {}
+	available_modules: dict[str, RCModule] = {
+		'Extract Images': ExtractImages(logger),
+		'Georeference Images': GeoreferenceImages(logger),
+		'Batch Directory': BatchDirectory(logger)
+	}
 
-	extract_images_module: ExtractImages = ExtractImages(logger)
-	modules[extract_images_module.get_name()] = extract_images_module
+	# replace this with a list of enabled modules by asking the user, not necessary for now
+	enabled_modules = available_modules.copy()
 
-	georeference_module: GeoreferenceImages = GeoreferenceImages(logger)
-	modules[georeference_module.get_name()] = georeference_module
-
-	batch_directory_module: BatchDirectory = BatchDirectory(logger)
-	modules[batch_directory_module.get_name()] = batch_directory_module
-
-	return modules
+	return enabled_modules
 
 def initialize_parameters(modules) -> dict[str, Parameter]:
 	"""
