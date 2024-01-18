@@ -83,8 +83,16 @@ def parse_arguments(argv, params, logger) -> dict[str, dict[str, object]]:
 	for param in params.values():
 		# if it's not specified in the command line arguments and prompt_user is true, prompt the user for the value
 		if getattr(args, param.cli_long) is None and param.prompt_user:
+			# Try getting the value from the user
 			try:
-				setattr(args, param.cli_long, param.get_type()(input(f'{param.get_description()}: ')))
+				input_value = input(f'{param.get_description()}: ')
+
+				# Special handling for boolean types because all strings will cast to True
+				if param.get_type() == bool:
+					setattr(args, param.cli_long, input_value.lower() in ['true', 't', 'yes', 'y'])
+				else:
+					setattr(args, param.cli_long, param.get_type()(input_value))
+			# Unable to cast the input value to the correct type, set to default value
 			except ValueError:
 				logger.warning(f'Invalid value for {param.get_name()}, using default value: {param.get_default_value()}')
 				setattr(args, param.cli_long, param.get_default_value())
