@@ -10,3 +10,4 @@
 
 /modules/realitycapture_interface/RC_CLI/Errors/errors.txt
 /modules/realitycapture_interface/RC_CLI/Errors/progress.txt
+main.py.lprof

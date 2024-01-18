@@ -82,6 +82,10 @@ class ExtractImages(RCModule):
 		output_frame_duration = timedelta(seconds=1) / output_fps
 		skip_frames = round(video_fps / output_fps)
 
+		# If the video's FPS is less than the desired output FPS, skip every frame
+		if skip_frames < 1:
+			skip_frames = 1
+
 		current_frame_number = 0
 		extracted_count = 0
 
@@ -89,6 +93,10 @@ class ExtractImages(RCModule):
 		bar = self._initialize_loading_bar(cap.get(cv2.CAP_PROP_FRAME_COUNT) // skip_frames, "Extracting Images")
 
 		while cap.isOpened():
+			# Skip to the next frame to extract, saves some time when extracting at a low FPS
+			next_frame_number = current_frame_number + skip_frames
+			cap.set(cv2.CAP_PROP_POS_FRAMES, next_frame_number)
+
 			ret, frame = cap.read()
 			if not ret:
 				break
@@ -112,7 +120,7 @@ class ExtractImages(RCModule):
 			# Save the frame as an image
 			cv2.imwrite(image_path, frame)
 
-			current_frame_number += 1
+			current_frame_number = next_frame_number
 			extracted_count += 1
 
 			self._update_loading_bar(bar, 1)
