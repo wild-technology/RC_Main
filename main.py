@@ -20,12 +20,15 @@ def initialize_modules(logger) -> dict[str, RCModule]:
 	"""
 	Initializes the modules and returns a dict of the active modules.
 	"""
+
+	# the available modules, add new modules here to register them
 	available_modules: dict[str, RCModule] = {
 		'Extract Images': ExtractImages(logger),
 		'Georeference Images': GeoreferenceImages(logger),
 		'Batch Directory': BatchDirectory(logger)
 	}
-
+	
+	# initialize a list of choices for the user to select from
 	module_choices = [
 		inquirer.Checkbox(
 			'modules',
@@ -36,8 +39,10 @@ def initialize_modules(logger) -> dict[str, RCModule]:
 		)
 	]
 
+	# prompt checkbox to select modules
 	answers = inquirer.prompt(module_choices)
 
+	# enable modules based on user selection
 	enabled_modules = {}
 	for module_name in answers['modules']:
 		enabled_modules[module_name] = available_modules[module_name]

@@ -25,11 +25,10 @@ class RCModule:
 
 	def finish(self):
 		for bar in self.loading_bars:
-			bar.refresh()
 			bar.close()
 
 		# Give the loading bars time to refresh
-		time.sleep(0.1)
+		time.sleep(0.2)
 
 	def _initialize_loading_bar(self, total, description):
 		loading_bar = tqdm(total=total, unit='steps', desc=description, leave=True, miniters=1, file=sys.stdout)

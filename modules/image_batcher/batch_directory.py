@@ -3,7 +3,6 @@ from module_base.parameter import Parameter
 
 import os
 import shutil
-from datetime import datetime
 from ..file_metadata_parser import parse_unix_timestamp, parse_frame_number
 
 class BatchDirectory(RCModule):
@@ -315,11 +314,13 @@ class BatchDirectory(RCModule):
 		else:
 			flight_log_path = os.path.join(self.params['output_dir'].get_value(), "flight_log.csv")
 
-		if not 'batch_flight_log_path' in self.params and not os.path.isfile(flight_log_path):
-			return False, 'Flight log does not exist'
-		# Flight log is optional when not continuing from Georeference Images, set it to None if it doesn't exist
-		elif 'batch_flight_log_path' in self.params:
-			self.params['batch_flight_log_path'].set_value(None)
+		if not os.path.isfile(flight_log_path):
+			# if continuing from Georeference Images, flight log is required
+			if not 'batch_flight_log_path' in self.params:
+				return False, 'Flight log does not exist'
+			# if continuing from Extract Images, flight log is optional, set it to none if it doesn't exist
+			elif 'batch_flight_log_path' in self.params:
+				self.params['batch_flight_log_path'].set_value(None)
 
 		# Validate output directory
 		output_dir = os.path.join(self.params['output_dir'].get_value(), 'batched_images')
