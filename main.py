@@ -9,6 +9,7 @@ from module_base.rc_module import RCModule
 from modules.extract_images.extract_images import ExtractImages
 from modules.georeference.georeference_images import GeoreferenceImages
 from modules.image_batcher.batch_directory import BatchDirectory
+from modules.realitycapture_interface.realitycapture_interface import RealityCaptureAlignment
 
 def intialize_logger() -> logging.Logger:
 	logging.basicConfig(level=logging.INFO)
@@ -25,7 +26,8 @@ def initialize_modules(logger) -> dict[str, RCModule]:
 	available_modules: dict[str, RCModule] = {
 		'Extract Images': ExtractImages(logger),
 		'Georeference Images': GeoreferenceImages(logger),
-		'Batch Directory': BatchDirectory(logger)
+		'Batch Directory': BatchDirectory(logger),
+		'RealityCapture Interface': RealityCaptureAlignment(logger)
 	}
 	
 	# initialize a list of choices for the user to select from
@@ -44,8 +46,9 @@ def initialize_modules(logger) -> dict[str, RCModule]:
 
 	# enable modules based on user selection
 	enabled_modules = {}
-	for module_name in answers['modules']:
-		enabled_modules[module_name] = available_modules[module_name]
+	for module_name, module in available_modules.items():
+		if module_name in answers['modules']:
+			enabled_modules[module_name] = module
 
 	return enabled_modules
 

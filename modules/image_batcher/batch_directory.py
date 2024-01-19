@@ -3,7 +3,7 @@ from module_base.parameter import Parameter
 
 import os
 import shutil
-from ..file_metadata_parser import parse_unix_timestamp, parse_frame_number
+from ..file_metadata_parser import parse_timestamp, parse_frame_number
 
 class BatchDirectory(RCModule):
 	def __init__(self, logger):
@@ -56,7 +56,26 @@ class BatchDirectory(RCModule):
 
 		return {**super().get_parameters(), **additional_params}
 
-	def get_image_files(self, input_dir):
+	def __get_input_dir(self):
+		"""
+		Returns the input directory.
+		"""
+		if 'batch_input_image_dir' in self.params:
+			return self.params['batch_input_image_dir'].get_value()
+		else:
+			return os.path.join(self.params['output_dir'].get_value(), "raw_images")
+		
+	def __get_flight_log_path(self):
+		"""
+		Returns the path to the flight log file.
+		"""
+		if 'batch_flight_log_path' in self.params:
+			return self.params['batch_flight_log_path'].get_value()
+		else:
+			return os.path.join(self.params['output_dir'].get_value(), "flight_log.txt")
+
+
+	def __get_image_files(self, input_dir):
 		"""
 		Returns a list of image files from the input directory.
 		"""
@@ -71,14 +90,14 @@ class BatchDirectory(RCModule):
 
 		return files
 
-	def sort_files(self, files):
+	def __sort_files(self, files):
 		"""
-		Sorts files based on unix timestamp, segment start time, and frame number.
+		Sorts files based on unix timestamp and frame number.
 		"""
-		files.sort(key=lambda x: (parse_unix_timestamp(x), parse_frame_number(x)))
+		files.sort(key=lambda x: (parse_timestamp(x), parse_frame_number(x)))
 		return files
 
-	def calculate_batches(self, files, batch_size):
+	def __calculate_batches(self, files, batch_size):
 		"""
 		Calculates the number of batches needed to batch the files.
 		"""
@@ -89,7 +108,7 @@ class BatchDirectory(RCModule):
 
 		return num_batches
 
-	def copy_files(self, input_dir, batch_folder_dir, files):
+	def __copy_files(self, input_dir, batch_folder_dir, files):
 		"""
 		Copies files from the input directory to the batch folder.
 		"""
@@ -99,7 +118,7 @@ class BatchDirectory(RCModule):
 
 			shutil.copy(file_path, output_path)
 
-	def calculate_indices(self, index, batch_size, overlap_size, files):
+	def __calculate_indices(self, index, batch_size, overlap_size, files):
 		"""
 		Calculates the start and end indices for a batch.
 		"""
@@ -108,24 +127,13 @@ class BatchDirectory(RCModule):
 
 		return start_index, end_index
 
-	def get_file_metadata(self, files, start_index, end_index):
-		"""
-		Returns the file metadata for a batch.
-		"""
-		start_timestamp = parse_unix_timestamp(files[start_index]).strftime("%Y%m%dT%H%M%SZ")
-		end_timestamp = parse_unix_timestamp(files[end_index]).strftime("%Y%m%dT%H%M%SZ")
-
-		start_file_metadata = files[start_index][len(start_timestamp) - 1:]
-
-		return start_timestamp, end_timestamp, start_file_metadata
-
-	def get_batch_files(self, files, start_index, end_index):
+	def __get_batch_files(self, files, start_index, end_index):
 		"""
 		Returns the files for a batch.
 		"""
 		return files[start_index:end_index]
 
-	def create_batch_folder(self, input_dir, batch_folder_dir, files):
+	def __create_batch_folder(self, input_dir, batch_folder_dir, files):
 		"""
 		Creates a batch folder and copies files from the input directory to the batch folder.
 		If the batch folder already exists, asks the user for confirmation to overwrite.
@@ -141,9 +149,9 @@ class BatchDirectory(RCModule):
 				shutil.rmtree(batch_folder_dir)
 			
 		os.makedirs(batch_folder_dir)
-		self.copy_files(input_dir, batch_folder_dir, files)
+		self.__copy_files(input_dir, batch_folder_dir, files)
 
-	def get_flight_log_info(self, flight_log_path, files):
+	def __get_flight_log_info(self, flight_log_path, files):
 		"""
 		Returns the flight log info (Dictionary of image path: flight log info).
 		"""
@@ -167,7 +175,7 @@ class BatchDirectory(RCModule):
 
 		return flight_log_info
 
-	def batch_files(self, input_dir, output_dir, files, batch_size, overlap_percent, flight_log_path=None, prefix=None):
+	def __batch_files(self, input_dir, output_dir, files, batch_size, overlap_percent, flight_log_path=None, prefix=None):
 		if not files or len(files) == 0:
 			raise ValueError('Input directory is not specified')
 		if batch_size <= 0:
@@ -177,18 +185,16 @@ class BatchDirectory(RCModule):
 		if flight_log_path is not None and not os.path.isfile(flight_log_path):
 			raise ValueError('Flight log path is not a valid file')
 		
-		files = self.sort_files(files)
+		files = self.__sort_files(files)
 
-		num_batches = self.calculate_batches(files, batch_size)
+		num_batches = self.__calculate_batches(files, batch_size)
 		overlap_size = int(batch_size * overlap_percent / 100)
 
 		flight_log_info = None
 		if flight_log_path is not None:
-			flight_log_info = self.get_flight_log_info(flight_log_path, files)
+			flight_log_info = self.__get_flight_log_info(flight_log_path, files)
 
 		bar = self._initialize_loading_bar(num_batches, 'Batching Images')
-
-		batches = []
 
 		for i in range(num_batches):
 			batch_folder_dir = None
@@ -197,11 +203,10 @@ class BatchDirectory(RCModule):
 			else:
 				batch_folder_dir = os.path.join(output_dir, 'batch_' + str(i + 1))
 
-			start_index, end_index = self.calculate_indices(i, batch_size, overlap_size, files)
-			start_timestamp, end_timestamp, start_file_metadata = self.get_file_metadata(files, start_index, end_index)
-			batch_files = self.get_batch_files(files, start_index, end_index)
+			start_index, end_index = self.__calculate_indices(i, batch_size, overlap_size, files)
+			batch_files = self.__get_batch_files(files, start_index, end_index)
 
-			self.create_batch_folder(input_dir, batch_folder_dir, batch_files)
+			self.__create_batch_folder(input_dir, batch_folder_dir, batch_files)
 			self._update_loading_bar(bar, 1)
 
 			if flight_log_info is not None:
@@ -213,11 +218,6 @@ class BatchDirectory(RCModule):
 						batch_flight_log_file.write(flight_log_info[file])
 
 				batch_flight_log_file.close()
-
-			# add batch info to batches list for later use
-			batches.append([batch_folder_dir, start_timestamp, end_timestamp, start_file_metadata])
-
-		return batches
 
 	"""
 	Don't think this is needed anymore, but keeping it just in case. This method allows you to batch multiple folders at once.
@@ -234,7 +234,7 @@ class BatchDirectory(RCModule):
 		return batches
 	"""
 
-	def batch_folder(self, input_dir, output_dir, batch_size, overlap_percent, flight_log_path=None):
+	def __batch_folder(self, input_dir, output_dir, batch_size, overlap_percent, flight_log_path=None):
 		"""
 		Creates a batch folder and copies files from the input directory to the batch folder.
 		Validates the inputs before proceeding.
@@ -243,9 +243,9 @@ class BatchDirectory(RCModule):
 		if not input_dir or not os.path.isdir(input_dir):
 			raise ValueError('Input directory is not specified or is invalid')
 
-		files = self.get_image_files(input_dir)
+		files = self.__get_image_files(input_dir)
 
-		return self.batch_files(input_dir, output_dir, files, batch_size, overlap_percent, flight_log_path)
+		return self.__batch_files(input_dir, output_dir, files, batch_size, overlap_percent, flight_log_path)
 	
 	def run(self):
 		# Validate parameters
@@ -259,22 +259,11 @@ class BatchDirectory(RCModule):
 		overlap_percent = self.params['batch_overlap_percent'].get_value()
 		output_dir = os.path.join(self.params['output_dir'].get_value(), 'batched_images')
 
-		# Input directory is not specified if continuing from Extract Images, use it's output in that case
-		input_dir = None
-		if 'batch_input_image_dir' in self.params:
-			input_dir = self.params['batch_input_image_dir'].get_value()
-		else:
-			input_dir = os.path.join(self.params['output_dir'].get_value(), "raw_images")
-
-		# Flight log path is not specified if continuing from Georeference Images, use it's output in that case
-		flight_log_path = None
-		if 'batch_flight_log_path' in self.params:
-			flight_log_path = self.params['batch_flight_log_path'].get_value()
-		else:
-			flight_log_path = os.path.join(self.params['output_dir'].get_value(), "flight_log.csv")
+		input_dir = self.__get_input_dir()
+		flight_log_path = self.__get_flight_log_path()
 
 		# Process folder
-		self.batch_folder(input_dir, output_dir, batch_size, overlap_percent, flight_log_path)
+		self.__batch_folder(input_dir, output_dir, batch_size, overlap_percent, flight_log_path)
 
 	def validate_parameters(self) -> (bool, str):
 		success, message = super().validate_parameters()
@@ -298,23 +287,15 @@ class BatchDirectory(RCModule):
 			return False, 'Overlap percent is invalid'
 		
 		# Validate input directory
-		input_dir = None
-		if 'batch_input_image_dir' in self.params:
-			input_dir = self.params['batch_input_image_dir'].get_value()
-		else:
-			input_dir = os.path.join(self.params['output_dir'].get_value(), "raw_images")
+		input_dir = self.__get_input_dir()
 
 		if not os.path.isdir(input_dir):
 			return False, 'Input directory does not exist'
 		
 		# Validate flight log
-		flight_log_path = None
-		if 'batch_flight_log_path' in self.params:
-			flight_log_path = self.params['batch_flight_log_path'].get_value()
-		else:
-			flight_log_path = os.path.join(self.params['output_dir'].get_value(), "flight_log.csv")
+		flight_log_path = self.__get_flight_log_path()
 
-		if not os.path.isfile(flight_log_path):
+		if not flight_log_path is None and not os.path.isfile(flight_log_path):
 			# if continuing from Georeference Images, flight log is required
 			if not 'batch_flight_log_path' in self.params:
 				return False, 'Flight log does not exist'

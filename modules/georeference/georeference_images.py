@@ -2,6 +2,7 @@ import os
 import csv
 from datetime import datetime
 import time
+from ..file_metadata_parser import parse_timestamp
 
 from module_base.rc_module import RCModule
 from module_base.parameter import Parameter
@@ -47,7 +48,7 @@ class GeoreferenceImages(RCModule):
 		
 		# Get parameters
 		flight_log = self.params['geo_input_flight_log'].get_value()
-		output_path = os.path.join(self.params['output_dir'].get_value(), "flight_log.csv")
+		output_path = os.path.join(self.params['output_dir'].get_value(), "flight_log.txt")
 
 		# Input directory is not specified if continuing from Extract Images, use it's output in that case
 		input_dir = None
@@ -87,8 +88,7 @@ class GeoreferenceImages(RCModule):
 		for image_file in image_files:
 			try:
 				# Assuming filenames are in the format 'P001C0019_20231023212955.heif'
-				timestamp_str = image_file.split('_')[1].split('.')[0]
-				image_timestamp = datetime.strptime(timestamp_str, "%Y%m%d%H%M%S")
+				image_timestamp = parse_timestamp(image_file)
 
 				image_data.append({
 					"FILENAME": image_file,
