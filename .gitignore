@@ -1,6 +1,7 @@
 /.idea
-
 /__pycache__
+/.vscode
+
 /module_base/__pycache__
 /modules/__pycache__
 /modules/extract_images/__pycache__
