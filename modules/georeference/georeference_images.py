@@ -8,6 +8,8 @@ from module_base.rc_module import RCModule
 from module_base.parameter import Parameter
 
 class GeoreferenceImages(RCModule):
+	IMAGE_FILE_EXTENSIONS = (".png", ".heif", ".jpg", ".jpeg") # Add more extensions if needed
+
 	def __init__(self, logger):
 		super().__init__("Georeference Images", logger)
 
@@ -37,6 +39,79 @@ class GeoreferenceImages(RCModule):
 
 		return {**super().get_parameters(), **additional_params}
 	
+	def __read_tsv_file(self, tsv_path) -> list[dict]:
+		data_rows = []
+
+		try:
+			with open(tsv_path, "r") as tsvfile:
+				reader = csv.reader(tsvfile, delimiter='\t')
+
+				for row in reader:
+					try:
+						data_rows.append({
+							"TIME": datetime.fromisoformat(row[0]),
+							"LAT": row[1],
+							"LONG": row[2],
+							"DEPTH": row[3]
+						})
+					except Exception as e:
+						raise Exception(f"Error reading data from TSV file: {e}")
+		except Exception as e:
+			raise Exception(f"Error opening TSV file: {e}")
+		
+		return data_rows
+	
+	def __get_image_filenames(self, image_dir) -> list[str]:
+		image_files = []
+
+		try:
+			image_files = [filename for filename in os.listdir(image_dir) if filename.endswith(self.IMAGE_FILE_EXTENSIONS)]
+		except Exception as e:
+			raise Exception(f"Error reading image files: {e}")
+		
+		return image_files
+	
+	def __extract_image_data(self, image_file) -> dict:
+		image_data = {}
+
+		try:
+			image_data = {
+				"FILENAME": image_file,
+				"TIMESTAMP": parse_timestamp(image_file)
+			}
+		except Exception as e:
+			raise Exception(f"Error processing filenames: {e}")
+		
+		return image_data
+	
+	def __match_timestamps(self, image_data, data_rows) -> list[dict]:
+		matches = []
+
+		try:
+			for image in image_data:
+				closest_match = min(data_rows, key=lambda row: abs(row["TIME"] - image["TIMESTAMP"]))
+				image["LAT_EST"] = closest_match["LAT"]
+				image["LONG_EST"] = closest_match["LONG"]
+				image["ALTITUDE_EST"] = closest_match["DEPTH"]
+				matches.append(image)
+		except Exception as e:
+			raise Exception(f"Error matching timestamps: {e}")
+		
+		return matches
+	
+	def __generate_flight_log(self, image_data, output_path):
+		unique_locations = set()
+
+		try:
+			with open(output_path, "w") as f:
+				for image in image_data:
+					line = "{};{};{};{}".format(image["FILENAME"], image["LAT_EST"], image["LONG_EST"], image["ALTITUDE_EST"])
+					if line not in unique_locations:
+						f.write(line + "\n")
+						unique_locations.add(line)
+		except Exception as e:
+			raise Exception(f"Error writing to flight log file: {e}")
+
 	def run(self):
 		# Validate parameters
 		success, message = self.validate_parameters()
@@ -57,70 +132,28 @@ class GeoreferenceImages(RCModule):
 		else:
 			input_dir = os.path.join(self.params['output_dir'].get_value(), "raw_images")
 		
-		# Read TSV file and extract data
-		data_rows = []
-		try:
-			with open(flight_log, "r") as tsvfile:
-				reader = csv.reader(tsvfile, delimiter='\t')
-
-				for row in reader:
-					try:
-						data_rows.append({
-							"TIME": datetime.fromisoformat(row[0]),
-							"LAT": row[1],
-							"LONG": row[2],
-							"DEPTH": row[3]
-						})
-					except Exception as e:
-						raise Exception(f"Error reading data from TSV file: {e}")
-		except Exception as e:
-			raise Exception(f"Error opening TSV file: {e}")
+		data_rows = self.__read_tsv_file(flight_log)
 		
 		# This usually runs faster than the loading bar can initialize, so sleep to make sure it updates
 		time.sleep(0.1)
 		self._update_loading_bar(bar, 1)
 
 		# Process image files
-		image_files = [filename for filename in os.listdir(input_dir) if filename.endswith((".png", ".heif", ".jpg", ".jpeg"))] # Add more extensions if needed
+		image_files = self.__get_image_filenames(input_dir)
 
 		# Extract timestamp from image filenames and match with data
-		image_data = []
+		raw_image_data = []
 		for image_file in image_files:
-			try:
-				# Assuming filenames are in the format 'P001C0019_20231023212955.heif'
-				image_timestamp = parse_timestamp(image_file)
-
-				image_data.append({
-					"FILENAME": image_file,
-					"TIMESTAMP": image_timestamp
-				})
-			except Exception as e:
-				raise Exception(f"Error processing filenames: {e}")
+			raw_image_data.append(self.__extract_image_data(image_file))
 			
 		time.sleep(0.1)
 		self._update_loading_bar(bar, 1)
 
 		# Compare timestamps and estimate locations
-		matches = 0
-		reference_depth = 0  # Mean sea level
-		for image in image_data:
-			closest_match = min(data_rows, key=lambda row: abs(row["TIME"] - image["TIMESTAMP"]))
-			image["LAT_EST"] = closest_match["LAT"]
-			image["LONG_EST"] = closest_match["LONG"]
-			image["ALTITUDE_EST"] = reference_depth - float(closest_match["DEPTH"])
-			matches += 1
+		matched_image_data = self.__match_timestamps(raw_image_data, data_rows)
 
 		# Generate flight log file
-		unique_locations = set()
-		try:
-			with open(output_path, "w") as f:
-				for image in image_data:
-					line = "{};{};{};{}".format(image["FILENAME"], image["LAT_EST"], image["LONG_EST"], image["ALTITUDE_EST"])
-					if line not in unique_locations:
-						f.write(line + "\n")
-						unique_locations.add(line)
-		except Exception as e:
-			raise Exception(f"Error writing to flight log file: {e}")
+		self.__generate_flight_log(matched_image_data, output_path)
 		
 		time.sleep(0.1)
 		self._update_loading_bar(bar, 1)
