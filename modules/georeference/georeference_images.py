@@ -158,6 +158,10 @@ class GeoreferenceImages(RCModule):
 		time.sleep(0.1)
 		self._update_loading_bar(bar, 1)
 
+		self.logger.info(f"Input Log Rows Extracted: {len(data_rows)}")
+		self.logger.info(f"Images Examined: {len(image_files)}")
+		self.logger.info(f"Images Matched: {len(matched_image_data)}")
+
 	def validate_parameters(self) -> (bool, str):
 		success, message = super().validate_parameters()
 		if not success:
