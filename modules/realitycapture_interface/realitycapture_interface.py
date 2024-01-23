@@ -70,12 +70,18 @@ class RealityCaptureAlignment(RCModule):
 		"""
 		Returns the path to the flight log file.
 		"""
-		output_dir = self.params['output_dir'].get_value()
-
-		if batch_path is None:
-			return os.path.join(output_dir, "flight_log.txt")
-		else:
+		
+		# if batch_path is specified that means we are using batched images, so use the batched flight log
+		# if it isn't specified, we are using a single folder of images, so we need to return the overall flight log
+		if batch_path is not None:
 			return os.path.join(batch_path, "flight_log.txt")
+		
+		# Geo module will output flight log to the output directory only if the extract images module is active
+		# Otherwise it will output to the geo_input_image_dir directory
+		if 'geo_input_image_dir' in self.params:
+			return os.path.join(self.params['geo_input_image_dir'].get_value(), "flight_log.txt")
+		else:
+			return os.path.join(self.params['output_dir'].get_value(), "flight_log.txt")
 
 	def __align_images(self, input_folder, output_folder, component_file_name, flight_log_path, flight_log_params_path, display_output=False):
 		"""

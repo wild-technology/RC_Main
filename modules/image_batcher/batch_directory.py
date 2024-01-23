@@ -72,7 +72,12 @@ class BatchDirectory(RCModule):
 		if 'batch_flight_log_path' in self.params:
 			return self.params['batch_flight_log_path'].get_value()
 		else:
-			return os.path.join(self.params['output_dir'].get_value(), "flight_log.txt")
+			# Geo module will output flight log to the output directory only if the extract images module is active
+			# Otherwise it will output to the geo_input_image_dir directory
+			if 'geo_input_image_dir' in self.params:
+				return os.path.join(self.params['geo_input_image_dir'].get_value(), "flight_log.txt")
+			else:
+				return os.path.join(self.params['output_dir'].get_value(), "flight_log.txt")
 
 
 	def __get_image_files(self, input_dir):
