@@ -111,34 +111,10 @@ class GeoreferenceImages(RCModule):
 						unique_locations.add(line)
 		except Exception as e:
 			raise Exception(f"Error writing to flight log file: {e}")
-
-	def run(self):
-		# Validate parameters
-		success, message = self.validate_parameters()
-		if not success:
-			self.logger.error(message)
-			return
 		
+	def __georeference_images(self, input_dir, output_path, flight_log) -> dict[str, any]:
 		bar = self._initialize_loading_bar(3, "Georeferencing Images")
-		
-		# Get parameters
-		flight_log = self.params['geo_input_flight_log'].get_value()
 
-		# If not continuing from Extract Images, set output directory to image directory
-		# Otherwise, set output directory to the global output directory
-		output_path = None
-		if 'geo_input_image_dir' in self.params:
-			output_path = os.path.join(self.params['geo_input_image_dir'].get_value(), "flight_log.txt")
-		else:
-			output_path = os.path.join(self.params['output_dir'].get_value(), "flight_log.txt")
-
-		# Input directory is not specified if continuing from Extract Images, use it's output in that case
-		input_dir = None
-		if 'geo_input_image_dir' in self.params:
-			input_dir = self.params['geo_input_image_dir'].get_value()
-		else:
-			input_dir = os.path.join(self.params['output_dir'].get_value(), "raw_images")
-		
 		data_rows = self.__read_tsv_file(flight_log)
 		
 		# This usually runs faster than the loading bar can initialize, so sleep to make sure it updates
@@ -165,9 +141,52 @@ class GeoreferenceImages(RCModule):
 		time.sleep(0.1)
 		self._update_loading_bar(bar, 1)
 
-		self.logger.info(f"Input Log Rows Extracted: {len(data_rows)}")
-		self.logger.info(f"Images Examined: {len(image_files)}")
-		self.logger.info(f"Images Matched: {len(matched_image_data)}")
+		output_data = {}
+		output_data['Success'] = True
+		output_data['Input Log Rows Extracted'] = len(data_rows)
+		output_data['Input Image Count'] = len(image_files)
+		output_data['Matched Image Count'] = len(matched_image_data)
+		output_data['Output Flight Log'] = output_path
+
+		return output_data
+
+	def run(self):
+		# Validate parameters
+		success, message = self.validate_parameters()
+		if not success:
+			self.logger.error(message)
+			return {"Success": False}
+		
+		# Get parameters
+		flight_log = self.params['geo_input_flight_log'].get_value()
+
+		# If not continuing from Extract Images, set output directory to image directory
+		# Otherwise, set output directory to the global output directory
+		output_path = None
+		if 'geo_input_image_dir' in self.params:
+			output_path = os.path.join(self.params['geo_input_image_dir'].get_value(), "flight_log.txt")
+		else:
+			output_path = os.path.join(self.params['output_dir'].get_value(), "flight_log.txt")
+
+		# Input directory is not specified if continuing from Extract Images, use it's output in that case
+		input_dir = None
+		if 'geo_input_image_dir' in self.params:
+			input_dir = self.params['geo_input_image_dir'].get_value()
+		else:
+			input_dir = os.path.join(self.params['output_dir'].get_value(), "raw_images")
+
+		overall_output_data = self.__georeference_images(input_dir, output_path, flight_log)
+
+		if overall_output_data['Success']:
+			num_data_rows = overall_output_data['Input Log Rows Extracted']
+			num_image_files = overall_output_data['Input Image Count']
+			num_matched_image_data = overall_output_data['Matched Image Count']
+
+			self.logger.info(f"Input Log Rows Extracted: {num_data_rows}")
+			self.logger.info(f"Images Examined: {num_image_files}")
+			self.logger.info(f"Images Matched: {num_matched_image_data}")
+		
+		return overall_output_data
 
 	def validate_parameters(self) -> (bool, str):
 		success, message = super().validate_parameters()

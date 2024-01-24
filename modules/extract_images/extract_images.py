@@ -46,12 +46,15 @@ class ExtractImages(RCModule):
 		
 		return video_timestamp
 	
-	def __extract_video(self, video_path, output_folder, output_fpm):
+	def __extract_video(self, video_path, output_folder, output_fpm) -> dict[str, any]:
+		output_data = {}
+
 		# Attempt to open video file
 		cap = cv2.VideoCapture(video_path)
 		if not cap.isOpened():
 			self.logger.error("Video file could not be opened")
-			return
+			output_data['success'] = False
+			return output_data
 		
 		# Get the video's timestamp
 		video_timestamp_str = self.__get_video_timestamp(video_path)
@@ -68,6 +71,7 @@ class ExtractImages(RCModule):
 		video_filename = os.path.splitext(os.path.basename(video_path))[0]
 		
 		# Video's original FPS
+		video_frame_count = round(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 		video_fps = cap.get(cv2.CAP_PROP_FPS)
 
 		# Calculate how many frames to skip to get the desired output FPS
@@ -120,6 +124,13 @@ class ExtractImages(RCModule):
 
 		cap.release()
 
+		output_data['Success'] = True
+		output_data['Input Frame Count'] = video_frame_count
+		output_data['Extracted Frame Count'] = extracted_count
+		output_data['Input FPM'] = round(video_fps * 60, 1)
+
+		return output_data
+
 	def run(self):
 		# Validate parameters
 		success, message = self.validate_parameters()
@@ -128,30 +139,53 @@ class ExtractImages(RCModule):
 			return
 		
 		# Get parameters
-		input_video = self.params['image_input_video'].get_value()
+		input_path = self.params['image_input_video'].get_value()
 		output_folder = os.path.join(self.params['output_dir'].get_value(), 'raw_images')
 		output_fpm = self.params['image_output_fpm'].get_value()
 
 		mov_files = []
 
-		if os.path.isfile(input_video):
-			# Process the specified .mov file
+		if os.path.isfile(input_path):
+			# One .MOV file was specified
+			# Separate the filename from the path, and add it to the list of .MOV files
+			input_video = os.path.basename(input_path)
 			mov_files.append(input_video)
+
+			# Set the input path to the directory of the .MOV file
+			input_path = os.path.dirname(input_path)
 		else:
-			# Process all .mov files in the input directory
-			mov_files = [filename for filename in os.listdir(input_video) if os.path.splitext(filename)[1].lower() == ".mov"]
+			# A directory of .MOV files was specified
+			mov_files = [filename for filename in os.listdir(input_path) if os.path.splitext(filename)[1].lower() == ".mov"]
 
 		bar = self._initialize_loading_bar(len(mov_files), "Extracting Videos")
 
+		overall_output_data = {}
+		overall_output_data['Success'] = False
+		overall_output_data['Total Input Frame Count'] = 0
+		overall_output_data['Total Extracted Frame Count'] = 0
+		overall_output_data['Output FPM'] = output_fpm
+		overall_output_data['Number of Videos'] = len(mov_files)
+		overall_output_data['Videos'] = {}
+
 		for mov_file in mov_files:
-			mov_path = os.path.join(input_video, mov_file)
+			mov_path = os.path.join(input_path, mov_file)
 			file_extension = os.path.splitext(mov_path)[1].lower()
 
 			if not os.path.isfile(mov_path) or file_extension != '.mov':
 				continue
 
-			self.__extract_video(mov_path, output_folder, output_fpm)
+			individual_output_data = self.__extract_video(mov_path, output_folder, output_fpm)
 			self._update_loading_bar(bar, 1)
+
+			if individual_output_data['Success'] == True:
+				overall_output_data['Success'] = True
+				overall_output_data['Total Input Frame Count'] += individual_output_data['Input Frame Count']
+				overall_output_data['Total Extracted Frame Count'] += individual_output_data['Extracted Frame Count']
+				overall_output_data['Videos'][mov_file] = individual_output_data
+			else:
+				self.logger.error(f'Failed to extract video: {mov_file}')
+
+		return overall_output_data
 
 	def validate_parameters(self) -> (bool, str):
 		success, message = super().validate_parameters()

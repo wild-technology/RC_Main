@@ -130,6 +130,22 @@ def update_parameters(params, modules) -> None:
 	for module in modules.values():
 		module.set_params(params)
 
+def log_output_data(logger, output_data, num_spaces=0) -> None:
+	"""
+	Logs output data in the format:
+		Data Name: Data Value
+
+	Can also handle dictionary values.
+	"""
+	for data_name, data_value in output_data.items():
+		spaces = '  ' * num_spaces
+
+		if isinstance(data_value, dict):
+			logger.info(f'{spaces}{data_name}:')
+			log_output_data(logger, data_value, num_spaces + 1)
+		else:
+			logger.info(f'{spaces}{data_name}: {data_value}')
+
 def main(argv):
 	# Initialize logger and modules
 	logger = intialize_logger()
@@ -145,6 +161,8 @@ def main(argv):
 	for param_name, param in params.items():
 		logger.info(f'{param_name} ({param.cli_short}): {param.get_value()}')
 
+	overall_output_data = {}
+
 	# Run modules
 	for index, module in enumerate(modules.values()):
 		success, message = module.validate_parameters()
@@ -154,13 +172,24 @@ def main(argv):
 			return
 		
 		logger.info(f'Running module: {module.get_name()}')
-		module.run()
+		module_output_data = module.run()
 		module.finish()
 		logger.info(f'Finished running module: {module.get_name()}')
+		
+		if module_output_data is not None and "Success" in module_output_data:
+			logger.info(f'Success: {module_output_data["Success"]}')
+		else:
+			logger.info(f'Success: {success}')
+
+		overall_output_data[module.get_name()] = module_output_data
 
 		# if continue_automatically is false and it's not the last module, wait for user input
 		if not params["continue_automatically"].get_value() and index != len(modules) - 1:
 			input("Press enter to continue...")
+
+	# Log output data
+	logger.info("Output Data:")
+	log_output_data(logger, overall_output_data)
 
 if __name__ == '__main__':
 	main(sys.argv)

@@ -224,6 +224,16 @@ class BatchDirectory(RCModule):
 
 				batch_flight_log_file.close()
 
+		output_data = {}
+		output_data['Success'] = True
+		output_data['Number of Batches'] = num_batches
+		output_data['Batch Size'] = batch_size
+		output_data['Overlap Percent'] = f"{str(overlap_percent)}%"
+		output_data['Total Image Count'] = len(files)
+		output_data['Output Directory'] = output_dir
+
+		return output_data
+
 	"""
 	Don't think this is needed anymore, but keeping it just in case. This method allows you to batch multiple folders at once.
 	def batch_file_dict(self, input_dir, output_dir, file_dict, batch_size, overlap_percent, flight_log_path=None):
@@ -246,18 +256,23 @@ class BatchDirectory(RCModule):
 		"""
 
 		if not input_dir or not os.path.isdir(input_dir):
-			raise ValueError('Input directory is not specified or is invalid')
+			self.logger.error('Input directory is not specified or is invalid')
+			return {'Success': False}
 
 		files = self.__get_image_files(input_dir)
 
-		return self.__batch_files(input_dir, output_dir, files, batch_size, overlap_percent, flight_log_path)
+		try:
+			return self.__batch_files(input_dir, output_dir, files, batch_size, overlap_percent, flight_log_path)
+		except ValueError as e:
+			self.logger.error(e)
+			return {'Success': False}
 	
 	def run(self):
 		# Validate parameters
 		success, message = self.validate_parameters()
 		if not success:
 			self.logger.error(message)
-			return
+			return {'Success': False}
 		
 		# Get parameters
 		batch_size = self.params['batch_batch_size'].get_value()
@@ -268,7 +283,7 @@ class BatchDirectory(RCModule):
 		flight_log_path = self.__get_flight_log_path()
 
 		# Process folder
-		self.__batch_folder(input_dir, output_dir, batch_size, overlap_percent, flight_log_path)
+		return self.__batch_folder(input_dir, output_dir, batch_size, overlap_percent, flight_log_path)
 
 	def validate_parameters(self) -> (bool, str):
 		success, message = super().validate_parameters()

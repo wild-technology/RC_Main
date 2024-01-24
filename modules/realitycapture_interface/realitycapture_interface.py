@@ -90,7 +90,7 @@ class RealityCaptureAlignment(RCModule):
 
 		if not os.path.isdir(input_folder):
 			self.logger.error("Input folder does not exist")
-			return
+			return {'Success': False}
 		
 		if not os.path.isdir(output_folder):
 			self.logger.info("Output folder does not exist. Creating folder: %s", output_folder)
@@ -121,30 +121,37 @@ class RealityCaptureAlignment(RCModule):
 			time.sleep(1)
 
 		generated_component_files = [f for f in os.listdir(output_folder) if f.startswith("Component") and f.endswith(".rcalign")]
+		component_path_base = os.path.join(output_folder, component_file_name)
 
-		corrected_component_path = os.path.join(output_folder, component_file_name)
-
-		if os.path.exists(corrected_component_path):
-			self.logger.warning('Component "%s" already exists. Overwrite? (y/n)', corrected_component_path)
-			overwrite = input()
-
-			if overwrite.lower() != 'y':
-				self.logger.warning('Component not created')
-
-				for generated_component_file in generated_component_files:
-					generated_component_path = os.path.join(output_folder, generated_component_file)
-					os.remove(generated_component_path)
-				
-				return
-			else:
-				os.remove(corrected_component_path)
+		outputted_component_count = 0
 
 		if not generated_component_files or len(generated_component_files) == 0:
 			self.logger.error("Error in component creation")
-			return
-		
-		generated_component_path = os.path.join(output_folder, generated_component_files[0])
-		os.rename(generated_component_path, corrected_component_path)
+			return {'Success': False}
+
+		# use index for loop so we can index the name
+		for index, generated_component_file in enumerate(generated_component_files):
+			generated_component_path = os.path.join(output_folder, generated_component_file)
+			component_path = f"{component_path_base}_{index}.rcalign"
+
+			if os.path.exists(component_path):
+				self.logger.warning('Component "%s" already exists. Overwrite? (y/n)', component_path)
+				overwrite = input()
+
+				if overwrite.lower() != 'y':
+					self.logger.warning('Component not created')
+					os.remove(generated_component_path)
+					continue
+				else:
+					os.remove(component_path)
+				
+			os.rename(generated_component_path, component_path)
+			outputted_component_count += 1
+
+		output_data = {}
+		output_data['Success'] = True
+		output_data['Component Count'] = outputted_component_count
+		return output_data
 
 	def __get_component_file_name(self, image_folder):
 		"""
@@ -178,11 +185,15 @@ class RealityCaptureAlignment(RCModule):
 		success, message = self.validate_parameters()
 		if not success:
 			self.logger.error(message)
-			return
+			return {'Success': False}
 		
 		output_dir = os.path.join(self.params['output_dir'].get_value(), "aligned_components")
 		flight_log_params_path = self.params['rc_flight_log_params'].get_value()
 		display_output = self.params['rc_display_output'].get_value()
+
+		output_data = {}
+		output_data['Success'] = True
+		output_data['Output Directory'] = output_dir
 
 		# rc_input_image_dir is only specified if not using batched images
 		# single folder input
@@ -190,7 +201,9 @@ class RealityCaptureAlignment(RCModule):
 			input_folder = self.params['rc_input_image_dir'].get_value()
 			overall_flight_log_path = self.__get_flight_log_path()
 			component_file_name = self.__get_component_file_name(input_folder)
-			self.__align_images(input_folder, output_dir, component_file_name, overall_flight_log_path, flight_log_params_path, display_output)
+			output_data['Component Count'] = 1
+			output_data['Components'] = {}
+			output_data['Components'][component_file_name] = self.__align_images(input_folder, output_dir, component_file_name, overall_flight_log_path, flight_log_params_path, display_output)
 		# batched folder input
 		else:
 			batch_directory = os.path.join(self.params['output_dir'].get_value(), "batched_images")
@@ -207,12 +220,19 @@ class RealityCaptureAlignment(RCModule):
 			
 			bar = self._initialize_loading_bar(len(batch_folders), "Aligning Batches")
 
+			output_data = {}
+			output_data['Success'] = True
+			output_data['Component Count'] = len(batch_folders)
+			output_data['Components'] = {}
+
 			for batch_folder in batch_folders:
 				batch_input_folder = os.path.join(batch_directory, batch_folder)
 				batch_flight_log_path = self.__get_flight_log_path(batch_input_folder)
 				batch_component_file_name = self.__get_component_file_name(batch_input_folder)
-				self.__align_images(batch_input_folder, output_dir, batch_component_file_name, batch_flight_log_path, flight_log_params_path, display_output)
+				output_data['Components'][batch_component_file_name] = self.__align_images(batch_input_folder, output_dir, batch_component_file_name, batch_flight_log_path, flight_log_params_path, display_output)
 				self._update_loading_bar(bar, 1)
+
+		return output_data
 
 	def validate_parameters(self) -> (bool, str):
 		success, message = super().validate_parameters()
