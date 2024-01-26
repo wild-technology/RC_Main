@@ -86,8 +86,10 @@ class ExtractImages(RCModule):
 		current_frame_number = 0
 		extracted_count = 0
 
+		expected_frame_count = video_frame_count // skip_frames
+
 		# initialize the loading bar
-		bar = self._initialize_loading_bar(cap.get(cv2.CAP_PROP_FRAME_COUNT) // skip_frames, "Extracting Frames from Video")
+		bar = self._initialize_loading_bar(expected_frame_count, "Extracting Frames from Video")
 
 		while cap.isOpened():
 			# Skip to the next frame to extract, saves some time when extracting at a low FPS
@@ -121,6 +123,8 @@ class ExtractImages(RCModule):
 			extracted_count += 1
 
 			self._update_loading_bar(bar, 1)
+
+		self._finish_loading_bar(bar)
 
 		cap.release()
 

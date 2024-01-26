@@ -70,6 +70,15 @@ class RCModule:
 		loading_bar.n = min(loading_bar.n + update, max_value)
 		loading_bar.refresh()
 
+	def _finish_loading_bar(self, loading_bar):
+		"""
+		Finishes a loading bar.
+		Args:
+			loading_bar (tqdm): The loading bar to finish.
+		"""
+		loading_bar.n = loading_bar.total
+		loading_bar.refresh()
+
 	def get_progress(self) -> float:
 		"""
 		Gets the progress of the module (Judged by average of loading bars).
