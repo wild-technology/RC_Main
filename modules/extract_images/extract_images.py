@@ -185,9 +185,9 @@ class ExtractImages(RCModule):
 				overall_output_data['Success'] = True
 				overall_output_data['Total Input Frame Count'] += individual_output_data['Input Frame Count']
 				overall_output_data['Total Extracted Frame Count'] += individual_output_data['Extracted Frame Count']
-				overall_output_data['Videos'][mov_file] = individual_output_data
+				overall_output_data['Videos'][mov_path] = individual_output_data
 			else:
-				self.logger.error(f'Failed to extract video: {mov_file}')
+				self.logger.error(f'Failed to extract video: {mov_path}')
 
 		return overall_output_data
 

@@ -59,6 +59,7 @@ class RealityCaptureAlignment(RCModule):
 		"""
 		Runs a subprocess command and waits for it to finish.
 		"""
+
 		result = subprocess.Popen(command, cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, 
 								creationflags=subprocess.CREATE_NO_WINDOW if not display_output else subprocess.CREATE_NEW_CONSOLE)
 		stdout, stderr = result.communicate()
@@ -106,8 +107,8 @@ class RealityCaptureAlignment(RCModule):
 		if flight_log_params_path is None or not os.path.isfile(flight_log_params_path):
 			flight_log_params_path = ""
 
-		cwd = os.getcwd()
-		scripts_dir = os.path.join(cwd, 'modules', 'realitycapture_interface', 'RC_CLI', 'Scripts')
+		this_file_dir = os.path.dirname(os.path.realpath(__file__))
+		scripts_dir = os.path.join(this_file_dir, 'RC_CLI', 'Scripts')
 
 		self.__run_subprocess(["cmd", "/c", "AlignImagesFromFolder.bat", input_folder, output_folder, flight_log_path, flight_log_params_path],
 					scripts_dir, display_output)
@@ -201,16 +202,19 @@ class RealityCaptureAlignment(RCModule):
 		if 'rc_input_image_dir' in self.params:
 			input_folder = self.params['rc_input_image_dir'].get_value()
 			overall_flight_log_path = self.__get_flight_log_path()
+			component_file_name = None
+			component_path = None
 
 			try:
 				component_file_name = self.__get_component_file_name(input_folder)
+				component_path = os.path.join(output_dir, component_file_name)
 			except Exception as e:
 				self.logger.error(f"Error getting component file name: {e}")
 				return {'Success': False}
 			
 			output_data['Component Count'] = 1
 			output_data['Components'] = {}
-			output_data['Components'][component_file_name] = self.__align_images(input_folder, output_dir, component_file_name, overall_flight_log_path, flight_log_params_path, display_output)
+			output_data['Components'][component_path] = self.__align_images(input_folder, output_dir, component_file_name, overall_flight_log_path, flight_log_params_path, display_output)
 		# batched folder input
 		else:
 			batch_directory = os.path.join(self.params['output_dir'].get_value(), "batched_images")
@@ -235,15 +239,18 @@ class RealityCaptureAlignment(RCModule):
 			for batch_folder in batch_folders:
 				batch_input_folder = os.path.join(batch_directory, batch_folder)
 				batch_flight_log_path = self.__get_flight_log_path(batch_input_folder)
+				batch_component_file_name = None
+				batch_component_path = None
 
 				try:
 					batch_component_file_name = self.__get_component_file_name(batch_input_folder)
+					batch_component_path = os.path.join(output_dir, batch_component_file_name)
 				except Exception as e:
 					self.logger.error(f"Error getting component file name: {e}")
 					return {'Success': False}
 				
 				try:
-					output_data['Components'][batch_component_file_name] = self.__align_images(batch_input_folder, output_dir, batch_component_file_name, batch_flight_log_path, flight_log_params_path, display_output)
+					output_data['Components'][batch_component_path] = self.__align_images(batch_input_folder, output_dir, batch_component_file_name, batch_flight_log_path, flight_log_params_path, display_output)
 				except Exception as e:
 					self.logger.error(f"Error aligning images: {e}")
 					return {'Success': False}

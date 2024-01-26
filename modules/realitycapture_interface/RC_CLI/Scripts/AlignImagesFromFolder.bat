@@ -21,7 +21,7 @@ if [%3] == [] (
     set flight_log_dir=%~3
 )
 
-if not "flight_log_dir" == "" if [%4] == [] (
+if not [flight_log_dir] == [] if [%4] == [] (
     set /P flight_log_params_dir="Path to Flight Log Params: "
 ) else (
     set flight_log_params_dir=%~4
@@ -33,7 +33,7 @@ call startRealityCapture.bat
 
 %RealityCapture% -delegateTo RC1 -addFolder "%input_dir%"
 
-if not "flight_log_dir" == "" (
+if not [flight_log_dir] == [] (
     %RealityCapture% -delegateTo RC1 -importFlightLog "%flight_log_dir%" "%flight_log_params_dir%"
 )
 
