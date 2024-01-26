@@ -175,7 +175,12 @@ class GeoreferenceImages(RCModule):
 		else:
 			input_dir = os.path.join(self.params['output_dir'].get_value(), "raw_images")
 
-		overall_output_data = self.__georeference_images(input_dir, output_path, flight_log)
+		overall_output_data = {}
+		try:
+			overall_output_data = self.__georeference_images(input_dir, output_path, flight_log)
+		except Exception as e:
+			self.logger.error(f"Error georeferencing images: {e}")
+			return {"Success": False}
 
 		if overall_output_data['Success']:
 			num_data_rows = overall_output_data['Input Log Rows Extracted']

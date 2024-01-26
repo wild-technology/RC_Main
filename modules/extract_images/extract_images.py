@@ -52,7 +52,7 @@ class ExtractImages(RCModule):
 		# Attempt to open video file
 		cap = cv2.VideoCapture(video_path)
 		if not cap.isOpened():
-			self.logger.error("Video file could not be opened")
+			self.logger.error("Video file {video_path} could not be opened")
 			output_data['success'] = False
 			return output_data
 		

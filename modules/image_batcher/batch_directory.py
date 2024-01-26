@@ -255,17 +255,18 @@ class BatchDirectory(RCModule):
 		Validates the inputs before proceeding.
 		"""
 
-		if not input_dir or not os.path.isdir(input_dir):
-			self.logger.error('Input directory is not specified or is invalid')
-			return {'Success': False}
+		if not input_dir:
+			raise ValueError('Input directory is not specified')
+		
+		if not os.path.isdir(input_dir):
+			raise ValueError('Input directory is not a valid directory')
 
 		files = self.__get_image_files(input_dir)
 
 		try:
 			return self.__batch_files(input_dir, output_dir, files, batch_size, overlap_percent, flight_log_path)
 		except ValueError as e:
-			self.logger.error(e)
-			return {'Success': False}
+			raise e
 	
 	def run(self):
 		# Validate parameters
@@ -283,7 +284,12 @@ class BatchDirectory(RCModule):
 		flight_log_path = self.__get_flight_log_path()
 
 		# Process folder
-		return self.__batch_folder(input_dir, output_dir, batch_size, overlap_percent, flight_log_path)
+		try:
+			result = self.__batch_folder(input_dir, output_dir, batch_size, overlap_percent, flight_log_path)
+			return result
+		except ValueError as e:
+			self.logger.error(e)
+			return {'Success': False}
 
 	def validate_parameters(self) -> (bool, str):
 		success, message = super().validate_parameters()

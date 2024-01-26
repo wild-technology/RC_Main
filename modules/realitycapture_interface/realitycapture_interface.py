@@ -88,12 +88,14 @@ class RealityCaptureAlignment(RCModule):
 		Aligns images in a folder and saves the component file to the output folder.
 		"""
 
+		if not input_folder:
+			raise ValueError("Input folder is not specified")
+
 		if not os.path.isdir(input_folder):
-			self.logger.error("Input folder does not exist")
-			return {'Success': False}
+			raise ValueError("Input folder {input_folder} is not a directory")
 		
 		if not os.path.isdir(output_folder):
-			self.logger.info("Output folder does not exist. Creating folder: %s", output_folder)
+			self.logger.info(f"Output folder does not exist. Creating folder: {output_folder}")
 			os.mkdir(output_folder)
 
 		self.__check_and_create_folder(output_folder)
@@ -126,8 +128,7 @@ class RealityCaptureAlignment(RCModule):
 		outputted_component_count = 0
 
 		if not generated_component_files or len(generated_component_files) == 0:
-			self.logger.error("Error in component creation")
-			return {'Success': False}
+			raise Exception("Error in RealityCapture alignment")
 
 		# use index for loop so we can index the name
 		for index, generated_component_file in enumerate(generated_component_files):
@@ -200,7 +201,13 @@ class RealityCaptureAlignment(RCModule):
 		if 'rc_input_image_dir' in self.params:
 			input_folder = self.params['rc_input_image_dir'].get_value()
 			overall_flight_log_path = self.__get_flight_log_path()
-			component_file_name = self.__get_component_file_name(input_folder)
+
+			try:
+				component_file_name = self.__get_component_file_name(input_folder)
+			except Exception as e:
+				self.logger.error(f"Error getting component file name: {e}")
+				return {'Success': False}
+			
 			output_data['Component Count'] = 1
 			output_data['Components'] = {}
 			output_data['Components'][component_file_name] = self.__align_images(input_folder, output_dir, component_file_name, overall_flight_log_path, flight_log_params_path, display_output)
@@ -228,8 +235,19 @@ class RealityCaptureAlignment(RCModule):
 			for batch_folder in batch_folders:
 				batch_input_folder = os.path.join(batch_directory, batch_folder)
 				batch_flight_log_path = self.__get_flight_log_path(batch_input_folder)
-				batch_component_file_name = self.__get_component_file_name(batch_input_folder)
-				output_data['Components'][batch_component_file_name] = self.__align_images(batch_input_folder, output_dir, batch_component_file_name, batch_flight_log_path, flight_log_params_path, display_output)
+
+				try:
+					batch_component_file_name = self.__get_component_file_name(batch_input_folder)
+				except Exception as e:
+					self.logger.error(f"Error getting component file name: {e}")
+					return {'Success': False}
+				
+				try:
+					output_data['Components'][batch_component_file_name] = self.__align_images(batch_input_folder, output_dir, batch_component_file_name, batch_flight_log_path, flight_log_params_path, display_output)
+				except Exception as e:
+					self.logger.error(f"Error aligning images: {e}")
+					return {'Success': False}
+	
 				self._update_loading_bar(bar, 1)
 
 		return output_data
