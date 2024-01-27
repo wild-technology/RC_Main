@@ -71,47 +71,53 @@ class ExtractImages(RCModule):
 		video_timestamp_str = self.__get_video_timestamp_str(video_path)
 		video_timestamp = self.__get_video_timestamp(video_path)
 
-		vr = None
-
-		try:
-			vr = VideoReader(video_path, ctx=gpu(0))
-			print("Using GPU")
-		except Exception as e:
-			vr = VideoReader(video_path, ctx=cpu(0))
-			print("Using CPU")
+		vr = VideoReader(video_path, ctx=cpu(0))
 
 		video_frame_count = len(vr)
 		video_fps = vr.get_avg_fps()
 
 		output_fps = output_fpm / 60
-		output_frame_duration = timedelta(seconds=1) / output_fps
 		skip_frames = round(video_fps / output_fps)
 
 		if skip_frames < 1:
 			skip_frames = 1
 
-		frames_list = list(range(0, video_frame_count, skip_frames))
-		frames = vr.get_batch(frames_list).asnumpy()
-
-		# initialize the loading bar
-		bar = self._initialize_loading_bar(len(frames_list), "Extracting Frames from Video")
+		overall_frames_list = list(range(0, video_frame_count, skip_frames))
 
 		saved_count = 0
 
-		for index, frame in zip(frames_list, frames):  # lets loop through the frames until the end	
+		# initialize the loading bar
+		bar = self._initialize_loading_bar(len(overall_frames_list), "Extracting Frames from Video")
+
+		def __process_frame(index):
+			nonlocal saved_count
+			nonlocal bar
+			nonlocal video_timestamp
+
 			current_overall_frame_number = index * skip_frames
 
-			new_timestamp = video_timestamp + (index * output_frame_duration)
+			# get the timestamp of the current frame (in seconds since the start of the video)
+			frame_seconds_arr = vr.get_frame_timestamp(index).tolist()
+			time_difference = (frame_seconds_arr[0] + frame_seconds_arr[1]) / 2
+
+			# get timestamp of the current frame (in datetime format)
+			new_timestamp = video_timestamp + timedelta(seconds=time_difference)
 			new_timestamp_str = new_timestamp.strftime("%Y%m%d%H%M%S")
 				
+			# the index of the frame within the current second (if the video is 30fps, this will be between 0 and 29)
 			frame_index_in_second = int(current_overall_frame_number % output_fps)
 				
+			# output image info
 			image_name = video_filename.replace(video_timestamp_str, new_timestamp_str) + f"_frame{frame_index_in_second}.png"
 			image_path = os.path.join(output_folder, image_name)
 
+			frame = vr.get_batch([index]).asnumpy()[0]
 			cv2.imwrite(image_path, cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))  # save the extracted image
 			saved_count += 1  # increment our counter by one
 			self._update_loading_bar(bar, 1)
+
+		for i in range(0, len(overall_frames_list)):
+			__process_frame(i)
 
 		self._finish_loading_bar(bar)
 
@@ -123,6 +129,7 @@ class ExtractImages(RCModule):
 
 		return output_data
 
+	# Old method, uses OpenCV. Slower than decord on large videos. Faster when extracting a small amount of frames.
 	def __extract_video_cv2(self, video_path, output_folder, output_fpm) -> dict[str, any]:
 		output_data = {}
 
@@ -248,8 +255,8 @@ class ExtractImages(RCModule):
 			if not os.path.isfile(mov_path) or file_extension != '.mov':
 				continue
 
-			#individual_output_data = self.__extract_video_decord(mov_path, output_folder, output_fpm)
-			individual_output_data = self.__extract_video_cv2(mov_path, output_folder, output_fpm)
+			individual_output_data = self.__extract_video_decord(mov_path, output_folder, output_fpm)
+			#individual_output_data = self.__extract_video_cv2(mov_path, output_folder, output_fpm)
 			self._update_loading_bar(bar, 1)
 
 			if individual_output_data is not None and individual_output_data['Success'] == True:
