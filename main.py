@@ -27,7 +27,7 @@ def initialize_modules(logger) -> dict[str, RCModule]:
 		'Extract Images': ExtractImages(logger),
 		'Georeference Images': GeoreferenceImages(logger),
 		'Batch Directory': BatchDirectory(logger),
-		'RealityCapture Interface': RealityCaptureAlignment(logger)
+		'RealityCapture Alignment': RealityCaptureAlignment(logger)
 	}
 	
 	# initialize a list of choices for the user to select from

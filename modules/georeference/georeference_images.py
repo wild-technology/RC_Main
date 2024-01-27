@@ -33,7 +33,7 @@ class GeoreferenceImages(RCModule):
 			cli_long='g_flight_log',
 			type=str,
 			default_value=None,
-			description='Path to the flight log file',
+			description='Path to the ROV output GPS data file',
 			prompt_user=True
 		)
 
