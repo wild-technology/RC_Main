@@ -87,17 +87,15 @@ class ExtractImages(RCModule):
 		saved_count = 0
 
 		# initialize the loading bar
-		bar = self._initialize_loading_bar(len(overall_frames_list), "Extracting Frames from Video")
+		bar = self._initialize_loading_bar(len(overall_frames_list)-1, "Extracting Frames from Video")
 
 		def __process_frame(index):
 			nonlocal saved_count
-			nonlocal bar
-			nonlocal video_timestamp
 
-			current_overall_frame_number = index * skip_frames
+			current_overall_frame_number = (index - 1) * skip_frames
 
 			# get the timestamp of the current frame (in seconds since the start of the video)
-			frame_seconds_arr = vr.get_frame_timestamp(index).tolist()
+			frame_seconds_arr = vr.get_frame_timestamp(current_overall_frame_number).tolist()
 			time_difference = (frame_seconds_arr[0] + frame_seconds_arr[1]) / 2
 
 			# get timestamp of the current frame (in datetime format)
