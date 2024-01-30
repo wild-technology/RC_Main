@@ -67,6 +67,7 @@ class ExtractImages(RCModule):
 		output_folder = os.path.normpath(output_folder)
 
 		video_dir, video_filename = os.path.split(video_path)
+		video_filename, video_extension = os.path.splitext(video_filename)
 
 		video_timestamp_str = self.__get_video_timestamp_str(video_path)
 		video_timestamp = self.__get_video_timestamp(video_path)
@@ -85,6 +86,8 @@ class ExtractImages(RCModule):
 		overall_frames_list = list(range(0, video_frame_count, skip_frames))
 
 		saved_count = 0
+
+		add_frame_index = output_fps > 1
 
 		# initialize the loading bar
 		bar = self._initialize_loading_bar(len(overall_frames_list)-1, "Extracting Frames from Video")
@@ -106,7 +109,11 @@ class ExtractImages(RCModule):
 			frame_index_in_second = int(current_overall_frame_number % output_fps)
 				
 			# output image info
-			image_name = video_filename.replace(video_timestamp_str, new_timestamp_str) + f"_frame{frame_index_in_second}.png"
+			image_name = video_filename.replace(video_timestamp_str, new_timestamp_str)
+
+			if add_frame_index:
+				image_name = image_name + f"_frame{frame_index_in_second}.png"
+
 			image_path = os.path.join(output_folder, image_name)
 
 			frame = vr.get_batch([index]).asnumpy()[0]
