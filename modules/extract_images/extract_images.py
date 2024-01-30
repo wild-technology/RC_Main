@@ -37,6 +37,16 @@ class ExtractImages(RCModule):
 			prompt_user=True
 		)
 
+		additional_params['output_mpx'] = Parameter(
+			name='Output Megapixels',
+			cli_short='o_m',
+			cli_long='o_mpx',
+			type=int,
+			default_value=3,
+			description='The maximum number of megapixels for the output images',
+			prompt_user=True
+		)
+
 		return {**super().get_parameters(), **additional_params}
 		
 	def __get_video_timestamp_str(self, video_path):
@@ -58,7 +68,7 @@ class ExtractImages(RCModule):
 		
 		return video_timestamp
 	
-	def __extract_video_decord(self, video_path, output_folder, output_fpm) -> dict[str, any]:
+	def __extract_video_decord(self, video_path, output_folder, output_fpm, output_mpx) -> dict[str, any]:
 		"""
 		Extracts a video using the decord library.
 		https://medium.com/@haydenfaulkner/extracting-frames-fast-from-a-video-using-opencv-and-python-73b9b7dc9661
@@ -112,11 +122,23 @@ class ExtractImages(RCModule):
 			image_name = video_filename.replace(video_timestamp_str, new_timestamp_str)
 
 			if add_frame_index:
-				image_name = image_name + f"_frame{frame_index_in_second}.png"
+				image_name = image_name + f"_frame{frame_index_in_second}"
+
+			image_name = image_name + ".png"
 
 			image_path = os.path.join(output_folder, image_name)
 
 			frame = vr.get_batch([index]).asnumpy()[0]
+
+			# compress frame to 3mpx
+			input_height, input_width, _ = frame.shape
+			input_mpx = input_height * input_width / 1000000
+
+			if input_mpx > output_mpx:
+				output_height = int(input_height * np.sqrt(output_mpx / input_mpx))
+				output_width = int(input_width * np.sqrt(output_mpx / input_mpx))
+				frame = cv2.resize(frame, (output_width, output_height), interpolation=cv2.INTER_AREA)
+
 			cv2.imwrite(image_path, cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))  # save the extracted image
 			saved_count += 1  # increment our counter by one
 			self._update_loading_bar(bar, 1)
@@ -228,6 +250,7 @@ class ExtractImages(RCModule):
 		input_path = self.params['image_input_video'].get_value()
 		output_folder = os.path.join(self.params['output_dir'].get_value(), 'raw_images')
 		output_fpm = self.params['image_output_fpm'].get_value()
+		output_mpx = self.params['output_mpx'].get_value()
 
 		mov_files = []
 
@@ -260,7 +283,7 @@ class ExtractImages(RCModule):
 			if not os.path.isfile(mov_path) or file_extension != '.mov':
 				continue
 
-			individual_output_data = self.__extract_video_decord(mov_path, output_folder, output_fpm)
+			individual_output_data = self.__extract_video_decord(mov_path, output_folder, output_fpm, output_mpx)
 			#individual_output_data = self.__extract_video_cv2(mov_path, output_folder, output_fpm)
 			self._update_loading_bar(bar, 1)
 
@@ -287,12 +310,16 @@ class ExtractImages(RCModule):
 		
 		if not 'image_output_fpm' in self.params:
 			return False, 'Output FPM parameter not found'
+		
+		if not 'output_mpx' in self.params:
+			return False, 'Output MPX parameter not found'
 
 		input_video = self.params['image_input_video'].get_value()
 		is_input_folder = os.path.isdir(input_video)
 
 		output_dir = os.path.join(self.params['output_dir'].get_value(), 'raw_images')
 		output_fpm = self.params['image_output_fpm'].get_value()
+		output_mpx = self.params['output_mpx'].get_value()
 
 		# input folder could either be a .mov file or a folder of .mov files
 		if is_input_folder:
@@ -319,6 +346,9 @@ class ExtractImages(RCModule):
 
 		if output_fpm <= 0:
 			return False, 'Output FPM must be greater than 0'
+		
+		if output_mpx <= 0:
+			return False, 'Output MPX must be greater than 0'
 
 		return True, None
 	
