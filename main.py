@@ -81,8 +81,16 @@ def initialize_parameters(modules) -> dict[str, Parameter]:
 
 	for module in modules.values():
 		for param_name, param in module.get_parameters().items():
-			if param.disable_when_module_active is not None and param.disable_when_module_active in modules:
-				continue
+			if param.disable_when_module_active is not None:
+				# If the disable_when_module_active is a list, check if any of the modules are active
+				if isinstance(param.disable_when_module_active, list):
+					for module_name in param.disable_when_module_active:
+						if module_name in modules:
+							continue
+				# If the disable_when_module_active is a string, check if the module is active
+				else:
+					if param.disable_when_module_active in modules:
+						continue
 
 			params[param_name] = param
 

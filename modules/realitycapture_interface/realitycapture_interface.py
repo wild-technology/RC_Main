@@ -35,6 +35,17 @@ class RealityCaptureAlignment(RCModule):
 			prompt_user=True
 		)
 
+		additional_params['rc_flight_log_path'] = Parameter(
+			name='Flight Log Path',
+			cli_short='r_f',
+			cli_long='r_flight_log',
+			type=str,
+			default_value=None,
+			description='Path to the flight log file',
+			prompt_user=True,
+			disable_when_module_active=['Batch Directory', 'Georeference Images']
+		)
+
 		return {**super().get_parameters(), **additional_params}
 
 	def __check_and_create_folder(self, path):
@@ -67,6 +78,10 @@ class RealityCaptureAlignment(RCModule):
 		if batch_path is not None:
 			return os.path.join(batch_path, "flight_log.txt")
 		
+		# if the flight log path is specified, use that
+		if 'rc_flight_log_path' in self.params:
+			return self.params['rc_flight_log_path'].get_value()
+
 		# Geo module will output flight log to the output directory only if the extract images module is active
 		# Otherwise it will output to the geo_input_image_dir directory
 		if 'geo_input_image_dir' in self.params:
