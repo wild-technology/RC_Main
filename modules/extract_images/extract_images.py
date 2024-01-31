@@ -250,7 +250,7 @@ class ExtractImages(RCModule):
 		input_path = self.params['image_input_video'].get_value()
 		output_folder = os.path.join(self.params['output_dir'].get_value(), 'raw_images')
 		output_fpm = self.params['image_output_fpm'].get_value()
-		output_mpx = self.params['output_mpx'].get_value()
+		output_mpx = self.params['image_output_mpx'].get_value()
 
 		mov_files = []
 
@@ -311,7 +311,7 @@ class ExtractImages(RCModule):
 		if not 'image_output_fpm' in self.params:
 			return False, 'Output FPM parameter not found'
 		
-		if not 'output_mpx' in self.params:
+		if not 'image_output_mpx' in self.params:
 			return False, 'Output MPX parameter not found'
 
 		input_video = self.params['image_input_video'].get_value()
@@ -319,7 +319,7 @@ class ExtractImages(RCModule):
 
 		output_dir = os.path.join(self.params['output_dir'].get_value(), 'raw_images')
 		output_fpm = self.params['image_output_fpm'].get_value()
-		output_mpx = self.params['output_mpx'].get_value()
+		output_mpx = self.params['image_output_mpx'].get_value()
 
 		# input folder could either be a .mov file or a folder of .mov files
 		if is_input_folder:
