@@ -25,16 +25,6 @@ class RealityCaptureAlignment(RCModule):
 			disable_when_module_active='Batch Directory'
 		)
 
-		additional_params['rc_flight_log_params'] = Parameter(
-			name='Flight Log Parameters',
-			cli_short='r_p',
-			cli_long='r_flight_log_params',
-			type=str,
-			default_value=None,
-			description='Path to the flight log parameters file (optional)',
-			prompt_user=True
-		)
-
 		additional_params['rc_display_output'] = Parameter(
 			name='Display Output',
 			cli_short='r_d',
@@ -104,7 +94,7 @@ class RealityCaptureAlignment(RCModule):
 		if flight_log_path is None or not os.path.isfile(flight_log_path):
 			flight_log_path = ""
 
-		if flight_log_params_path is None or not os.path.isfile(flight_log_params_path):
+		if flight_log_params_path is None or not os.path.isfile(flight_log_params_path) or flight_log_path == "":
 			flight_log_params_path = ""
 
 		this_file_dir = os.path.dirname(os.path.realpath(__file__))
@@ -190,8 +180,11 @@ class RealityCaptureAlignment(RCModule):
 			return {'Success': False}
 		
 		output_dir = os.path.join(self.params['output_dir'].get_value(), "aligned_components")
-		flight_log_params_path = self.params['rc_flight_log_params'].get_value()
 		display_output = self.params['rc_display_output'].get_value()
+
+		this_file_dir = os.path.dirname(os.path.realpath(__file__))
+		metadata_dir = os.path.join(this_file_dir, 'RC_CLI', 'Metadata')
+		flight_log_params_path = os.path.join(metadata_dir, "FlightLogParams.xml")
 
 		output_data = {}
 		output_data['Success'] = True
@@ -264,22 +257,8 @@ class RealityCaptureAlignment(RCModule):
 		if not success:
 			return success, message
 		
-		if not 'rc_flight_log_params' in self.params:
-			return False, 'Flight log parameters file parameter not found'
-		
 		if not 'rc_display_output' in self.params:
 			return False, 'Display output parameter not found'
-		
-		flight_log_params_path = self.params['rc_flight_log_params'].get_value()
-		
-		# don't need to check if the file exists because it's not required
-		# if it doesn't exist, set the value to None so it's not passed to the subprocess
-		if flight_log_params_path is not None:
-			if not os.path.isfile(flight_log_params_path):
-				self.params['rc_flight_log_params'].set_value(None)
-			# make sure it's an XML file if it exists
-			elif os.path.splitext(flight_log_params_path)[1].lower() != '.xml':
-				return False, 'Flight log parameters file is not an XML file'
 			
 		# Validate output directory
 		output_dir = os.path.join(self.params['output_dir'].get_value(), 'aligned_components')

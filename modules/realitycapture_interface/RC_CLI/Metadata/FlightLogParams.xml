@@ -1,0 +1,12 @@
+<Configuration id="{93DBD041-AE1C-4631-89BC-D9430FCED843}">
+  <entry key="ifuuInhEn" value="true"/>
+  <entry key="ifCSopt" value="1"/>
+  <entry key="gpsLogFileFormat" value="{A438A617-1434-4A24-B1B7-48980F28345A}"/>
+  <entry key="CoordinateSystemFlightLog" value="+proj=longlat +datum=WGS84 +no_defs"/>
+  <entry key="CoordinateSystemFlightLogType" value="epsg:4326 - GPS (WGS 84)"/>
+  <entry key="ifKGrp" value="2"/>
+  <entry key="csvFLIgn" value="false"/>
+  <entry key="ifuuInh" value="0"/>
+  <entry key="ifKmode" value="0x0"/>
+  <entry key="csvFLSep" value="1"/>
+</Configuration>
