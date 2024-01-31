@@ -129,7 +129,7 @@ class RealityCaptureAlignment(RCModule):
 		outputted_component_count = 0
 
 		if not generated_component_files or len(generated_component_files) == 0:
-			raise Exception("Error in RealityCapture alignment")
+			return {'Success': False, 'Component Count': 0}
 
 		# use index for loop so we can index the name
 		for index, generated_component_file in enumerate(generated_component_files):
