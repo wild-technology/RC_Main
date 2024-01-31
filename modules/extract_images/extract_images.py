@@ -37,10 +37,10 @@ class ExtractImages(RCModule):
 			prompt_user=True
 		)
 
-		additional_params['output_mpx'] = Parameter(
+		additional_params['image_output_mpx'] = Parameter(
 			name='Output Megapixels',
-			cli_short='o_m',
-			cli_long='o_mpx',
+			cli_short='i_m',
+			cli_long='i_mpx',
 			type=int,
 			default_value=3,
 			description='The maximum number of megapixels for the output images',
