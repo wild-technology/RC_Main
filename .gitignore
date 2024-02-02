@@ -1,6 +1,7 @@
 /.idea
 /__pycache__
 /.vscode
+/.vs
 
 /module_base/__pycache__
 /modules/__pycache__
@@ -12,8 +13,3 @@
 /modules/realitycapture_interface/RC_CLI/Errors/errors.txt
 /modules/realitycapture_interface/RC_CLI/Errors/progress.txt
 main.py.lprof
-.vs/ProjectSettings.json
-.vs/rc_main/FileContentIndex/deb9b42c-27aa-410a-8caa-5888c2fda597.vsidx
-.vs/slnx.sqlite
-.vs/rc_main/FileContentIndex/7ffd51fd-96ad-4d67-8553-4e9a7f8960ec.vsidx
-*.vsidx
