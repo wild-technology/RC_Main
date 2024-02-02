@@ -160,8 +160,8 @@ class GeoreferenceImages(RCModule):
 		# Get parameters
 		flight_log = self.params['geo_input_flight_log'].get_value()
 
-		# If not continuing from Extract Images, set output directory to image directory
-		# Otherwise, set output directory to the global output directory
+		# If continuing from Extract Images, set output directory to global output directory
+		# Otherwise, set output directory to the input image directory
 		output_path = None
 		if 'geo_input_image_dir' in self.params:
 			output_path = os.path.join(self.params['geo_input_image_dir'].get_value(), "flight_log.txt")
