@@ -20,7 +20,7 @@ class RealityCaptureAlignment(RCModule):
 			cli_long='r_input',
 			type=str,
 			default_value=None,
-			description='Directory containing the images to align',
+			description='Directory containing the images to align (or folder of batched images)',
 			prompt_user=True,
 			disable_when_module_active='Batch Directory'
 		)
@@ -201,72 +201,85 @@ class RealityCaptureAlignment(RCModule):
 		metadata_dir = os.path.join(this_file_dir, 'RC_CLI', 'Metadata')
 		flight_log_params_path = os.path.join(metadata_dir, "FlightLogParams.xml")
 
-		output_data = {}
-		output_data['Success'] = True
-		output_data['Output Directory'] = output_dir
+		process_data = []
 
-		# rc_input_image_dir is only specified if not using batched images
-		# single folder input
+		def queue_folder_to_process(local_input_folder, local_output_dir, local_flight_log_path, local_flight_log_params_path, local_display_output):
+			if not os.path.isdir(local_input_folder):
+				raise ValueError(f"Input folder {local_input_folder} is not a directory")
+			
+			local_image_files = [f for f in os.listdir(local_input_folder) if f.endswith((".png", ".heif", ".jpg", ".jpeg"))]
+
+			# only process the folder if there are image files in it
+			if local_image_files and len(local_image_files) > 0:
+				local_component_file_name = self.__get_component_file_name(local_input_folder)
+
+				process_data.append({
+					'input_folder': local_input_folder,
+					'output_dir': local_output_dir,
+					'component_file_name': local_component_file_name,
+					'flight_log_path': local_flight_log_path,
+					'flight_log_params_path': local_flight_log_params_path,
+					'display_output': local_display_output
+				})
+
+			# queue all subfolders to be processed separately
+			subfolders = [f for f in os.listdir(local_input_folder) if os.path.isdir(os.path.join(local_input_folder, f))]
+			for subfolder in subfolders:
+				subfolder_path = os.path.join(local_input_folder, subfolder)
+
+				queue_folder_to_process(subfolder_path, local_output_dir, local_flight_log_path, local_flight_log_params_path, local_display_output)
+
+		# single folder input (not running after batched images module)
 		if 'rc_input_image_dir' in self.params:
 			input_folder = self.params['rc_input_image_dir'].get_value()
 			overall_flight_log_path = self.__get_flight_log_path()
-			component_file_name = None
-			component_path = None
 
 			try:
-				component_file_name = self.__get_component_file_name(input_folder)
-				component_path = os.path.join(output_dir, component_file_name)
+				queue_folder_to_process(input_folder, output_dir, overall_flight_log_path, flight_log_params_path, display_output)
 			except Exception as e:
-				self.logger.error(f"Error getting component file name: {e}")
-				return {'Success': False}
-			
-			output_data['Component Count'] = 1
-			output_data['Components'] = {}
-			output_data['Components'][component_path] = self.__align_images(input_folder, output_dir, component_file_name, overall_flight_log_path, flight_log_params_path, display_output)
-		# batched folder input
+				self.logger.error(f"Error queueing folder to process: {e}")
+		# running after batched images module
 		else:
 			batch_directory = os.path.join(self.params['output_dir'].get_value(), "batched_images")
-
-			if not os.path.isdir(batch_directory):
-				self.logger.error("Batched images folder does not exist")
-				return
-			
 			batch_folders = [f for f in os.listdir(batch_directory) if os.path.isdir(os.path.join(batch_directory, f))]
-
-			if not batch_folders or len(batch_folders) == 0:
-				self.logger.error("No batch folders found")
-				return
-			
-			bar = self._initialize_loading_bar(len(batch_folders), "Aligning Batches")
-
-			output_data = {}
-			output_data['Success'] = True
-			output_data['Component Count'] = len(batch_folders)
-			output_data['Components'] = {}
 
 			for batch_folder in batch_folders:
 				batch_input_folder = os.path.join(batch_directory, batch_folder)
 				batch_flight_log_path = self.__get_flight_log_path(batch_input_folder)
-				batch_component_file_name = None
-				batch_component_path = None
 
 				try:
-					batch_component_file_name = self.__get_component_file_name(batch_input_folder)
-					batch_component_path = os.path.join(output_dir, batch_component_file_name)
+					queue_folder_to_process(batch_input_folder, output_dir, batch_flight_log_path, flight_log_params_path, display_output)
 				except Exception as e:
-					self.logger.error(f"Error getting component file name: {e}")
-					return {'Success': False}
-				
-				try:
-					output_data['Components'][batch_component_path] = self.__align_images(batch_input_folder, output_dir, batch_component_file_name, batch_flight_log_path, flight_log_params_path, display_output)
-				except Exception as e:
-					self.logger.error(f"Error aligning images: {e}")
-					return {'Success': False}
-	
-				self._update_loading_bar(bar, 1)
+					self.logger.error(f"Error queueing folder to process: {e}")
+
+		output_data = {}
+		output_data['Success'] = True
+		output_data['Output Directory'] = output_dir
+		output_data['Component Count'] = len(process_data)
+		output_data['Components'] = {}
+
+		bar = self._initialize_loading_bar(len(process_data), "Aligning Batches")
+
+		# process the data
+		for data in process_data:
+			input_folder = data['input_folder']
+			output_dir = data['output_dir']
+			component_file_name = data['component_file_name']
+			flight_log_path = data['flight_log_path']
+			flight_log_params_path = data['flight_log_params_path']
+			display_output = data['display_output']
+
+			component_path = os.path.join(output_dir, component_file_name)
+			
+			try:
+				output_data['Components'][component_path] = self.__align_images(input_folder, output_dir, component_file_name, flight_log_path, flight_log_params_path, display_output)
+			except Exception as e:
+				self.logger.error(f"Error aligning images: {e}")
+			
+			self._update_loading_bar(bar, 1)
 
 		return output_data
-
+	
 	def validate_parameters(self) -> (bool, str):
 		success, message = super().validate_parameters()
 		if not success:
