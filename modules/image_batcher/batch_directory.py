@@ -3,9 +3,11 @@ from module_base.parameter import Parameter
 
 import os
 import shutil
-from ..file_metadata_parser import parse_timestamp, parse_frame_number
+from ..file_metadata_parser import parse_timestamp, parse_frame_number, parse_timestamp_str
 
 class BatchDirectory(RCModule):
+	ACCEPTED_EXTENSIONS = [".png", ".jpg", ".jpeg"]
+
 	def __init__(self, logger):
 		super().__init__("Batch Directory", logger)
 
@@ -79,21 +81,22 @@ class BatchDirectory(RCModule):
 			else:
 				return os.path.join(self.params['output_dir'].get_value(), "flight_log.txt")
 
-
 	def __get_image_files(self, input_dir):
 		"""
 		Returns a list of image files from the input directory.
 		"""
 		files = os.listdir(input_dir)
+		image_files = []
 
 		for file in files:
 			extension = os.path.splitext(file)[1]
 
-			if extension not in [".png", ".jpg", ".jpeg"]:
+			if extension.lower() in self.ACCEPTED_EXTENSIONS:
+				image_files.append(file)
+			else:
 				self.logger.warning(f"{file} is not an accepted file type")
-				files.remove(file)
 
-		return files
+		return image_files
 
 	def __sort_files(self, files):
 		"""
@@ -179,7 +182,22 @@ class BatchDirectory(RCModule):
 		flight_log_file.close()
 
 		return flight_log_info
+	
+	def __get_batch_folder_name(self, batch_files):
+		if batch_files is None or len(batch_files) == 0:
+			raise ValueError('Batch files are not specified')
+		
+		first_file = os.path.splitext(batch_files[0])[0]
+		last_file = os.path.splitext(batch_files[-1])[0]
 
+		start_timestamp = parse_timestamp_str(first_file)
+		end_timestamp = parse_timestamp_str(last_file)
+
+		timestamp_segment = f"{start_timestamp}-{end_timestamp}"
+		batched_folder_name = first_file.replace(start_timestamp, timestamp_segment)
+
+		return batched_folder_name
+	
 	def __batch_files(self, input_dir, output_dir, files, batch_size, overlap_percent, flight_log_path=None, prefix=None):
 		if not files or len(files) == 0:
 			raise ValueError('Input directory is not specified')
@@ -202,14 +220,10 @@ class BatchDirectory(RCModule):
 		bar = self._initialize_loading_bar(num_batches, 'Batching Images')
 
 		for i in range(num_batches):
-			batch_folder_dir = None
-			if prefix is not None:
-				batch_folder_dir = os.path.join(output_dir, prefix, 'batch_' + str(i + 1))
-			else:
-				batch_folder_dir = os.path.join(output_dir, 'batch_' + str(i + 1))
-
 			start_index, end_index = self.__calculate_indices(i, batch_size, overlap_size, files)
 			batch_files = self.__get_batch_files(files, start_index, end_index)
+			batch_folder_name = self.__get_batch_folder_name(batch_files)
+			batch_folder_dir = os.path.join(output_dir, batch_folder_name)
 
 			self.__create_batch_folder(input_dir, batch_folder_dir, batch_files)
 			self._update_loading_bar(bar, 1)
