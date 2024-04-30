@@ -113,7 +113,7 @@ class ExtractImages(RCModule):
 
 			# get timestamp of the current frame (in datetime format)
 			new_timestamp = video_timestamp + timedelta(seconds=time_difference)
-			new_timestamp_str = new_timestamp.strftime("%Y%m%d%H%M%S")
+			new_timestamp_str = new_timestamp.strftime("%Y%m%dT%H%M%SZ")
 				
 			# the index of the frame within the current second (if the video is 30fps, this will be between 0 and 29)
 			frame_index_in_second = int(current_overall_frame_number % output_fps)
@@ -211,7 +211,7 @@ class ExtractImages(RCModule):
 
 			# Calculate the new timecode based on the current frame
 			new_timestamp = video_timestamp + ((current_frame_number // skip_frames) * output_frame_duration)
-			new_timestamp_str = new_timestamp.strftime("%Y%m%d%H%M%S")
+			new_timestamp_str = new_timestamp.strftime("%Y%m%dT%H%M%SZ")
 
 			frame_index_in_second = int(current_frame_number % output_fps)
 

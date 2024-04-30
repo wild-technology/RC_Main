@@ -5,6 +5,8 @@ from PIL import Image
 import sys
 import pyproj  # Import the projection library
 from pyproj import Proj, transform
+from ..file_metadata_parser import parse_timestamp_str, parse_timestamp
+import utm
 
 from module_base.rc_module import RCModule
 from module_base.parameter import Parameter
@@ -51,6 +53,7 @@ class GeoreferenceImages(RCModule):
 			prompt_user=True
 		)
 
+		"""
 		additional_params['geo_utm_zone'] = Parameter(
 			name='UTM Zone',
 			cli_short='g_u',
@@ -60,6 +63,7 @@ class GeoreferenceImages(RCModule):
 			description='UTM zone number for coordinate conversion (leave blank for GPS coordinates)',
 			prompt_user=True
 		)
+		"""
 
 		return {**super().get_parameters(), **additional_params}
 
@@ -88,7 +92,15 @@ class GeoreferenceImages(RCModule):
 
 	def __convert_to_utm(self, lat, lon, utm_zone):
 		"""Convert latitude and longitude to UTM coordinates in the specified zone."""
-		if not lat or not lon:
+
+		utm_values = utm.from_latlon(lat, lon)
+		easting = utm_values[0]
+		northing = utm_values[1]
+
+		return easting, northing
+
+		# system requiring utm_zone to get easting and northing
+		"""if not lat or not lon:
 			return None, None
 		try:
 			zone_number = utm_zone[:-1]
@@ -101,7 +113,7 @@ class GeoreferenceImages(RCModule):
 			return utm_x, utm_y
 		except Exception as e:
 			self.logger.error(f"Failed to convert to UTM coordinates: {e}")
-			return None, None
+			return None, None"""
 
 	def __is_image_file(self, filename, image_folder):
 		try:
@@ -112,19 +124,13 @@ class GeoreferenceImages(RCModule):
 
 	def __parse_timestamp_from_filename(self, filename, data_type):
 		"""Extract and parse the timestamp from an image filename."""
-		try:
-			if data_type == "WCA":
-				# WCA example: P211C7655_20231102013334.jpg
-				parts = filename.split("_")
-				timestamp_str = parts[1][:14]  # Assumes the timestamp is the first 14 characters after the first underscore
-			elif data_type == "Zeuss":
-				# Zeuss example: 20231101T203856Z_0008_HERC_H.264_H2021_NA156_apo8_dtd4.mov.png
-				timestamp_str = filename.split("_")[0]  # Timestamp before the first underscore
-				timestamp_str = timestamp_str.replace('T', '').replace('Z', '')  # Remove 'T' and 'Z' for ISO 8601 format
-			return datetime.strptime(timestamp_str, self.ZEUSS_FILENAME_TIMESTAMP_FORMAT)
-		except ValueError:
+		timestamp = parse_timestamp(filename)
+
+		if timestamp == None or timestamp == datetime(1970, 1, 1, 0, 0, 0):
 			self.logger.error(f"Error parsing timestamp in filename: {filename}")
 			return None
+		
+		return timestamp
 
 	def __read_image_filenames(self, image_folder, data_type):
 		"""Read all image filenames from a folder and extract their timestamps."""
