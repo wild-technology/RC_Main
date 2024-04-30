@@ -130,7 +130,7 @@ class ExtractImages(RCModule):
 
 			frame = vr.get_batch([index]).asnumpy()[0]
 
-			# compress frame to 3mpx
+			# compress frame to input_mpx if necessary
 			input_height, input_width, _ = frame.shape
 			input_mpx = input_height * input_width / 1000000
 
@@ -157,7 +157,7 @@ class ExtractImages(RCModule):
 		return output_data
 
 	# Old method, uses OpenCV. Slower than decord on large videos. Faster when extracting a small amount of frames.
-	def __extract_video_cv2(self, video_path, output_folder, output_fpm) -> dict[str, any]:
+	def __extract_video_cv2(self, video_path, output_folder, output_fpm, output_mpx) -> dict[str, any]:
 		output_data = {}
 
 		# Attempt to open video file
@@ -219,6 +219,15 @@ class ExtractImages(RCModule):
 			# replace the timestamp in the filename with the new timestamp
 			image_name = video_filename.replace(video_timestamp_str, new_timestamp_str) + f"_frame{frame_index_in_second}.png"
 			image_path = os.path.join(output_folder, image_name)
+
+			# compress frame to input_mpx if necessary
+			input_height, input_width, _ = frame.shape
+			input_mpx = input_height * input_width / 1000000
+
+			if input_mpx > output_mpx:
+				output_height = int(input_height * np.sqrt(output_mpx / input_mpx))
+				output_width = int(input_width * np.sqrt(output_mpx / input_mpx))
+				frame = cv2.resize(frame, (output_width, output_height), interpolation=cv2.INTER_AREA)
 
 			# Save the frame as an image
 			cv2.imwrite(image_path, frame)
@@ -283,8 +292,8 @@ class ExtractImages(RCModule):
 			if not os.path.isfile(mov_path) or file_extension != '.mov':
 				continue
 
-			individual_output_data = self.__extract_video_decord(mov_path, output_folder, output_fpm, output_mpx)
-			#individual_output_data = self.__extract_video_cv2(mov_path, output_folder, output_fpm)
+			#individual_output_data = self.__extract_video_decord(mov_path, output_folder, output_fpm, output_mpx)
+			individual_output_data = self.__extract_video_cv2(mov_path, output_folder, output_fpm, output_mpx)
 			self._update_loading_bar(bar, 1)
 
 			if individual_output_data is not None and individual_output_data['Success'] == True:
