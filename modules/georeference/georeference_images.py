@@ -90,14 +90,23 @@ class GeoreferenceImages(RCModule):
 			raise e
 		return data_rows
 
-	def __convert_to_utm(self, lat, lon, utm_zone):
-		"""Convert latitude and longitude to UTM coordinates in the specified zone."""
-
-		utm_values = utm.from_latlon(lat, lon)
-		easting = utm_values[0]
-		northing = utm_values[1]
-
-		return easting, northing
+def __convert_to_utm(self, lat, lon, utm_zone):
+    """Convert latitude and longitude to UTM coordinates in the specified zone."""
+    if not lat or not lon:
+        return None, None
+    try:
+        # Extract the zone number and hemisphere from the UTM zone parameter
+        zone_number = int(utm_zone[:-1])
+        hemisphere = 'north' if utm_zone[-1].upper() == 'N' else 'south'
+        utm_values = utm.from_latlon(lat, lon, force_zone_number=zone_number)
+        easting = utm_values[0]
+        northing = utm_values[1]
+        if hemisphere == 'south':
+            northing -= 10000000.0
+        return easting, northing
+    except Exception as e:
+        self.logger.error(f"Failed to convert to UTM coordinates: {e}")
+        return None, None
 
 		# system requiring utm_zone to get easting and northing
 		"""if not lat or not lon:
