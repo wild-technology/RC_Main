@@ -53,18 +53,6 @@ class GeoreferenceImages(RCModule):
 			prompt_user=True
 		)
 
-		"""
-		additional_params['geo_utm_zone'] = Parameter(
-			name='UTM Zone',
-			cli_short='g_u',
-			cli_long='g_zone',
-			type=str,
-			default_value=None,
-			description='UTM zone number for coordinate conversion (leave blank for GPS coordinates)',
-			prompt_user=True
-		)
-		"""
-
 		return {**super().get_parameters(), **additional_params}
 
 	def __read_tsv_data(self, filename):
@@ -90,39 +78,18 @@ class GeoreferenceImages(RCModule):
 			raise e
 		return data_rows
 
-def __convert_to_utm(self, lat, lon, utm_zone):
-    """Convert latitude and longitude to UTM coordinates in the specified zone."""
-    if not lat or not lon:
-        return None, None
-    try:
-        # Extract the zone number and hemisphere from the UTM zone parameter
-        zone_number = int(utm_zone[:-1])
-        hemisphere = 'north' if utm_zone[-1].upper() == 'N' else 'south'
-        utm_values = utm.from_latlon(lat, lon, force_zone_number=zone_number)
-        easting = utm_values[0]
-        northing = utm_values[1]
-        if hemisphere == 'south':
-            northing -= 10000000.0
-        return easting, northing
-    except Exception as e:
-        self.logger.error(f"Failed to convert to UTM coordinates: {e}")
-        return None, None
-
-		# system requiring utm_zone to get easting and northing
-		"""if not lat or not lon:
+	def __convert_to_utm(self, lat, lon):
+		"""Convert latitude and longitude to UTM coordinates in the specified zone."""
+		if not lat or not lon:
 			return None, None
 		try:
-			zone_number = utm_zone[:-1]
-			hemisphere = 'north' if utm_zone[-1].upper() == 'N' else 'south'
-			proj_string = f"+proj=utm +zone={zone_number} +ellps=WGS84 +datum=WGS84 +units=m +no_defs"
-			proj_utm = Proj(proj_string, preserve_units=False)
-			utm_x, utm_y = proj_utm(lon, lat)
-			if hemisphere == 'south':
-				utm_y -= 10000000.0
-			return utm_x, utm_y
+			utm_values = utm.from_latlon(lat, lon)
+			easting = utm_values[0]
+			northing = utm_values[1]
+			return easting, northing
 		except Exception as e:
 			self.logger.error(f"Failed to convert to UTM coordinates: {e}")
-			return None, None"""
+			return None, None
 
 	def __is_image_file(self, filename, image_folder):
 		try:
@@ -162,7 +129,7 @@ def __convert_to_utm(self, lat, lon, utm_zone):
 
 		return image_data
 
-	def __estimate_location(self, image_data, data_rows, utm_zone):
+	def __estimate_location(self, image_data, data_rows):
 		"""Estimate geographical location and sensor data for each image based on its timestamp."""
 		matches_made = 0
 
@@ -173,7 +140,7 @@ def __convert_to_utm(self, lat, lon, utm_zone):
 			if relevant_data_rows:
 				closest_match = min(relevant_data_rows, key=lambda row: abs(row["TIME"] - image["TIMESTAMP"]))
 				lat, lon = closest_match.get("LAT"), closest_match.get("LONG")
-				utm_x, utm_y = self.__convert_to_utm(lat, lon, utm_zone)
+				utm_x, utm_y = self.__convert_to_utm(lat, lon)
 				base_pitch = 85 if image["FILENAME"].startswith("P") else 40  # Default pitch adjusted to 40
 				tsv_pitch = closest_match.get("PITCH", 0)
 				image.update({
@@ -197,7 +164,7 @@ def __convert_to_utm(self, lat, lon, utm_zone):
 			self._update_loading_bar(bar, 1)
 		return matches_made
 
-	def __generate_flight_log(self, image_data, image_folder, coordinate_system):
+	def __generate_flight_log(self, image_data, image_folder):
 		"""Generate a flight log file from the image data with selectable coordinate system (UTM or GPS)."""
 		flight_log_filename = os.path.join(image_folder, "flight_log.txt")
 		if os.path.exists(flight_log_filename):
@@ -205,6 +172,7 @@ def __convert_to_utm(self, lat, lon, utm_zone):
 			os.remove(flight_log_filename)
 
 		with open(flight_log_filename, "w") as f:
+			coordinate_system = "UTM"
 			if coordinate_system == "UTM":
 				f.write("Name;X (East);Y (North);Alt;Yaw;Pitch;Roll\n")  # UTM specific header
 				for image in image_data:
@@ -253,23 +221,14 @@ def __convert_to_utm(self, lat, lon, utm_zone):
 		# get input type (Zeuss or WCA)
 		input_type = self.params['geo_input_type'].get_value()
 
-		# get UTM zone and coordinate system (UTM or GPS)
-		utm_zone = None
-		coordinate_system = None
-		if 'geo_utm_zone' in self.params and self.params['geo_utm_zone'].get_value() != "":
-			utm_zone = self.params['geo_utm_zone'].get_value()
-			coordinate_system = "UTM"
-		else:
-			coordinate_system = "GPS"
-
 		output_data = {}
 
 		# Process the data
 		try:
 			data_rows = self.__read_tsv_data(flight_log)
 			image_data = self.__read_image_filenames(input_dir, input_type)
-			matches_made = self.__estimate_location(image_data, data_rows, utm_zone)
-			self.__generate_flight_log(image_data, input_dir, coordinate_system)
+			matches_made = self.__estimate_location(image_data, data_rows)
+			self.__generate_flight_log(image_data, input_dir)
 
 			output_data['Input Log Rows Extracted'] = len(data_rows)
 			output_data['Input Image Count'] = len(image_data)
