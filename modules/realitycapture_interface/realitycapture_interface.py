@@ -138,9 +138,7 @@ class RealityCaptureAlignment(RCModule):
 		generate_model_str = "true" if generate_model else "false"
 		cull_polygons_str = "true" if cull_polygons else "false"
 
-		print(["cmd", "/c", "AlignImagesFromFolder.bat", input_folder, output_folder, flight_log_path, flight_log_params_path, generate_model_str, cull_polygons_str])
-
-		self.__run_subprocess(["cmd", "/c", "AlignImagesFromFolder.bat", input_folder, output_folder, flight_log_path, flight_log_params_path, generate_model_str, cull_polygons_str],
+		self.__run_subprocess(["cmd", "/c", "AlignImagesFromFolder.bat", input_folder, output_folder, flight_log_path, flight_log_params_path, generate_model_str, cull_polygons_str, component_file_name],
 					scripts_dir, display_output)
 
 		# subprocess returns early, wait for the program to finish before continuing
@@ -187,7 +185,7 @@ class RealityCaptureAlignment(RCModule):
 			generated_scene_path = os.path.join(output_folder, generated_scene_files[0])
 			scene_path = f"{component_path_base}.rcproj"
 
-			if os.path.exists(component_path):
+			if os.path.exists(scene_path):
 				self.logger.warning('Scene "%s" already exists. Overwrite? (y/n)', scene_path)
 				overwrite = input()
 
@@ -195,16 +193,19 @@ class RealityCaptureAlignment(RCModule):
 					self.logger.warning('Scene not created')
 					os.remove(generated_scene_path)
 				else:
-					os.remove(component_path)
-					os.rename(generated_scene_path, component_path)
+					os.remove(scene_path)
+					os.rename(generated_scene_path, scene_path)
 					outputted_scene = True
+			else:
+				os.rename(generated_scene_path, scene_path)
+				outputted_scene = True
 
 		component_data = {}
 		component_data['Success'] = True
 		component_data['Component Count'] = outputted_component_count
 
 		scene_data = {}
-		scene_data['Success'] = outputted_scene
+		scene_data['Success'] = True
 		return component_data, scene_data
 
 	def __get_component_file_name(self, image_folder):

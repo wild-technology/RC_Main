@@ -12,7 +12,7 @@ if [%1] == [] (
 )
 
 if [%2] == [] (
-    set /P input_dir="Component Output Directory: "
+    set /P output_dir="Component Output Directory: "
 ) else (
     set output_dir=%~2
 )
@@ -46,6 +46,12 @@ if defined GENERATE_MODEL_BOOL (
         set cull_polygons=%ERRORLEVEL%
     ) else (
         set cull_polygons=%~6
+    )
+
+    if [%7] == [] (
+        set /P scene_name="Scene name:"
+    ) else (
+        set scene_name=%~7
     )
 )
 
@@ -82,7 +88,7 @@ if defined GENERATE_MODEL_BOOL (
         %RealityCapture% -delegateTo RC1 -cleanModel
     )
 
-    %RealityCapture% -delegateTo RC1 -save
+    %RealityCapture% -delegateTo RC1 -save "%output_dir%\\%scene_name%.rcproj"
 )
 
 %RealityCapture% -delegateTo RC1 -quit
