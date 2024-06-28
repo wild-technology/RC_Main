@@ -46,6 +46,26 @@ class RealityCaptureAlignment(RCModule):
 			disable_when_module_active=['Batch Directory', 'Georeference Images']
 		)
 
+		additional_params['rc_generate_model'] = Parameter(
+			name='Generate Model',
+			cli_short='r_m',
+			cli_long='r_generate_model',
+			type=bool,
+			default_value=True,
+			description='Whether to automatically generate the model',
+			prompt_user=True
+		)
+
+		additional_params['rc_automatic_poly_cull'] = Parameter(
+			name='Model Polygon Culling',
+			cli_short='r_c',
+			cli_long='r_automatic_cull',
+			type=bool,
+			default_value=True,
+			description='Whether to automatically cull large and floating polygons on the generated model',
+			prompt_user=True
+		)
+
 		return {**super().get_parameters(), **additional_params}
 
 	def __check_and_create_folder(self, path):
@@ -89,7 +109,7 @@ class RealityCaptureAlignment(RCModule):
 		else:
 			return os.path.join(self.params['output_dir'].get_value(), "flight_log.txt")
 
-	def __align_images(self, input_folder, output_folder, component_file_name, flight_log_path, flight_log_params_path, display_output=False):
+	def __align_images(self, input_folder, output_folder, component_file_name, flight_log_path, flight_log_params_path, display_output=False, generate_model=True, cull_polygons=False):
 		"""
 		Aligns images in a folder and saves the component file to the output folder.
 		"""
@@ -115,7 +135,12 @@ class RealityCaptureAlignment(RCModule):
 		this_file_dir = os.path.dirname(os.path.realpath(__file__))
 		scripts_dir = os.path.join(this_file_dir, 'RC_CLI', 'Scripts')
 
-		self.__run_subprocess(["cmd", "/c", "AlignImagesFromFolder.bat", input_folder, output_folder, flight_log_path, flight_log_params_path],
+		generate_model_str = "true" if generate_model else "false"
+		cull_polygons_str = "true" if cull_polygons else "false"
+
+		print(["cmd", "/c", "AlignImagesFromFolder.bat", input_folder, output_folder, flight_log_path, flight_log_params_path, generate_model_str, cull_polygons_str])
+
+		self.__run_subprocess(["cmd", "/c", "AlignImagesFromFolder.bat", input_folder, output_folder, flight_log_path, flight_log_params_path, generate_model_str, cull_polygons_str],
 					scripts_dir, display_output)
 
 		# subprocess returns early, wait for the program to finish before continuing
@@ -132,9 +157,10 @@ class RealityCaptureAlignment(RCModule):
 		component_path_base = os.path.join(output_folder, component_file_name)
 
 		outputted_component_count = 0
+		outputted_scene = False
 
 		if not generated_component_files or len(generated_component_files) == 0:
-			return {'Success': False, 'Component Count': 0}
+			return {'Success': False, 'Component Count': 0}, {'Success': False}
 
 		# use index for loop so we can index the name
 		for index, generated_component_file in enumerate(generated_component_files):
@@ -155,10 +181,31 @@ class RealityCaptureAlignment(RCModule):
 			os.rename(generated_component_path, component_path)
 			outputted_component_count += 1
 
-		output_data = {}
-		output_data['Success'] = True
-		output_data['Component Count'] = outputted_component_count
-		return output_data
+		generated_scene_files = [f for f in os.listdir(output_folder) if f.startswith("Scene") and f.endswith(".rcproj")]
+
+		if generated_scene_files and len(generated_scene_files) == 1:
+			generated_scene_path = os.path.join(output_folder, generated_scene_files[0])
+			scene_path = f"{component_path_base}.rcproj"
+
+			if os.path.exists(component_path):
+				self.logger.warning('Scene "%s" already exists. Overwrite? (y/n)', scene_path)
+				overwrite = input()
+
+				if overwrite.lower() != 'y':
+					self.logger.warning('Scene not created')
+					os.remove(generated_scene_path)
+				else:
+					os.remove(component_path)
+					os.rename(generated_scene_path, component_path)
+					outputted_scene = True
+
+		component_data = {}
+		component_data['Success'] = True
+		component_data['Component Count'] = outputted_component_count
+
+		scene_data = {}
+		scene_data['Success'] = outputted_scene
+		return component_data, scene_data
 
 	def __get_component_file_name(self, image_folder):
 		"""
@@ -196,6 +243,8 @@ class RealityCaptureAlignment(RCModule):
 		
 		output_dir = os.path.join(self.params['output_dir'].get_value(), "aligned_components")
 		display_output = self.params['rc_display_output'].get_value()
+		generate_model = self.params['rc_generate_model'].get_value()
+		cull_polygons = self.params['rc_automatic_poly_cull'].get_value()
 
 		this_file_dir = os.path.dirname(os.path.realpath(__file__))
 		metadata_dir = os.path.join(this_file_dir, 'RC_CLI', 'Metadata')
@@ -257,6 +306,7 @@ class RealityCaptureAlignment(RCModule):
 		output_data['Output Directory'] = output_dir
 		output_data['Component Count'] = len(process_data)
 		output_data['Components'] = {}
+		output_data['Scenes'] = {}
 
 		bar = self._initialize_loading_bar(len(process_data), "Aligning Batches")
 
@@ -270,9 +320,12 @@ class RealityCaptureAlignment(RCModule):
 			display_output = data['display_output']
 
 			component_path = os.path.join(output_dir, component_file_name)
+			scene_path = os.path.join(output_dir, component_file_name + ".rcproj")
 			
 			try:
-				output_data['Components'][component_path] = self.__align_images(input_folder, output_dir, component_file_name, flight_log_path, flight_log_params_path, display_output)
+				component_data, scene_data = self.__align_images(input_folder, output_dir, component_file_name, flight_log_path, flight_log_params_path, display_output, generate_model, cull_polygons)
+				output_data['Components'][component_path] = component_data
+				output_data['Scenes'][scene_path] = scene_data
 			except Exception as e:
 				self.logger.error(f"Error aligning images: {e}")
 			
@@ -287,6 +340,12 @@ class RealityCaptureAlignment(RCModule):
 		
 		if not 'rc_display_output' in self.params:
 			return False, 'Display output parameter not found'
+		
+		if not 'rc_generate_model' in self.params:
+			return False, 'Generate model parameter not found'
+		
+		if not 'rc_automatic_poly_cull' in self.params:
+			self.params['rc_automatic_poly_cull'] = False
 			
 		# Validate output directory
 		output_dir = os.path.join(self.params['output_dir'].get_value(), 'aligned_components')
@@ -305,6 +364,3 @@ class RealityCaptureAlignment(RCModule):
 			os.makedirs(output_dir)
 		
 		return True, None
-		
-		# hard to validate the input folder/flight log because it could be a batched folder
-		# validate those as they are used instead
