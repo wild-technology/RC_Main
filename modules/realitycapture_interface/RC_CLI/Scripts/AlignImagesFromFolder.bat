@@ -86,6 +86,7 @@ if defined GENERATE_MODEL_BOOL (
         %RealityCapture% -delegateTo RC1 -invertTrianglesSelection
         %RealityCapture% -delegateTo RC1 -removeSelectedTriangles
         %RealityCapture% -delegateTo RC1 -cleanModel
+        %RealityCapture% -delegateTo RC1 -calculateVertexColors
     )
 
     %RealityCapture% -delegateTo RC1 -save "%output_dir%\\%scene_name%.rcproj"
