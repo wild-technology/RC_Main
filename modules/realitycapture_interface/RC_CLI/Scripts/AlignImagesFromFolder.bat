@@ -201,3 +201,5 @@ if defined GENERATE_MODEL_BOOL (
 
 echo Saving project
 %RealityCapture% -delegateTo RC1 -save "%output_dir%\\%scene_name%.rcproj"
+
+%RealityCapture% -delegateTo RC1 -quit
