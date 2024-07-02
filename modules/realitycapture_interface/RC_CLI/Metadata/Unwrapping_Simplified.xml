@@ -1,0 +1,11 @@
+<Configuration id="{54A4029C-DE57-43F6-8F81-75C62E159021}">
+  <entry key="unwrapButtonDisabled" value="0"/>
+  <entry key="unwrapGutter" value="2"/>
+  <entry key="unwrapMinTexResolution" value="512"/>
+  <entry key="unwrapStyle" value="MaxTexturesCount"/>
+  <entry key="unwrapMaximalTexCount" value="1"/>
+  <entry key="unwrapFillTextures" value="0x0"/>
+  <entry key="unwrapMaxTexResolution" value="16384"/>
+  <entry key="unwrapLargeTriangleRemovalThr" value="10"/>
+  <entry key="unwrapMethod" value="Geometric"/>
+</Configuration>

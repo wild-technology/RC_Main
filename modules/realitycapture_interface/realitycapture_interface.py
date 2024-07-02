@@ -46,23 +46,43 @@ class RealityCaptureAlignment(RCModule):
 			disable_when_module_active=['Batch Directory', 'Georeference Images']
 		)
 
-		additional_params['rc_generate_model'] = Parameter(
+		additional_params['rc_model_generate'] = Parameter(
 			name='Generate Model',
 			cli_short='r_m',
-			cli_long='r_generate_model',
+			cli_long='r_model_generate',
 			type=bool,
 			default_value=True,
 			description='Whether to automatically generate the model',
 			prompt_user=True
 		)
 
-		additional_params['rc_automatic_poly_cull'] = Parameter(
+		additional_params['rc_model_cull_poly'] = Parameter(
 			name='Model Polygon Culling',
 			cli_short='r_c',
-			cli_long='r_automatic_cull',
+			cli_long='r_model_cull_poly',
 			type=bool,
 			default_value=True,
 			description='Whether to automatically cull large and floating polygons on the generated model',
+			prompt_user=True
+		)
+
+		additional_params['rc_model_texture'] = Parameter(
+			name='Model Texturing',
+			cli_short='r_t',
+			cli_long='r_model_texture',
+			type=bool,
+			default_value=True,
+			description='Whether to automatically texture the generated model',
+			prompt_user=True
+		)
+
+		additional_params['rc_model_simplify'] = Parameter(
+			name='Model Simplification',
+			cli_short='r_s',
+			cli_long='r_model_simplify',
+			type=bool,
+			default_value=True,
+			description='Whether to automatically simplify the generated model',
 			prompt_user=True
 		)
 
@@ -76,12 +96,18 @@ class RealityCaptureAlignment(RCModule):
 			os.mkdir(path)
 			self.logger.info(f"Created folder: {path}")
 
-	def __run_subprocess(self, command, cwd, display_output=False):
+	def __run_subprocess(self, command, cwd, log_folder, display_output=False):
 		"""
 		Runs a subprocess command and waits for it to finish.
 		"""
+		self.__check_and_create_folder(os.path.join(cwd, log_folder))
 
-		result = subprocess.Popen(command, cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, 
+		cur_time = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
+		output_path = os.path.join(cwd, log_folder, f"output_{cur_time}.txt")
+
+		output_file = open(output_path, "w")
+
+		result = subprocess.Popen(command, cwd=cwd, stdout=output_file, stderr=output_file, 
 								creationflags=subprocess.CREATE_NO_WINDOW if not display_output else subprocess.CREATE_NEW_CONSOLE)
 		stdout, stderr = result.communicate()
 
@@ -109,7 +135,7 @@ class RealityCaptureAlignment(RCModule):
 		else:
 			return os.path.join(self.params['output_dir'].get_value(), "flight_log.txt")
 
-	def __align_images(self, input_folder, output_folder, component_file_name, flight_log_path, flight_log_params_path, display_output=False, generate_model=True, cull_polygons=False):
+	def __align_images(self, input_folder, output_folder, component_file_name, flight_log_path, flight_log_params_path, display_output=False, generate_model=True, cull_polygons=False, texture_model=False, simplify_model=False):
 		"""
 		Aligns images in a folder and saves the component file to the output folder.
 		"""
@@ -137,9 +163,13 @@ class RealityCaptureAlignment(RCModule):
 
 		generate_model_str = "true" if generate_model else "false"
 		cull_polygons_str = "true" if cull_polygons else "false"
+		texture_model_str = "true" if texture_model else "false"
+		simplify_model_str = "true" if simplify_model else "false"
 
-		self.__run_subprocess(["cmd", "/c", "AlignImagesFromFolder.bat", input_folder, output_folder, flight_log_path, flight_log_params_path, generate_model_str, cull_polygons_str, component_file_name],
-					scripts_dir, display_output)
+		log_dir = os.path.join(os.path.dirname(output_folder), "logs")
+
+		self.__run_subprocess(["cmd", "/c", "AlignImagesFromFolder.bat", input_folder, output_folder, flight_log_path, flight_log_params_path, generate_model_str, cull_polygons_str, component_file_name, texture_model_str, simplify_model_str],
+					scripts_dir, log_dir, display_output)
 
 		# subprocess returns early, wait for the program to finish before continuing
 		while True:
@@ -244,8 +274,10 @@ class RealityCaptureAlignment(RCModule):
 		
 		output_dir = os.path.join(self.params['output_dir'].get_value(), "aligned_components")
 		display_output = self.params['rc_display_output'].get_value()
-		generate_model = self.params['rc_generate_model'].get_value()
-		cull_polygons = self.params['rc_automatic_poly_cull'].get_value()
+		generate_model = self.params['rc_model_generate'].get_value()
+		cull_polygons = self.params['rc_model_cull_poly'].get_value()
+		texture_model = self.params['rc_model_texture'].get_value()
+		simplify_model = self.params['rc_model_simplify'].get_value()
 
 		this_file_dir = os.path.dirname(os.path.realpath(__file__))
 		metadata_dir = os.path.join(this_file_dir, 'RC_CLI', 'Metadata')
@@ -324,7 +356,7 @@ class RealityCaptureAlignment(RCModule):
 			scene_path = os.path.join(output_dir, component_file_name + ".rcproj")
 			
 			try:
-				component_data, scene_data = self.__align_images(input_folder, output_dir, component_file_name, flight_log_path, flight_log_params_path, display_output, generate_model, cull_polygons)
+				component_data, scene_data = self.__align_images(input_folder, output_dir, component_file_name, flight_log_path, flight_log_params_path, display_output, generate_model, cull_polygons, texture_model, simplify_model)
 				output_data['Components'][component_path] = component_data
 				output_data['Scenes'][scene_path] = scene_data
 			except Exception as e:
@@ -342,11 +374,17 @@ class RealityCaptureAlignment(RCModule):
 		if not 'rc_display_output' in self.params:
 			return False, 'Display output parameter not found'
 		
-		if not 'rc_generate_model' in self.params:
+		if not 'rc_model_generate' in self.params:
 			return False, 'Generate model parameter not found'
 		
-		if not 'rc_automatic_poly_cull' in self.params:
-			self.params['rc_automatic_poly_cull'] = False
+		if not 'rc_model_cull_poly' in self.params:
+			self.params['rc_model_cull_poly'] = False
+
+		if not 'rc_model_texture' in self.params:
+			self.params['rc_model_texture'] = False
+
+		if not 'rc_model_simplify' in self.params:
+			self.params['rc_model_simplify'] = False
 			
 		# Validate output directory
 		output_dir = os.path.join(self.params['output_dir'].get_value(), 'aligned_components')
