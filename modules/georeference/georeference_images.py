@@ -130,18 +130,37 @@ class GeoreferenceImages(RCModule):
 		return image_data
 
 	def __estimate_location(self, image_data, data_rows):
-		"""Estimate geographical location and sensor data for each image based on its timestamp."""
+		"""Estimate geographical location and sensor data for each image based on its timestamp.
+		Also prints out counts of matches in different time-difference buckets.
+		"""
 		matches_made = 0
+		exact_matches = 0
+		matches_1_4 = 0
+		matches_5_15 = 0
+		matches_gt15 = 0
+		no_matches = 0
 
 		bar = self._initialize_loading_bar(len(image_data), "Estimating Location")
 
 		for image in image_data:
-			relevant_data_rows = [row for row in data_rows if abs(row["TIME"] - image["TIMESTAMP"]) <= timedelta(seconds=2)]
-			if relevant_data_rows:
-				closest_match = min(relevant_data_rows, key=lambda row: abs(row["TIME"] - image["TIMESTAMP"]))
+			if data_rows:
+				# Find the closest match regardless of time difference
+				closest_match = min(data_rows, key=lambda row: abs(row["TIME"] - image["TIMESTAMP"]))
+				time_diff = abs(closest_match["TIME"] - image["TIMESTAMP"])
+				diff_sec = time_diff.total_seconds()
+				# Categorize the time difference into buckets
+				if diff_sec == 0:
+					exact_matches += 1
+				elif 1 <= diff_sec <= 4:
+					matches_1_4 += 1
+				elif 5 <= diff_sec <= 15:
+					matches_5_15 += 1
+				elif diff_sec > 15:
+					matches_gt15 += 1
+
 				lat, lon = closest_match.get("LAT"), closest_match.get("LONG")
 				utm_x, utm_y = self.__convert_to_utm(lat, lon)
-				base_pitch = 90 if image["FILENAME"].startswith("P") else 30  # Default pitch adjusted to 40
+				base_pitch = 90 if image["FILENAME"].startswith("P") else 30  # Default pitch adjusted as needed
 				csv_pitch = closest_match.get("PITCH", 0)
 				image.update({
 					"LAT": lat,
@@ -155,14 +174,21 @@ class GeoreferenceImages(RCModule):
 				})
 				matches_made += 1
 			else:
+				no_matches += 1
 				image.update({
 					"LAT": None, "LONG": None, "UTM_X": None, "UTM_Y": None,
 					"ALTITUDE_EST": None, "HEADING": None,
-					"PITCH": 40 if image["FILENAME"].startswith("P") else None, "ROLL": None  # Default pitch adjusted to 40
+					"PITCH": 40 if image["FILENAME"].startswith("P") else None, "ROLL": None
 				})
-				self.logger.error(f"No matching csv data within 2 seconds for image {image['FILENAME']}.")
+				print(f"Error: No matching CSV data within 2 seconds for image {image['FILENAME']}.")
 			self._update_loading_bar(bar, 1)
-		return matches_made
+
+		print("Matching results:")
+		print(f"Exact matches: {exact_matches}")
+		print(f"Matches 1-4 sec: {matches_1_4}")
+		print(f"Matches 5-15 sec: {matches_5_15}")
+		print(f"Matches >15 sec: {matches_gt15}")
+		print(f"No matches: {no_matches}")
 
 	def __generate_flight_log(self, image_data, image_folder):
 		"""Generate a flight log file from the image data with selectable coordinate system (UTM or GPS)."""
