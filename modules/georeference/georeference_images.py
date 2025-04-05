@@ -141,7 +141,7 @@ class GeoreferenceImages(RCModule):
 				closest_match = min(relevant_data_rows, key=lambda row: abs(row["TIME"] - image["TIMESTAMP"]))
 				lat, lon = closest_match.get("LAT"), closest_match.get("LONG")
 				utm_x, utm_y = self.__convert_to_utm(lat, lon)
-				base_pitch = 90 if image["FILENAME"].startswith("P") else 40  # Default pitch adjusted to 40
+				base_pitch = 90 if image["FILENAME"].startswith("P") else 30  # Default pitch adjusted to 40
 				csv_pitch = closest_match.get("PITCH", 0)
 				image.update({
 					"LAT": lat,
