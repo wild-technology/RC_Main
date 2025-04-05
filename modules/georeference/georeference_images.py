@@ -12,7 +12,7 @@ from module_base.rc_module import RCModule
 from module_base.parameter import Parameter
 
 class GeoreferenceImages(RCModule):
-	TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%S"  # Correct format for timestamps in TSV files
+	TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"  # Correct format for timestamps in cSV files
 	WCA_FILENAME_TIMESTAMP_FORMAT = "%Y%m%d%H%M%S"  # WCA format for timestamps in filenames
 	ZEUSS_FILENAME_TIMESTAMP_FORMAT = "%Y%m%d%H%M%S"  # Zeuss format for timestamps in filenames
 
@@ -55,26 +55,26 @@ class GeoreferenceImages(RCModule):
 
 		return {**super().get_parameters(), **additional_params}
 
-	def __read_tsv_data(self, filename):
-		"""Read and parse TSV data from a file, including sensor and position data."""
+	def __read_csv_data(self, filename):
+		"""Read and parse cSV data from a file, including sensor and position data."""
 		data_rows = []
 		try:
-			with open(filename, "r") as tsvfile:
-				reader = csv.reader(tsvfile, delimiter='\t')
+			with open(filename, "r") as csvfile:
+				reader = csv.reader(csvfile, delimiter=',')
 				header = next(reader)
 				idx_map = {name: index for index, name in enumerate(header)}
 				for row in reader:
 					data_rows.append({
-						"TIME": datetime.strptime(row[idx_map['time']], self.TIMESTAMP_FORMAT),
-						"LAT": float(row[idx_map['usbl_lat']]) if row[idx_map['usbl_lat']] else None,
-						"LONG": float(row[idx_map['usbl_lon']]) if row[idx_map['usbl_lon']] else None,
-						"DEPTH": -abs(float(row[idx_map['paro_depth_m']])) if row[idx_map['paro_depth_m']] else None,
-						"HEADING": float(row[idx_map['octans_heading']]) if row[idx_map['octans_heading']] else None,
-						"PITCH": float(row[idx_map['octans_pitch']]) if row[idx_map['octans_pitch']] else None,
-						"ROLL": float(row[idx_map['octans_roll']]) if row[idx_map['octans_roll']] else None
+						"TIME": datetime.strptime(row[idx_map['Timestamp']], self.TIMESTAMP_FORMAT),
+						"LAT": float(row[idx_map['Latitude']]) if row[idx_map['Latitude']] else None,
+						"LONG": float(row[idx_map['Longitude']]) if row[idx_map['Longitude']] else None,
+						"DEPTH": -abs(float(row[idx_map['Depth']])) if row[idx_map['Depth']] else None,
+						"HEADING": float(row[idx_map['Heading']]) if row[idx_map['Heading']] else None,
+						"PITCH": float(row[idx_map['Pitch']]) if row[idx_map['Pitch']] else None,
+						"ROLL": float(row[idx_map['Roll']]) if row[idx_map['Roll']] else None
 					})
 		except Exception as e:
-			self.logger.error(f"Error processing TSV file: {e}")
+			self.logger.error(f"Error processing CSV file: {e}")
 			raise e
 		return data_rows
 
@@ -141,8 +141,8 @@ class GeoreferenceImages(RCModule):
 				closest_match = min(relevant_data_rows, key=lambda row: abs(row["TIME"] - image["TIMESTAMP"]))
 				lat, lon = closest_match.get("LAT"), closest_match.get("LONG")
 				utm_x, utm_y = self.__convert_to_utm(lat, lon)
-				base_pitch = 85 if image["FILENAME"].startswith("P") else 40  # Default pitch adjusted to 40
-				tsv_pitch = closest_match.get("PITCH", 0)
+				base_pitch = 90 if image["FILENAME"].startswith("P") else 40  # Default pitch adjusted to 40
+				csv_pitch = closest_match.get("PITCH", 0)
 				image.update({
 					"LAT": lat,
 					"LONG": lon,
@@ -150,7 +150,7 @@ class GeoreferenceImages(RCModule):
 					"UTM_Y": utm_y,
 					"ALTITUDE_EST": closest_match.get("DEPTH"),
 					"HEADING": closest_match.get("HEADING"),
-					"PITCH": base_pitch + tsv_pitch,
+					"PITCH": base_pitch + csv_pitch,
 					"ROLL": closest_match.get("ROLL")
 				})
 				matches_made += 1
@@ -160,7 +160,7 @@ class GeoreferenceImages(RCModule):
 					"ALTITUDE_EST": None, "HEADING": None,
 					"PITCH": 40 if image["FILENAME"].startswith("P") else None, "ROLL": None  # Default pitch adjusted to 40
 				})
-				self.logger.error(f"No matching TSV data within 2 seconds for image {image['FILENAME']}.")
+				self.logger.error(f"No matching csv data within 2 seconds for image {image['FILENAME']}.")
 			self._update_loading_bar(bar, 1)
 		return matches_made
 
@@ -225,7 +225,7 @@ class GeoreferenceImages(RCModule):
 
 		# Process the data
 		try:
-			data_rows = self.__read_tsv_data(flight_log)
+			data_rows = self.__read_csv_data(flight_log)
 			image_data = self.__read_image_filenames(input_dir, input_type)
 			matches_made = self.__estimate_location(image_data, data_rows)
 			self.__generate_flight_log(image_data, input_dir)
@@ -266,8 +266,8 @@ class GeoreferenceImages(RCModule):
 		if not os.path.isfile(flight_log):
 			return False, 'Flight log file does not exist'
 		
-		if os.path.splitext(flight_log)[1].lower() != '.tsv':
-			return False, 'Flight log is not an TSV file'
+		if os.path.splitext(flight_log)[1].lower() != '.csv':
+			return False, 'Flight log is not an csv file'
 
 		if not 'geo_input_type' in self.params:
 			return False, 'Data type parameter not found'
