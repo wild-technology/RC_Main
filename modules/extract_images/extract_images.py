@@ -7,8 +7,8 @@ import shutil
 from datetime import datetime, timedelta
 from ..file_metadata_parser import parse_timestamp_str, parse_timestamp
 import numpy as np
-from decord import VideoReader
-from decord import cpu, gpu
+# from decord import VideoReader
+# from decord import cpu, gpu
 
 class ExtractImages(RCModule):
 	def __init__(self, logger):
