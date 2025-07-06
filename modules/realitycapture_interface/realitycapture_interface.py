@@ -1,3 +1,4 @@
+from __future__ import annotations
 from module_base.rc_module import RCModule
 from module_base.parameter import Parameter
 
