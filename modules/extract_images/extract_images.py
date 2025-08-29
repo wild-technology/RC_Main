@@ -230,7 +230,7 @@ class ExtractImages(RCModule):
             # Generate the filename for the current frame
             # replace the timestamp in the filename with the new timestamp
             image_name = video_filename.replace(video_timestamp_str,
-                                                new_timestamp_str) + f"_frame{frame_index_in_second}.png"
+                                                new_timestamp_str) + f"_frame{frame_index_in_second}.jpg"
             image_path = os.path.join(output_folder, image_name)
 
             # compress frame to input_mpx if necessary
@@ -243,7 +243,7 @@ class ExtractImages(RCModule):
                 frame = cv2.resize(frame, (output_width, output_height), interpolation=cv2.INTER_AREA)
 
             # Save the frame as an image
-            cv2.imwrite(image_path, frame)
+            cv2.imwrite(image_path, frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
 
             current_frame_number = next_frame_number
             extracted_count += 1
@@ -277,15 +277,15 @@ class ExtractImages(RCModule):
         mov_files = []
 
         if os.path.isfile(input_path):
-            # One .MOV file was specified
-            # Separate the filename from the path, and add it to the list of .MOV files
+            # One .mov file was specified
+            # Separate the filename from the path, and add it to the list of .mov files
             input_video = os.path.basename(input_path)
             mov_files.append(input_video)
 
-            # Set the input path to the directory of the .MOV file
+            # Set the input path to the directory of the .mov file
             input_path = os.path.dirname(input_path)
         else:
-            # A directory of .MOV files was specified
+            # A directory of .mov files was specified
             mov_files = [filename for filename in os.listdir(input_path) if
                          os.path.splitext(filename)[1].lower() == ".mov"]
 
@@ -353,7 +353,7 @@ class ExtractImages(RCModule):
                 return False, 'Input file does not exist'
 
             if os.path.splitext(input_video)[1].lower() != '.mov':
-                return False, 'Input path is not an MOV file'
+                return False, 'Input path is not an mov file'
 
         if os.path.isdir(output_dir) and os.listdir(output_dir):
             self.logger.warning('Extracted images folder already exists. Overwrite? (y/n)')
