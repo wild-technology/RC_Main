@@ -4,8 +4,9 @@ import csv
 from datetime import datetime, timedelta
 from PIL import Image
 import sys
-import pyproj  # Import the projection library
-from pyproj import Proj, transform
+# pyproj imports not used; keep only if you plan to use them
+# import pyproj
+# from pyproj import Proj, transform
 from ..file_metadata_parser import parse_timestamp_str, parse_timestamp
 import utm
 
@@ -14,9 +15,9 @@ from module_base.parameter import Parameter
 
 
 class GeoreferenceImages(RCModule):
-    TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"  # Correct format for timestamps in cSV files
-    WCA_FILENAME_TIMESTAMP_FORMAT = "%Y%m%d%H%M%S"  # WCA format for timestamps in filenames
-    ZEUSS_FILENAME_TIMESTAMP_FORMAT = "%Y%m%d%H%M%S"  # Zeuss format for timestamps in filenames
+    TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+    WCA_FILENAME_TIMESTAMP_FORMAT = "%Y%m%d%H%M%S"
+    ZEUSS_FILENAME_TIMESTAMP_FORMAT = "%Y%m%d%H%M%S"
     WCA2025_FILENAME_TIMESTAMP_FORMAT = "%Y%m%dT%H%M%SZ"
 
     def __init__(self, logger):
@@ -57,10 +58,36 @@ class GeoreferenceImages(RCModule):
             prompt_user=True
         )
 
+        # NEW: magnetic declination in degrees (east positive)
+        additional_params['magnetic_declination_deg'] = Parameter(
+            name='Magnetic Declination (deg)',
+            cli_short='g_d',
+            cli_long='g_declination',
+            type=float,
+            default_value=0.0,
+            description='Add this to magnetic heading before converting to RC yaw',
+            prompt_user=False
+        )
+
         return {**super().get_parameters(), **additional_params}
 
+    # --- helpers for angles (NEW) ---
+    @staticmethod
+    def _wrap180(angle_deg: float) -> float:
+        return ((angle_deg + 180.0) % 360.0) - 180.0
+
+    def _compass_heading_to_rc_yaw(self, heading_mag_deg: float | None, decl_deg: float) -> float | None:
+        """
+        Convert compass heading (clockwise from TRUE north) to RC yaw about +Z in ENU.
+        RC yaw zero assumed along +X (east), positive CCW: yaw = wrap180(90 - true_heading).
+        """
+        if heading_mag_deg is None:
+            return None
+        true_heading = heading_mag_deg + (decl_deg or 0.0)  # east-positive declination
+        return self._wrap180(90.0 - true_heading)
+
     def __read_csv_data(self, filename):
-        """Read and parse cSV data from a file, including sensor and position data."""
+        """Read and parse CSV data from a file, including sensor and position data."""
         data_rows = []
         try:
             with open(filename, "r") as csvfile:
@@ -73,7 +100,8 @@ class GeoreferenceImages(RCModule):
                         "LAT": float(row[idx_map['kalman_lat']]) if row[idx_map['kalman_lat']] else None,
                         "LONG": float(row[idx_map['kalman_long']]) if row[idx_map['kalman_long']] else None,
                         "DEPTH": -abs(float(row[idx_map['kalman_depth']])) if row[idx_map['kalman_depth']] else None,
-                        "HEADING": float(row[idx_map['kalman_yaw_deg']]) if row[idx_map['kalman_yaw_deg']] else None,
+                        # NOTE: user states this is magnetic heading (degrees relative north)
+                        "HEADING_MAG": float(row[idx_map['kalman_yaw_deg']]) if row[idx_map['kalman_yaw_deg']] else None,
                         "PITCH": float(row[idx_map['kalman_pitch_deg']]) if row[idx_map['kalman_pitch_deg']] else None,
                         "ROLL": float(row[idx_map['kalman_roll_deg']]) if row[idx_map['kalman_roll_deg']] else None
                     })
@@ -84,18 +112,12 @@ class GeoreferenceImages(RCModule):
 
     def __convert_to_utm(self, lat, lon):
         """Convert latitude and longitude to UTM coordinates in the specified zone."""
-        if not lat or not lon:
+        if lat is None or lon is None:
             return None, None
         try:
-            utm_values = utm.from_latlon(lat, lon)
-            easting = utm_values[0]
-            northing = utm_values[1]
-
+            easting, northing, zone_number, zone_letter = utm.from_latlon(lat, lon)
             if self.utm_zone is None:
-                zone_number = utm_values[2]
-                zone_letter = utm_values[3]
                 self.utm_zone = f"{zone_number}{zone_letter}"
-
             return easting, northing
         except Exception as e:
             self.logger.error(f"Failed to convert to UTM coordinates: {e}")
@@ -103,9 +125,10 @@ class GeoreferenceImages(RCModule):
 
     def __is_image_file(self, filename, image_folder):
         try:
-            Image.open(os.path.join(image_folder, filename)).verify()
+            with Image.open(os.path.join(image_folder, filename)) as im:  # ensure file closed
+                im.verify()
             return True
-        except IOError:
+        except Exception:
             return False
 
     def __parse_timestamp_from_filename(self, filename, data_type):
@@ -135,14 +158,11 @@ class GeoreferenceImages(RCModule):
             if self.__is_image_file(filename, image_folder):
                 timestamp = self.__parse_timestamp_from_filename(filename, data_type)
                 if timestamp:
-                    image_data.append({
-                        "FILENAME": filename,
-                        "TIMESTAMP": timestamp
-                    })
+                    image_data.append({"FILENAME": filename, "TIMESTAMP": timestamp})
             self._update_loading_bar(bar, 1)
         return image_data
 
-    def __estimate_location(self, image_data, data_rows, input_type):
+    def __estimate_location(self, image_data, data_rows, input_type) -> int:
         """Estimate geographical location and sensor data for each image based on its timestamp."""
         matches_made = 0
         exact_matches = 0
@@ -150,6 +170,13 @@ class GeoreferenceImages(RCModule):
         matches_5_15 = 0
         matches_gt15 = 0
         no_matches = 0
+        decl = 0.0
+        if 'magnetic_declination_deg' in self.params:
+            try:
+                decl = float(self.params['magnetic_declination_deg'].get_value() or 0.0)
+            except Exception:
+                decl = 0.0
+
         bar = self._initialize_loading_bar(len(image_data), "Estimating Location")
         for image in image_data:
             filename = image["FILENAME"]
@@ -165,65 +192,74 @@ class GeoreferenceImages(RCModule):
                     matches_5_15 += 1
                 elif diff_sec > 15:
                     matches_gt15 += 1
+
                 lat, lon = closest_match.get("LAT"), closest_match.get("LONG")
                 utm_x, utm_y = self.__convert_to_utm(lat, lon)
 
-                # MODIFIED: Pitch calculation logic updated for WCA2025
+                vehicle_pitch = closest_match.get("PITCH", 0.0)
+                # WCA2025 pitch logic FIX: remove +90 offset; down is negative
                 final_pitch = None
-                vehicle_pitch = closest_match.get("PITCH", 0)
-
                 if input_type == "WCA2025":
-                    camera_angle = 0
+                    camera_angle = 0.0
                     if filename.startswith("camlower"):
-                        camera_angle = 0
+                        camera_angle = 0.0
                     elif filename.startswith("cammid"):
-                        camera_angle = -10
+                        camera_angle = -10.0
                     elif filename.startswith("camupper"):
-                        camera_angle = -45
-
-                    # Apply vehicle pitch, camera angle, and the constant 90-degree offset
-                    final_pitch = vehicle_pitch + camera_angle + 90
-                else:  # Fallback to original logic for Zeuss and WCA
-                    base_pitch = 30
+                        camera_angle = -45.0
+                    final_pitch = vehicle_pitch + camera_angle
+                else:  # Preserve original behavior for Zeuss/WCA
+                    base_pitch = 30.0
                     if filename.startswith("P"):
-                        base_pitch = 90
+                        base_pitch = 90.0
                     final_pitch = vehicle_pitch + base_pitch
 
+                # NEW: compute RC yaw from magnetic heading
+                yaw_rc = self._compass_heading_to_rc_yaw(closest_match.get("HEADING_MAG"), decl)
+
                 image.update({
-                    "LAT": lat, "LONG": lon, "UTM_X": utm_x, "UTM_Y": utm_y,
-                    "ALTITUDE_EST": closest_match.get("DEPTH"), "HEADING": closest_match.get("HEADING"),
-                    "PITCH": final_pitch, "ROLL": closest_match.get("ROLL")
+                    "LAT": lat,
+                    "LONG": lon,
+                    "UTM_X": utm_x,
+                    "UTM_Y": utm_y,
+                    "ALTITUDE_EST": closest_match.get("DEPTH"),
+                    "HEADING_MAG": closest_match.get("HEADING_MAG"),
+                    "YAW": yaw_rc,                   # <-- RC yaw to write out
+                    "PITCH": final_pitch,
+                    "ROLL": closest_match.get("ROLL")
                 })
                 matches_made += 1
             else:
                 no_matches += 1
 
-                # MODIFIED: Default pitch calculation updated for WCA2025
+                # Default pitch when no CSV present
                 pitch_val = None
                 if input_type == "WCA2025":
                     if filename.startswith("camlower"):
-                        pitch_val = 0 + 90  # 90
+                        pitch_val = 0.0
                     elif filename.startswith("cammid"):
-                        pitch_val = -10 + 90  # 80
+                        pitch_val = -10.0
                     elif filename.startswith("camupper"):
-                        pitch_val = -45 + 90  # 45
-                else:  # Fallback to original logic for Zeuss and WCA
-                    if filename.startswith("P"):
-                        pitch_val = 40
+                        pitch_val = -45.0
+                else:
+                    pitch_val = -30.0
 
                 image.update({
                     "LAT": None, "LONG": None, "UTM_X": None, "UTM_Y": None,
-                    "ALTITUDE_EST": None, "HEADING": None,
+                    "ALTITUDE_EST": None, "HEADING_MAG": None, "YAW": None,
                     "PITCH": pitch_val, "ROLL": None
                 })
-                print(f"Error: No matching CSV data within 2 seconds for image {image['FILENAME']}.")
+                print(f"No CSV data available for image {image['FILENAME']}.")  # message fixed
             self._update_loading_bar(bar, 1)
+
         print("Matching results:")
         print(f"Exact matches: {exact_matches}")
         print(f"Matches 1-4 sec: {matches_1_4}")
         print(f"Matches 5-15 sec: {matches_5_15}")
         print(f"Matches >15 sec: {matches_gt15}")
         print(f"No matches: {no_matches}")
+
+        return matches_made  # FIX: return count
 
     def __generate_flight_log(self, image_data, image_folder):
         """Generate a flight log file from the image data."""
@@ -238,8 +274,8 @@ class GeoreferenceImages(RCModule):
                 for image in image_data:
                     line = ";".join(str(x) for x in [
                         image["FILENAME"], image.get("UTM_X", ""), image.get("UTM_Y", ""),
-                        image.get("ALTITUDE_EST", ""), image.get("HEADING", ""), image.get("PITCH", ""),
-                        image.get("ROLL", "")
+                        image.get("ALTITUDE_EST", ""), image.get("YAW", ""),  # write RC yaw
+                        image.get("PITCH", ""), image.get("ROLL", "")
                     ])
                     f.write(line + "\n")
             else:
@@ -247,8 +283,8 @@ class GeoreferenceImages(RCModule):
                 for image in image_data:
                     line = ";".join(str(x) for x in [
                         image["FILENAME"], image.get("LAT", ""), image.get("LONG", ""),
-                        image.get("ALTITUDE_EST", ""), image.get("HEADING", ""), image.get("PITCH", ""),
-                        image.get("ROLL", "")
+                        image.get("ALTITUDE_EST", ""), image.get("YAW", ""),
+                        image.get("PITCH", ""), image.get("ROLL", "")
                     ])
                     f.write(line + "\n")
         print(f"Flight log generated successfully. Location: {flight_log_filename}")
@@ -259,12 +295,10 @@ class GeoreferenceImages(RCModule):
             self.logger.error(message)
             return {"Success": False}
         flight_log = self.params['geo_input_flight_log'].get_value()
-        output_path = None
         if 'geo_input_image_dir' in self.params:
             output_path = os.path.join(self.params['geo_input_image_dir'].get_value(), "flight_log.txt")
         else:
             output_path = os.path.join(self.params['output_dir'].get_value(), "flight_log.txt")
-        input_dir = None
         if 'geo_input_image_dir' in self.params:
             input_dir = self.params['geo_input_image_dir'].get_value()
         else:
@@ -274,9 +308,9 @@ class GeoreferenceImages(RCModule):
         try:
             data_rows = self.__read_csv_data(flight_log)
             image_data = self.__read_image_filenames(input_dir, input_type)
-            # MODIFIED: Pass input_type to the estimation function
-            matches_made = self.__estimate_location(image_data, data_rows, input_type)
+            matches_made = self.__estimate_location(image_data, data_rows, input_type)  # FIX: now returns int
             self.__generate_flight_log(image_data, input_dir)
+            output_data['Success'] = True
             output_data['Input Log Rows Extracted'] = len(data_rows)
             output_data['Input Image Count'] = len(image_data)
             output_data['Matched Image Count'] = matches_made
@@ -295,16 +329,15 @@ class GeoreferenceImages(RCModule):
 
         return output_data
 
-    def validate_parameters(self) -> (bool, str):
+    def validate_parameters(self) -> tuple[bool, str | None]:
         success, message = super().validate_parameters()
         if not success:
             return success, message
-        input_dir = None
         if 'geo_input_image_dir' in self.params:
             input_dir = self.params['geo_input_image_dir'].get_value()
         else:
             input_dir = os.path.join(self.params['output_dir'].get_value(), "raw_images")
-        if not 'geo_input_flight_log' in self.params:
+        if 'geo_input_flight_log' not in self.params:
             return False, 'Flight log parameter not found'
         flight_log = self.params['geo_input_flight_log'].get_value()
         if not os.path.isdir(input_dir):
@@ -312,15 +345,16 @@ class GeoreferenceImages(RCModule):
         if not os.path.isfile(flight_log):
             return False, 'Flight log file does not exist'
         if os.path.splitext(flight_log)[1].lower() != '.csv':
-            return False, 'Flight log is not an csv file'
-        if not 'geo_input_type' in self.params:
+            return False, 'Flight log is not a CSV file'
+        if 'geo_input_type' not in self.params:
             return False, 'Data type parameter not found'
-        if self.params['geo_input_type'].get_value().lower() not in ["zeuss", "wca", "wca2025"]:
+        dtype = self.params['geo_input_type'].get_value().lower()
+        if dtype not in ["zeuss", "wca", "wca2025"]:
             return False, 'Invalid data type specified'
-        if self.params['geo_input_type'].get_value().lower() == "wca":
+        if dtype == "wca":
             self.params['geo_input_type'].set_value("WCA")
-        if self.params['geo_input_type'].get_value().lower() == "zeuss":
+        if dtype == "zeuss":
             self.params['geo_input_type'].set_value("Zeuss")
-        if self.params['geo_input_type'].get_value().lower() == "wca2025":
+        if dtype == "wca2025":
             self.params['geo_input_type'].set_value("WCA2025")
         return True, None
