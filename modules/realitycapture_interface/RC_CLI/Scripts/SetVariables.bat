@@ -5,7 +5,7 @@
 REM setlocal EnableDelayedExpansion
 
 :: Path to RealityCapture application.
-set RealityCapture="C:\Program Files\Capturing Reality\RealityCapture\RealityCapture.exe" 
+set RealityCapture=""C:\Program%20Files\Epic%20Games\RealityScan_2.0\RealityScan.exe"
 
 :: Root path to work folders where all the datasets are stored 
 set RootFolder=%~dp0\\..\\

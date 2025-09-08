@@ -1,7 +1,7 @@
 :: These scripts were created by Epic Games Slovakia, who doesn't carry any liability in case issues related to the sample occur.
 @echo off
 
-set RealityCapture = "C:\Program Files\Epic Games\RealityScan_2.0\RealityScan.exe"
+set RealityCapture="C:\Program Files\Epic Games\RealityScan_2.0\RealityScan.exe"
 
 :: Test the RealityCapture is running
 %RealityCapture% -getStatus *

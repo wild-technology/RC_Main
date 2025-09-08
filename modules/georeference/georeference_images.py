@@ -209,9 +209,7 @@ class GeoreferenceImages(RCModule):
                         camera_angle = -45.0
                     final_pitch = vehicle_pitch + camera_angle
                 else:  # Preserve original behavior for Zeuss/WCA
-                    base_pitch = 30.0
-                    if filename.startswith("P"):
-                        base_pitch = 90.0
+                    base_pitch = -30.0
                     final_pitch = vehicle_pitch + base_pitch
 
                 # NEW: compute RC yaw from magnetic heading
