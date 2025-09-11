@@ -277,17 +277,17 @@ class ExtractImages(RCModule):
         mov_files = []
 
         if os.path.isfile(input_path):
-            # One .mov file was specified
-            # Separate the filename from the path, and add it to the list of .mov files
+            # One .mp4 file was specified
+            # Separate the filename from the path, and add it to the list of .mp4 files
             input_video = os.path.basename(input_path)
             mov_files.append(input_video)
 
-            # Set the input path to the directory of the .mov file
+            # Set the input path to the directory of the .mp4 file
             input_path = os.path.dirname(input_path)
         else:
-            # A directory of .mov files was specified
+            # A directory of .mp4 files was specified
             mov_files = [filename for filename in os.listdir(input_path) if
-                         os.path.splitext(filename)[1].lower() == ".mov"]
+                         os.path.splitext(filename)[1].lower() == ".mp4"]
 
         bar = self._initialize_loading_bar(len(mov_files), "Extracting Videos")
 
@@ -303,7 +303,7 @@ class ExtractImages(RCModule):
             mov_path = os.path.join(input_path, mov_file)
             file_extension = os.path.splitext(mov_path)[1].lower()
 
-            if not os.path.isfile(mov_path) or file_extension != '.mov':
+            if not os.path.isfile(mov_path) or file_extension != '.mp4':
                 continue
 
             # individual_output_data = self.__extract_video_decord(mov_path, output_folder, output_fpm, output_mpx)
@@ -344,7 +344,7 @@ class ExtractImages(RCModule):
         output_fpm = self.params['image_output_fpm'].get_value()
         output_mpx = self.params['image_output_mpx'].get_value()
 
-        # input folder could either be a .mov file or a folder of .mov files
+        # input folder could either be a .mp4 file or a folder of .mp4 files
         if is_input_folder:
             if not os.listdir(input_video):
                 return False, 'Input folder is empty'
@@ -352,7 +352,7 @@ class ExtractImages(RCModule):
             if not os.path.isfile(input_video):
                 return False, 'Input file does not exist'
 
-            if os.path.splitext(input_video)[1].lower() != '.mov':
+            if os.path.splitext(input_video)[1].lower() != '.mp4':
                 return False, 'Input path is not an mov file'
 
         if os.path.isdir(output_dir) and os.listdir(output_dir):
