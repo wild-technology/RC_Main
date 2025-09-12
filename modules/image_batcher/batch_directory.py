@@ -11,8 +11,11 @@ from sklearn.cluster import KMeans
 from sklearn.neighbors import KernelDensity
 from scipy.spatial import cKDTree, ConvexHull
 from shapely.geometry import Point
+from sklearn.preprocessing import StandardScaler
+import matplotlib
 import matplotlib.pyplot as plt
 import seaborn as sns
+import warnings
 
 
 class BatchDirectory(RCModule):
@@ -20,6 +23,7 @@ class BatchDirectory(RCModule):
 
     def __init__(self, logger):
         super().__init__("Batch Directory", logger)
+        self.logger.info(f"Matplotlib {matplotlib.__version__}, Seaborn {sns.__version__}")
 
     def get_parameters(self) -> dict[str, Parameter]:
         additional_params = {}
@@ -42,6 +46,26 @@ class BatchDirectory(RCModule):
             default_value=20.0,
             description='The initial percent of overlap between batches.',
             prompt_user=True
+        )
+
+        additional_params['batch_density_weight'] = Parameter(
+            name='Density Weight (0..1)',
+            cli_short='b_dw',
+            cli_long='b_density_weight',
+            type=float,
+            default_value=0.3,
+            description='Weight of density in clustering/overlap scoring (higher favors low-density boundaries).',
+            prompt_user=False
+        )
+
+        additional_params['batch_kde_bandwidth'] = Parameter(
+            name='KDE Bandwidth (meters, 0=auto)',
+            cli_short='b_bw',
+            cli_long='b_kde_bandwidth',
+            type=float,
+            default_value=0.0,
+            description='Kernel density bandwidth. 0 uses Scott’s rule.',
+            prompt_user=False
         )
 
         additional_params['batch_input_image_dir'] = Parameter(
@@ -83,105 +107,211 @@ class BatchDirectory(RCModule):
             else:
                 return os.path.join(self.params['output_dir'].get_value(), "flight_log.txt")
 
-    def __get_flight_log_gdf(self, flight_log_path):
+    def __read_flight_log_gdf(self, flight_log_path):
         if flight_log_path is None:
             return None
         try:
             df = pd.read_csv(flight_log_path, delimiter=';')
             df = df.rename(columns={'Name': 'filename', 'X (East)': 'x', 'Y (North)': 'y'})
             df = df[['filename', 'x', 'y']].dropna(subset=['x', 'y'])
-            geometry = [Point(xy) for xy in zip(df.x, df.y)]
+            geometry = [Point(float(x), float(y)) for x, y in zip(df.x, df.y)]
             gdf = gpd.GeoDataFrame(df, geometry=geometry)
             return gdf
         except Exception as e:
             self.logger.error(f"Error reading or processing flight log: {e}")
             return None
 
-    def __create_geographic_zones(self, gdf, num_zones, overlap_percent):
+    @staticmethod
+    def __scott_bandwidth(xy: np.ndarray) -> float:
+        # Scott’s rule-of-thumb for 2D. Use pooled std for an isotropic kernel.
+        n, d = xy.shape  # d=2
+        if n < 2:
+            return 1.0
+        std = np.std(xy, axis=0, ddof=1)
+        s = float(np.mean(std))
+        if s <= 0:
+            s = 1.0
+        factor = n ** (-1.0 / (d + 4.0))
+        return max(s * factor, 1e-6)
+
+    def __compute_density(self, coords: np.ndarray, bandwidth: float) -> np.ndarray:
+        kde = KernelDensity(kernel='gaussian', bandwidth=bandwidth).fit(coords)
+        log_d = kde.score_samples(coords)
+        # Convert to positive density and stabilize
+        d = np.exp(log_d)
+        # Avoid zeros
+        d = np.maximum(d, np.finfo(np.float64).tiny)
+        return d
+
+    def __density_aware_kmeans(self, coords: np.ndarray, density: np.ndarray, k: int, density_weight: float) -> np.ndarray:
+        # Feature = [x, y, log(density)] with standardization
+        logd = np.log(density)
+        features = np.column_stack([coords[:, 0], coords[:, 1], logd])
+        scaler = StandardScaler()
+        X = scaler.fit_transform(features)
+        # Blend effect by shrinking the density dimension if desired
+        # Density weight ∈ [0,1]; scale the density feature accordingly
+        X[:, 2] *= float(density_weight)
+        km = KMeans(n_clusters=k, random_state=42, n_init=10)
+        labels = km.fit_predict(X)
+        return labels
+
+    def __create_geographic_zones(self, gdf, num_zones, overlap_percent, density_weight, kde_bw):
         if gdf is None or gdf.empty:
             return [], {}, None
 
-        coords = np.array(list(gdf.geometry.apply(lambda p: (p.x, p.y))))
-        kmeans = KMeans(n_clusters=num_zones, random_state=42, n_init=10).fit(coords)
-        gdf['cluster'] = kmeans.labels_
+        coords = np.column_stack([gdf.geometry.x.to_numpy(np.float64),
+                                  gdf.geometry.y.to_numpy(np.float64)])
+
+        # KDE bandwidth
+        bw = float(kde_bw)
+        if bw <= 0.0:
+            bw = self.__scott_bandwidth(coords)
+        self.logger.info(f"KDE bandwidth used: {bw:.6g}")
+
+        density = self.__compute_density(coords, bw)
+        gdf['density'] = density
+
+        # Density-aware clustering
+        labels = self.__density_aware_kmeans(coords, density, int(num_zones), float(density_weight))
+        gdf['cluster'] = labels
 
         base_zones_gdf = [gdf[gdf['cluster'] == i] for i in range(num_zones)]
         base_zones_files = {i: zone['filename'].tolist() for i, zone in enumerate(base_zones_gdf)}
 
+        # Density-aware overlap selection
         final_zones = []
         if overlap_percent > 0:
+            # Precompute arrays
             for i in range(num_zones):
-                zone_i_gdf = base_zones_gdf[i]
-                other_gdf = gdf[gdf['cluster'] != i]
+                zone_i = base_zones_gdf[i]
+                other = gdf[gdf['cluster'] != i]
 
                 final_zone_files = list(base_zones_files[i])
 
-                if other_gdf.empty:
+                if other.empty or zone_i.empty:
                     final_zones.append(final_zone_files)
                     continue
 
-                overlap_size = int(len(zone_i_gdf) * (overlap_percent / 100))
-                if overlap_size == 0:
+                overlap_size = int(len(zone_i) * (overlap_percent / 100.0))
+                if overlap_size <= 0:
                     final_zones.append(final_zone_files)
                     continue
 
-                tree = cKDTree(zone_i_gdf.geometry.apply(lambda p: (p.x, p.y)).tolist())
-                distances, _ = tree.query(other_gdf.geometry.apply(lambda p: (p.x, p.y)).tolist(), k=1)
+                # Distances to nearest point in zone i
+                tree = cKDTree(np.column_stack([zone_i.geometry.x.to_numpy(np.float64),
+                                                zone_i.geometry.y.to_numpy(np.float64)]))
+                other_xy = np.column_stack([other.geometry.x.to_numpy(np.float64),
+                                            other.geometry.y.to_numpy(np.float64)])
+                dists, _ = tree.query(other_xy, k=1)
 
-                other_gdf_with_dist = other_gdf.copy()
-                other_gdf_with_dist['distance_to_zone'] = distances
+                # Normalize distance and density for scoring
+                d_ptp = np.ptp(dists)
+                d_norm = (dists - dists.min()) / (d_ptp if d_ptp > 0 else 1.0)
 
-                closest_external_points = other_gdf_with_dist.sort_values('distance_to_zone')
-                files_to_add = closest_external_points.head(overlap_size)['filename'].tolist()
+                invdens_ptp = np.ptp(invdens)
+                invdens_norm = (invdens - invdens.min()) / (invdens_ptp if invdens_ptp > 0 else 1.0)
 
+                w_d = 0.7
+                w_den = 0.3 if density_weight <= 0 else min(max(density_weight, 0.0), 1.0)
+                score = w_d * d_norm + w_den * invdens_norm
+
+                idx = np.argsort(score)[:overlap_size]
+                files_to_add = other.iloc[idx]['filename'].tolist()
+
+                # Append
                 final_zone_files.extend(files_to_add)
                 final_zones.append(final_zone_files)
         else:
             final_zones = [files for _, files in base_zones_files.items()]
 
-        kde = KernelDensity(kernel='gaussian', bandwidth=0.5).fit(coords)
-        gdf['density'] = np.exp(kde.score_samples(coords))
-
         return final_zones, base_zones_files, gdf
 
     def __plot_results(self, gdf, zones, output_dir):
-        plt.figure(figsize=(12, 10))
-        sns.kdeplot(x=gdf.geometry.x, y=gdf.geometry.y, cmap="viridis", fill=True, thresh=0.05)
-        plt.scatter(gdf.geometry.x, gdf.geometry.y, c=gdf['density'], cmap='viridis', s=10)
-        plt.title('Kernel Density Estimation of Image Locations')
-        plt.xlabel('X (Easting)')
-        plt.ylabel('Y (Northing)')
-        plt.colorbar(label='Density')
+        os.makedirs(output_dir, exist_ok=True)
+
+        x = gdf.geometry.x.to_numpy(dtype=np.float64, copy=False)
+        y = gdf.geometry.y.to_numpy(dtype=np.float64, copy=False)
+
+        # Figure 1: KDE + density-colored points
+        fig1, ax1 = plt.subplots(figsize=(12, 10))
+        try:
+            sns.kdeplot(x=x, y=y, ax=ax1, cmap="viridis", fill=True, levels=25, bw_adjust=1.0, thresh=None)
+            sc = ax1.scatter(x, y, c=gdf['density'].to_numpy(), cmap='viridis', s=10)
+            cbar = fig1.colorbar(sc, ax=ax1)
+            cbar.set_label('Density')
+        except Exception as e:
+            self.logger.warning(f"seaborn.kdeplot failed ({type(e).__name__}: {e}). Falling back to manual grid.")
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", category=RuntimeWarning)
+                nx = ny = 200
+                xmin, xmax = float(np.nanmin(x)), float(np.nanmax(x))
+                ymin, ymax = float(np.nanmin(y)), float(np.nanmax(y))
+                if xmax == xmin:
+                    xmax = xmin + 1.0
+                if ymax == ymin:
+                    ymax = ymin + 1.0
+                xi = np.linspace(xmin, xmax, nx)
+                yi = np.linspace(ymin, ymax, ny)
+                Xi, Yi = np.meshgrid(xi, yi)
+                H, _, _ = np.histogram2d(x, y, bins=[nx, ny], density=True)
+                Z = H.T
+                zmin, zmax = float(np.nanmin(Z)), float(np.nanmax(Z))
+                if not np.isfinite(zmin) or not np.isfinite(zmax) or zmax == zmin:
+                    zmin, zmax = 0.0, 1.0
+                levels = np.linspace(zmin, zmax, 25)
+                levels = np.unique(levels)
+                if levels.size < 2:
+                    levels = np.array([zmin, zmax], dtype=float)
+                cf = ax1.contourf(Xi, Yi, Z, levels=levels, cmap="viridis", antialiased=True)
+                cbar = fig1.colorbar(cf, ax=ax1)
+                cbar.set_label('Density (proxy)')
+                sc = ax1.scatter(x, y, c=gdf['density'].to_numpy(), cmap='viridis', s=10)
+
+        ax1.set_title('Kernel Density Estimation of Image Locations')
+        ax1.set_xlabel('X (Easting)')
+        ax1.set_ylabel('Y (Northing)')
         kernel_plot_path = os.path.join(output_dir, 'kernel_density.png')
-        plt.savefig(kernel_plot_path)
-        plt.close()
+        fig1.savefig(kernel_plot_path, bbox_inches='tight')
+        try:
+            plt.show()
+        except Exception:
+            pass
+        plt.close(fig1)
         self.logger.info(f"Kernel density plot saved to: {kernel_plot_path}")
 
-        plt.figure(figsize=(12, 10))
+        # Figure 2: Zones + hulls
+        fig2, ax2 = plt.subplots(figsize=(12, 10))
         palette = sns.color_palette("husl", len(zones))
-        plt.scatter(gdf.geometry.x, gdf.geometry.y, color='gray', s=10, alpha=0.2, label='All Points')
+        ax2.scatter(x, y, color='gray', s=10, alpha=0.2, label='All Points')
 
         for i, zone_files in enumerate(zones):
             zone_gdf = gdf[gdf['filename'].isin(zone_files)]
             color = palette[i]
-            plt.scatter(zone_gdf.geometry.x, zone_gdf.geometry.y, color=color, label=f'Zone {i + 1}', s=25, alpha=0.8)
+            zx = zone_gdf.geometry.x.to_numpy(dtype=np.float64, copy=False)
+            zy = zone_gdf.geometry.y.to_numpy(dtype=np.float64, copy=False)
+            ax2.scatter(zx, zy, color=color, label=f'Zone {i + 1}', s=25, alpha=0.8)
 
             if len(zone_gdf) >= 3:
                 try:
-                    points = zone_gdf.geometry.apply(lambda p: (p.x, p.y)).tolist()
+                    points = np.column_stack([zx, zy])
                     hull = ConvexHull(points)
                     for simplex in hull.simplices:
-                        plt.plot(np.array(points)[simplex, 0], np.array(points)[simplex, 1], color=color, linewidth=2.0)
+                        ax2.plot(points[simplex, 0], points[simplex, 1], color=color, linewidth=2.0)
                 except Exception as e:
                     self.logger.warning(f"Could not generate convex hull for Zone {i + 1}: {e}")
 
-        plt.title('Image Batches by Geographic Zone')
-        plt.xlabel('X (Easting)')
-        plt.ylabel('Y (Northing)')
-        plt.legend()
+        ax2.set_title('Image Batches by Geographic Zone')
+        ax2.set_xlabel('X (Easting)')
+        ax2.set_ylabel('Y (Northing)')
+        ax2.legend()
         zones_plot_path = os.path.join(output_dir, 'batch_zones.png')
-        plt.savefig(zones_plot_path)
-        plt.close()
+        fig2.savefig(zones_plot_path, bbox_inches='tight')
+        try:
+            plt.show()
+        except Exception:
+            pass
+        plt.close(fig2)
         self.logger.info(f"Batch zones plot saved to: {zones_plot_path}")
 
     def __copy_files(self, input_dir, batch_folder_dir, files):
@@ -223,13 +353,16 @@ class BatchDirectory(RCModule):
             self.logger.error(message)
             return {'Success': False}
 
-        num_zones = self.params['batch_num_zones'].get_value()
-        overlap_percent = self.params['batch_initial_overlap_percent'].get_value()
+        num_zones = int(self.params['batch_num_zones'].get_value())
+        overlap_percent = float(self.params['batch_initial_overlap_percent'].get_value())
+        density_weight = float(self.params['batch_density_weight'].get_value())
+        kde_bw = float(self.params['batch_kde_bandwidth'].get_value())
+
         output_dir = os.path.join(self.params['output_dir'].get_value(), 'batched_images_by_zone')
         input_dir = self.__get_input_dir()
         flight_log_path = self.__get_flight_log_path()
 
-        gdf = self.__get_flight_log_gdf(flight_log_path)
+        gdf = self.__read_flight_log_gdf(flight_log_path)
         if gdf is None or gdf.empty:
             self.logger.error("Could not process flight log for geographic batching.")
             return {'Success': False}
@@ -237,46 +370,55 @@ class BatchDirectory(RCModule):
         self.logger.info(f"Total number of georeferenced points: {len(gdf)}")
 
         while True:
-            final_zones, base_zones, gdf_processed = self.__create_geographic_zones(gdf, num_zones, overlap_percent)
+            final_zones, base_zones, gdf_processed = self.__create_geographic_zones(
+                gdf, num_zones, overlap_percent, density_weight, kde_bw
+            )
 
             print("\n--- Batch Summary ---")
             total_in_batches = 0
             for i in range(num_zones):
-                # De-duplicate final list for accurate counting
                 final_files_in_zone = list(dict.fromkeys(final_zones[i]))
-
                 total_count = len(final_files_in_zone)
                 base_count = len(base_zones[i])
                 overlap_count = total_count - base_count
-
                 total_in_batches += total_count
-
                 print(f"Zone {i + 1}: {total_count} images ({base_count} base + {overlap_count} overlap)")
-
             print(f"Total images across all batches: {total_in_batches} ({len(gdf)} unique)")
             print("---------------------\n")
 
             self.__plot_results(gdf_processed, final_zones, output_dir)
 
-            user_input = input("Accept these batches? (a)ccept, (r)eject and set new overlap: ").lower()
-
+            user_input = input("Accept these batches? (a)ccept, (r)eject and set new params: ").lower()
             if user_input == 'a':
                 self.logger.info("Batches accepted. Proceeding to copy files.")
                 break
             elif user_input == 'r':
+                # Ask for both overlap and number of zones
                 while True:
                     try:
-                        new_overlap = float(input("Enter new overlap percentage (e.g., 25): "))
-                        if 0 <= new_overlap <= 100:
+                        new_z = int(input("Enter new number of zones (>=1): "))
+                        if new_z >= 1:
+                            num_zones = new_z
+                            break
+                        else:
+                            print("Please enter an integer >= 1.")
+                    except ValueError:
+                        print("Invalid input. Please enter an integer.")
+                while True:
+                    try:
+                        new_overlap = float(input("Enter new overlap percentage (0..100): "))
+                        if 0.0 <= new_overlap <= 100.0:
                             overlap_percent = new_overlap
-                            if os.path.isdir(output_dir):
-                                shutil.rmtree(output_dir)
-                            os.makedirs(output_dir)
                             break
                         else:
                             print("Please enter a value between 0 and 100.")
                     except ValueError:
                         print("Invalid input. Please enter a number.")
+                # Clean and recreate plots dir
+                if os.path.isdir(output_dir):
+                    shutil.rmtree(output_dir)
+                os.makedirs(output_dir)
+                continue
             else:
                 print("Invalid input. Please enter 'a' or 'r'.")
 
