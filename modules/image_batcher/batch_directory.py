@@ -64,7 +64,7 @@ class BatchDirectory(RCModule):
             cli_long='b_kde_bandwidth',
             type=float,
             default_value=0.0,
-            description='Kernel density bandwidth. 0 uses Scott’s rule.',
+            description='Kernel density bandwidth. 0 uses Scottâ€™s rule.',
             prompt_user=False
         )
 
@@ -123,7 +123,7 @@ class BatchDirectory(RCModule):
 
     @staticmethod
     def __scott_bandwidth(xy: np.ndarray) -> float:
-        # Scott’s rule-of-thumb for 2D. Use pooled std for an isotropic kernel.
+        # Scottâ€™s rule-of-thumb for 2D. Use pooled std for an isotropic kernel.
         n, d = xy.shape  # d=2
         if n < 2:
             return 1.0
@@ -150,7 +150,7 @@ class BatchDirectory(RCModule):
         scaler = StandardScaler()
         X = scaler.fit_transform(features)
         # Blend effect by shrinking the density dimension if desired
-        # Density weight ∈ [0,1]; scale the density feature accordingly
+        # Density weight âˆˆ [0,1]; scale the density feature accordingly
         X[:, 2] *= float(density_weight)
         km = KMeans(n_clusters=k, random_state=42, n_init=10)
         labels = km.fit_predict(X)
@@ -204,6 +204,10 @@ class BatchDirectory(RCModule):
                 other_xy = np.column_stack([other.geometry.x.to_numpy(np.float64),
                                             other.geometry.y.to_numpy(np.float64)])
                 dists, _ = tree.query(other_xy, k=1)
+
+                # Get density values for other points and compute inverse density
+                other_density = other['density'].to_numpy()
+                invdens = 1.0 / other_density
 
                 # Normalize distance and density for scoring
                 d_ptp = np.ptp(dists)
