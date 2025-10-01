@@ -13,8 +13,14 @@ import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import multiprocessing
 import sqlite3
+import time
 
 COLMAP_PATH = r"C:\COLMAP\bin\colmap.exe"
+
+# Pipeline control flags - set to True to skip steps
+SKIP_DECIMATION = True
+SKIP_FEATURE_EXTRACTION = True
+SKIP_TRAINING = False
 
 
 class COLMAPVocabTrainer:
@@ -104,6 +110,14 @@ class COLMAPVocabTrainer:
         return kept_count
 
     def prepare_dataset(self, dataset_config: dict, skip_if_exists: bool = True):
+        if SKIP_DECIMATION:
+            print("\n" + "=" * 60)
+            print("SKIPPING DECIMATION (SKIP_DECIMATION = True)")
+            print("=" * 60)
+            total_staged = sum(len(list(d.glob('*'))) for d in self.staging_dir.iterdir() if d.is_dir())
+            print(f"Total staged images: {total_staged}")
+            return total_staged
+
         print("=" * 60)
         print("PREPARING DATASET")
         print("=" * 60)
@@ -126,9 +140,28 @@ class COLMAPVocabTrainer:
         return total_staged
 
     def extract_features_parallel(self, max_workers: int = 3):
-        """
-        Extract features in parallel using separate databases per camera model.
-        """
+        if SKIP_FEATURE_EXTRACTION:
+            print("\n" + "=" * 60)
+            print("SKIPPING FEATURE EXTRACTION (SKIP_FEATURE_EXTRACTION = True)")
+            print("=" * 60)
+            if self.db_path.exists():
+                db_size_mb = self.db_path.stat().st_size / (1024 * 1024)
+                print(f"Using existing database: {self.db_path} ({db_size_mb:.1f} MB)")
+            else:
+                print("WARNING: No database found! Running merge from temp databases...")
+                # Check if temp databases exist and merge them
+                camera_subdirs = [d for d in self.staging_dir.iterdir() if d.is_dir()]
+                temp_db_paths = {d.name: self.temp_db_dir / f"{d.name}.db" for d in camera_subdirs}
+
+                if any(db.exists() for db in temp_db_paths.values()):
+                    print("\n" + "=" * 60)
+                    print("MERGING DATABASES")
+                    print("=" * 60)
+                    self.merge_databases(temp_db_paths)
+                else:
+                    print("ERROR: No temp databases found either!")
+            return
+
         print("\n" + "=" * 60)
         print("EXTRACTING FEATURES (PARALLEL)")
         print("=" * 60)
@@ -156,14 +189,18 @@ class COLMAPVocabTrainer:
                 )
                 future_to_camera[future] = camera_subdir.name
 
+            completed = []
             for future in as_completed(future_to_camera):
                 camera_model = future_to_camera[future]
                 try:
                     future.result()
                     print(f"✓ Completed {camera_model}")
+                    completed.append(camera_model)
                 except Exception as e:
                     print(f"✗ Failed {camera_model}: {e}")
                     raise
+
+        print(f"\n✓ All {len(completed)} camera models completed feature extraction")
 
         print("\n" + "=" * 60)
         print("MERGING DATABASES")
@@ -173,20 +210,35 @@ class COLMAPVocabTrainer:
         print("\nCleaning up temporary databases...")
         for temp_db in temp_db_paths.values():
             if temp_db.exists():
+                wal_file = Path(str(temp_db) + "-wal")
+                shm_file = Path(str(temp_db) + "-shm")
+
                 temp_db.unlink()
-        if self.temp_db_dir.exists():
+                if wal_file.exists():
+                    wal_file.unlink()
+                if shm_file.exists():
+                    shm_file.unlink()
+
+        if self.temp_db_dir.exists() and not list(self.temp_db_dir.iterdir()):
             self.temp_db_dir.rmdir()
         print("✓ Cleanup complete")
 
     def merge_databases(self, temp_db_paths: dict):
         """
-        Merge multiple temporary databases into the main training database.
+        Merge multiple temporary databases into the main training database with progress reporting.
         """
         print(f"Merging {len(temp_db_paths)} databases into {self.db_path}")
 
         if self.db_path.exists():
             print(f"Removing existing database: {self.db_path}")
             self.db_path.unlink()
+
+            wal_file = Path(str(self.db_path) + "-wal")
+            shm_file = Path(str(self.db_path) + "-shm")
+            if wal_file.exists():
+                wal_file.unlink()
+            if shm_file.exists():
+                shm_file.unlink()
 
         main_conn = sqlite3.connect(str(self.db_path))
         main_cursor = main_conn.cursor()
@@ -195,15 +247,40 @@ class COLMAPVocabTrainer:
         image_id_offset = 0
 
         for idx, (camera_model, temp_db) in enumerate(temp_db_paths.items(), 1):
-            print(f"  [{idx}/{len(temp_db_paths)}] Merging {camera_model}...")
+            print(f"\n[{idx}/{len(temp_db_paths)}] Merging {camera_model}...")
+
+            if not temp_db.exists():
+                print(f"  WARNING: Database not found: {temp_db}")
+                continue
+
+            db_size_mb = temp_db.stat().st_size / (1024 * 1024)
+            print(f"  Database size: {db_size_mb:.1f} MB")
 
             main_cursor.execute(f"ATTACH DATABASE '{temp_db}' AS temp_db")
 
+            # Get actual column names from the source database
+            main_cursor.execute("PRAGMA temp_db.table_info(images)")
+            image_columns = [row[1] for row in main_cursor.fetchall()]
+            image_cols_str = ", ".join(image_columns)
+
+            main_cursor.execute("PRAGMA temp_db.table_info(cameras)")
+            camera_columns = [row[1] for row in main_cursor.fetchall()]
+            camera_cols_str = ", ".join(camera_columns)
+
+            main_cursor.execute("SELECT COUNT(*) FROM temp_db.images")
+            num_images = main_cursor.fetchone()[0]
+            print(f"  Images: {num_images}")
+
+            main_cursor.execute("SELECT COUNT(*) FROM temp_db.keypoints")
+            num_keypoints = main_cursor.fetchone()[0]
+            print(f"  Keypoints: {num_keypoints}")
+
             if idx == 1:
-                main_cursor.execute("CREATE TABLE IF NOT EXISTS cameras AS SELECT * FROM temp_db.cameras WHERE 1=0")
-                main_cursor.execute("CREATE TABLE IF NOT EXISTS images AS SELECT * FROM temp_db.images WHERE 1=0")
-                main_cursor.execute("CREATE TABLE IF NOT EXISTS keypoints AS SELECT * FROM temp_db.keypoints WHERE 1=0")
-                main_cursor.execute("CREATE TABLE IF NOT EXISTS descriptors AS SELECT * FROM temp_db.descriptors WHERE 1=0")
+                print("  Creating tables...")
+                main_cursor.execute("CREATE TABLE cameras AS SELECT * FROM temp_db.cameras WHERE 1=0")
+                main_cursor.execute("CREATE TABLE images AS SELECT * FROM temp_db.images WHERE 1=0")
+                main_cursor.execute("CREATE TABLE keypoints AS SELECT * FROM temp_db.keypoints WHERE 1=0")
+                main_cursor.execute("CREATE TABLE descriptors AS SELECT * FROM temp_db.descriptors WHERE 1=0")
 
             main_cursor.execute("SELECT MAX(camera_id) FROM cameras")
             result = main_cursor.fetchone()
@@ -213,39 +290,83 @@ class COLMAPVocabTrainer:
             result = main_cursor.fetchone()
             image_id_offset = (result[0] if result[0] is not None else 0)
 
+            print("  Copying cameras...")
+            # Build column list dynamically, adjusting camera_id
+            camera_cols_adjusted = ", ".join([
+                f"camera_id + {camera_id_offset}" if col == "camera_id" else col
+                for col in camera_columns
+            ])
             main_cursor.execute(f"""
                 INSERT INTO cameras 
-                SELECT camera_id + {camera_id_offset}, model, width, height, params, prior_focal_length 
+                SELECT {camera_cols_adjusted}
                 FROM temp_db.cameras
             """)
 
+            print("  Copying images...")
+            # Build column list dynamically, adjusting image_id and camera_id
+            image_cols_adjusted = ", ".join([
+                f"image_id + {image_id_offset}" if col == "image_id" else
+                f"camera_id + {camera_id_offset}" if col == "camera_id" else
+                col
+                for col in image_columns
+            ])
             main_cursor.execute(f"""
                 INSERT INTO images 
-                SELECT image_id + {image_id_offset}, name, camera_id + {camera_id_offset}, 
-                       prior_qw, prior_qx, prior_qy, prior_qz, prior_tx, prior_ty, prior_tz 
+                SELECT {image_cols_adjusted}
                 FROM temp_db.images
             """)
 
+            print("  Copying keypoints...")
             main_cursor.execute(f"""
                 INSERT INTO keypoints 
                 SELECT image_id + {image_id_offset}, rows, cols, data 
                 FROM temp_db.keypoints
             """)
 
+            print("  Copying descriptors (this may take a while)...")
+            start_time = time.time()
             main_cursor.execute(f"""
                 INSERT INTO descriptors 
                 SELECT image_id + {image_id_offset}, rows, cols, data 
                 FROM temp_db.descriptors
             """)
+            elapsed = time.time() - start_time
+            print(f"  Descriptors copied in {elapsed:.1f} seconds")
 
-            main_cursor.execute("DETACH DATABASE temp_db")
+            print("  Committing...")
             main_conn.commit()
 
+            print("  Checkpointing WAL...")
+            main_cursor.execute("PRAGMA temp_db.wal_checkpoint(TRUNCATE)")
+
+            print("  Detaching database...")
+            main_cursor.execute("DETACH DATABASE temp_db")
+
+            print(f"  ✓ Merged {camera_model}")
+
+        print("\nCreating indices for faster access...")
+        main_cursor.execute("CREATE INDEX IF NOT EXISTS index_images_camera_id ON images(camera_id)")
+        main_conn.commit()
+
         main_conn.close()
-        print("✓ Database merge complete")
+
+        final_size_mb = self.db_path.stat().st_size / (1024 * 1024)
+        print(f"\n✓ Database merge complete")
+        print(f"  Final database size: {final_size_mb:.1f} MB")
 
     def train_vocabulary_tree(self, num_visual_words: int = 1000000,
                               branching_factor: int = 32, num_iterations: int = 12):
+        if SKIP_TRAINING:
+            print("\n" + "=" * 60)
+            print("SKIPPING TRAINING (SKIP_TRAINING = True)")
+            print("=" * 60)
+            if self.vocab_tree_path.exists():
+                size_mb = self.vocab_tree_path.stat().st_size / (1024 * 1024)
+                print(f"Using existing vocab tree: {self.vocab_tree_path} ({size_mb:.1f} MB)")
+            else:
+                print("WARNING: No vocab tree found! You may need to run training.")
+            return
+
         print("\n" + "=" * 60)
         print("TRAINING VOCABULARY TREE")
         print("=" * 60)
@@ -380,13 +501,19 @@ def main():
     print("=" * 60)
     print()
 
-    print("Validating installation...")
-    if not validate_colmap_installation():
-        print("\nAborting: COLMAP not found or not working")
-        sys.exit(1)
+    print("Pipeline Configuration:")
+    print(f"  SKIP_DECIMATION = {SKIP_DECIMATION}")
+    print(f"  SKIP_FEATURE_EXTRACTION = {SKIP_FEATURE_EXTRACTION}")
+    print(f"  SKIP_TRAINING = {SKIP_TRAINING}")
+    print()
 
-    if not validate_cuda_availability():
-        print("WARNING: Continuing without CUDA GPU acceleration")
+#    print("Validating installation...")
+#    if not validate_colmap_installation():
+#        print("\nAborting: COLMAP not found or not working")
+#        sys.exit(1)
+
+ #   if not validate_cuda_availability():
+ #       print("WARNING: Continuing without CUDA GPU acceleration")
 
     print()
 
@@ -414,12 +541,13 @@ def main():
         trainer.extract_features_parallel(max_workers=3)
 
         trainer.train_vocabulary_tree(
-            num_visual_words=1000000,
+            num_visual_words=100000,
             branching_factor=32,
             num_iterations=12
         )
 
-        trainer.cleanup_staging()
+        # Uncomment to clean up staging after completion
+        # trainer.cleanup_staging()
 
         print("\n" + "=" * 60)
         print("VOCABULARY TREE TRAINING COMPLETE")
