@@ -591,7 +591,7 @@ def main():
         sys.exit(1)
 
     except Exception as e:
-        print(f"\nERROR: {e}")
+        print(f"\nERROR : {e}")
         print(f"\nPartial results may be in: {output_path}")
         raise
 
