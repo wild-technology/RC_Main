@@ -226,6 +226,7 @@ class COLMAPVocabTrainer:
     def merge_databases(self, temp_db_paths: dict):
         """
         Merge multiple temporary databases into the main training database with progress reporting.
+        Includes validation and cleanup of NULL descriptors.
         """
         print(f"Merging {len(temp_db_paths)} databases into {self.db_path}")
 
@@ -245,6 +246,7 @@ class COLMAPVocabTrainer:
 
         camera_id_offset = 0
         image_id_offset = 0
+        total_null_cleaned = 0
 
         for idx, (camera_model, temp_db) in enumerate(temp_db_paths.items(), 1):
             print(f"\n[{idx}/{len(temp_db_paths)}] Merging {camera_model}...")
@@ -256,16 +258,41 @@ class COLMAPVocabTrainer:
             db_size_mb = temp_db.stat().st_size / (1024 * 1024)
             print(f"  Database size: {db_size_mb:.1f} MB")
 
+            # Validate temp database before merging
+            temp_conn = sqlite3.connect(str(temp_db))
+            temp_cursor = temp_conn.cursor()
+
+            print("  Validating database integrity...")
+            temp_cursor.execute("SELECT COUNT(*) FROM descriptors WHERE data IS NULL")
+            null_count = temp_cursor.fetchone()[0]
+
+            if null_count > 0:
+                print(f"  WARNING: Found {null_count} NULL descriptors, cleaning...")
+
+                # Get image IDs with NULL descriptors
+                temp_cursor.execute("SELECT image_id FROM descriptors WHERE data IS NULL")
+                null_ids = [row[0] for row in temp_cursor.fetchall()]
+
+                # Delete NULL descriptors and corresponding data
+                temp_cursor.execute("DELETE FROM descriptors WHERE data IS NULL")
+                for img_id in null_ids:
+                    temp_cursor.execute("DELETE FROM keypoints WHERE image_id = ?", (img_id,))
+                    temp_cursor.execute("DELETE FROM images WHERE image_id = ?", (img_id,))
+
+                temp_conn.commit()
+                total_null_cleaned += null_count
+                print(f"  Cleaned {null_count} corrupted images")
+
+            temp_conn.close()
+
             main_cursor.execute(f"ATTACH DATABASE '{temp_db}' AS temp_db")
 
             # Get actual column names from the source database
             main_cursor.execute("PRAGMA temp_db.table_info(images)")
             image_columns = [row[1] for row in main_cursor.fetchall()]
-            image_cols_str = ", ".join(image_columns)
 
             main_cursor.execute("PRAGMA temp_db.table_info(cameras)")
             camera_columns = [row[1] for row in main_cursor.fetchall()]
-            camera_cols_str = ", ".join(camera_columns)
 
             main_cursor.execute("SELECT COUNT(*) FROM temp_db.images")
             num_images = main_cursor.fetchone()[0]
@@ -291,7 +318,6 @@ class COLMAPVocabTrainer:
             image_id_offset = (result[0] if result[0] is not None else 0)
 
             print("  Copying cameras...")
-            # Build column list dynamically, adjusting camera_id
             camera_cols_adjusted = ", ".join([
                 f"camera_id + {camera_id_offset}" if col == "camera_id" else col
                 for col in camera_columns
@@ -303,7 +329,6 @@ class COLMAPVocabTrainer:
             """)
 
             print("  Copying images...")
-            # Build column list dynamically, adjusting image_id and camera_id
             image_cols_adjusted = ", ".join([
                 f"image_id + {image_id_offset}" if col == "image_id" else
                 f"camera_id + {camera_id_offset}" if col == "camera_id" else
@@ -329,6 +354,7 @@ class COLMAPVocabTrainer:
                 INSERT INTO descriptors 
                 SELECT image_id + {image_id_offset}, rows, cols, data 
                 FROM temp_db.descriptors
+                WHERE data IS NOT NULL
             """)
             elapsed = time.time() - start_time
             print(f"  Descriptors copied in {elapsed:.1f} seconds")
@@ -348,11 +374,23 @@ class COLMAPVocabTrainer:
         main_cursor.execute("CREATE INDEX IF NOT EXISTS index_images_camera_id ON images(camera_id)")
         main_conn.commit()
 
+        # Final validation
+        print("\nValidating merged database...")
+        main_cursor.execute("SELECT COUNT(*) FROM descriptors WHERE data IS NULL")
+        final_null = main_cursor.fetchone()[0]
+
+        if final_null > 0:
+            print(f"  WARNING: {final_null} NULL descriptors remain, cleaning...")
+            main_cursor.execute("DELETE FROM descriptors WHERE data IS NULL")
+            main_conn.commit()
+
         main_conn.close()
 
         final_size_mb = self.db_path.stat().st_size / (1024 * 1024)
         print(f"\n✓ Database merge complete")
         print(f"  Final database size: {final_size_mb:.1f} MB")
+        if total_null_cleaned > 0:
+            print(f"  Total corrupted images cleaned: {total_null_cleaned}")
 
     def train_vocabulary_tree(self, num_visual_words: int = 1000000,
                               branching_factor: int = 32, num_iterations: int = 12):
@@ -371,7 +409,6 @@ class COLMAPVocabTrainer:
         print("TRAINING VOCABULARY TREE")
         print("=" * 60)
         print(f"  Visual words: {num_visual_words:,}")
-        print(f"  Branching factor: {branching_factor}")
         print(f"  Iterations: {num_iterations}")
         print(f"  Output: {self.vocab_tree_path}")
         print("\nThis will take several hours. Progress may not be visible.")
@@ -382,9 +419,8 @@ class COLMAPVocabTrainer:
             "vocab_tree_builder",
             "--database_path", str(self.db_path),
             "--vocab_tree_path", str(self.vocab_tree_path),
-            "--VocabTreeBuilding.num_visual_words", str(num_visual_words),
-            "--VocabTreeBuilding.branching_factor", str(branching_factor),
-            "--VocabTreeBuilding.num_iterations", str(num_iterations),
+            "--num_visual_words", str(num_visual_words),
+            "--num_iterations", str(num_iterations),
         ]
 
         print(f"\nCommand: {' '.join(cmd)}")
@@ -394,6 +430,9 @@ class COLMAPVocabTrainer:
 
         if result.returncode != 0:
             print("ERROR in vocabulary tree training:")
+            print("\nSTDOUT:")
+            print(result.stdout)
+            print("\nSTDERR:")
             print(result.stderr)
             raise RuntimeError("Vocabulary tree training failed")
 
@@ -403,17 +442,6 @@ class COLMAPVocabTrainer:
         if self.vocab_tree_path.exists():
             size_mb = self.vocab_tree_path.stat().st_size / (1024 * 1024)
             print(f"  File size: {size_mb:.1f} MB")
-
-    def cleanup_staging(self):
-        print("\n" + "=" * 60)
-        print("CLEANUP")
-        print("=" * 60)
-
-        if self.staging_dir.exists():
-            print(f"Removing staging directory: {self.staging_dir}")
-            shutil.rmtree(self.staging_dir)
-            print("✓ Cleanup complete")
-
 
 def extract_features_worker(camera_subdir: Path, db_path: Path):
     """
@@ -438,7 +466,7 @@ def extract_features_worker(camera_subdir: Path, db_path: Path):
         "--SiftExtraction.use_gpu", "1",
         "--SiftExtraction.gpu_index", "0",
         "--SiftExtraction.max_image_size", "3200",
-        "--SiftExtraction.max_num_features", "16384",
+        "--SiftExtraction.max_num_features", "8384",
         "--SiftExtraction.num_threads", "32",
     ]
 
@@ -541,9 +569,8 @@ def main():
         trainer.extract_features_parallel(max_workers=3)
 
         trainer.train_vocabulary_tree(
-            num_visual_words=100000,
-            branching_factor=32,
-            num_iterations=12
+            num_visual_words=10000,
+            num_iterations=5
         )
 
         # Uncomment to clean up staging after completion
