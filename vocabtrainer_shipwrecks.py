@@ -19,9 +19,46 @@ COLMAP_PATH = r"C:\COLMAP\bin\colmap.exe"
 
 # Pipeline control flags - set to True to skip steps
 SKIP_DECIMATION = True
-SKIP_FEATURE_EXTRACTION = True
+SKIP_FEATURE_EXTRACTION = False
 SKIP_TRAINING = False
 
+
+def decimate_staging_folder(self, target_images_per_camera: int = 3000):
+    """Create decimated staging folder from existing staging images"""
+    import random
+
+    decimated_dir = self.output_base / "staging_images_decimated"
+    decimated_dir.mkdir(exist_ok=True)
+
+    print(f"\nDecimating staging folder to ~{target_images_per_camera} images per camera...")
+
+    total_kept = 0
+    for camera_dir in self.staging_dir.iterdir():
+        if not camera_dir.is_dir():
+            continue
+
+        camera_name = camera_dir.name
+        target_dir = decimated_dir / camera_name
+
+        if target_dir.exists() and len(list(target_dir.glob('*'))) > 0:
+            kept = len(list(target_dir.glob('*')))
+            print(f"  [SKIP] {camera_name}: already has {kept} images")
+            total_kept += kept
+            continue
+
+        target_dir.mkdir(exist_ok=True)
+        all_images = list(camera_dir.glob('*'))
+
+        selected = random.sample(all_images, min(target_images_per_camera, len(all_images)))
+
+        for img in selected:
+            shutil.copy2(img, target_dir / img.name)
+
+        print(f"  {camera_name}: kept {len(selected)}/{len(all_images)} images")
+        total_kept += len(selected)
+
+    print(f"\nTotal decimated images: {total_kept}")
+    return decimated_dir
 
 class COLMAPVocabTrainer:
     def __init__(self, output_base_path: str):
@@ -149,7 +186,6 @@ class COLMAPVocabTrainer:
                 print(f"Using existing database: {self.db_path} ({db_size_mb:.1f} MB)")
             else:
                 print("WARNING: No database found! Running merge from temp databases...")
-                # Check if temp databases exist and merge them
                 camera_subdirs = [d for d in self.staging_dir.iterdir() if d.is_dir()]
                 temp_db_paths = {d.name: self.temp_db_dir / f"{d.name}.db" for d in camera_subdirs}
 
@@ -258,7 +294,6 @@ class COLMAPVocabTrainer:
             db_size_mb = temp_db.stat().st_size / (1024 * 1024)
             print(f"  Database size: {db_size_mb:.1f} MB")
 
-            # Validate temp database before merging
             temp_conn = sqlite3.connect(str(temp_db))
             temp_cursor = temp_conn.cursor()
 
@@ -268,17 +303,12 @@ class COLMAPVocabTrainer:
 
             if null_count > 0:
                 print(f"  WARNING: Found {null_count} NULL descriptors, cleaning...")
-
-                # Get image IDs with NULL descriptors
                 temp_cursor.execute("SELECT image_id FROM descriptors WHERE data IS NULL")
                 null_ids = [row[0] for row in temp_cursor.fetchall()]
-
-                # Delete NULL descriptors and corresponding data
                 temp_cursor.execute("DELETE FROM descriptors WHERE data IS NULL")
                 for img_id in null_ids:
                     temp_cursor.execute("DELETE FROM keypoints WHERE image_id = ?", (img_id,))
                     temp_cursor.execute("DELETE FROM images WHERE image_id = ?", (img_id,))
-
                 temp_conn.commit()
                 total_null_cleaned += null_count
                 print(f"  Cleaned {null_count} corrupted images")
@@ -287,7 +317,6 @@ class COLMAPVocabTrainer:
 
             main_cursor.execute(f"ATTACH DATABASE '{temp_db}' AS temp_db")
 
-            # Get actual column names from the source database
             main_cursor.execute("PRAGMA temp_db.table_info(images)")
             image_columns = [row[1] for row in main_cursor.fetchall()]
 
@@ -304,18 +333,56 @@ class COLMAPVocabTrainer:
 
             if idx == 1:
                 print("  Creating tables...")
-                main_cursor.execute("CREATE TABLE cameras AS SELECT * FROM temp_db.cameras WHERE 1=0")
-                main_cursor.execute("CREATE TABLE images AS SELECT * FROM temp_db.images WHERE 1=0")
-                main_cursor.execute("CREATE TABLE keypoints AS SELECT * FROM temp_db.keypoints WHERE 1=0")
-                main_cursor.execute("CREATE TABLE descriptors AS SELECT * FROM temp_db.descriptors WHERE 1=0")
+                main_cursor.execute("""
+                    CREATE TABLE cameras (
+                        camera_id INTEGER PRIMARY KEY NOT NULL,
+                        model INTEGER NOT NULL,
+                        width INTEGER NOT NULL,
+                        height INTEGER NOT NULL,
+                        params BLOB,
+                        prior_focal_length INTEGER NOT NULL
+                    )
+                """)
 
-            main_cursor.execute("SELECT MAX(camera_id) FROM cameras")
-            result = main_cursor.fetchone()
-            camera_id_offset = (result[0] if result[0] is not None else 0)
+                main_cursor.execute("""
+                    CREATE TABLE images (
+                        image_id INTEGER PRIMARY KEY NOT NULL,
+                        name TEXT NOT NULL,
+                        camera_id INTEGER NOT NULL,
+                        FOREIGN KEY(camera_id) REFERENCES cameras(camera_id) ON DELETE CASCADE
+                    )
+                """)
 
-            main_cursor.execute("SELECT MAX(image_id) FROM images")
-            result = main_cursor.fetchone()
-            image_id_offset = (result[0] if result[0] is not None else 0)
+                main_cursor.execute("""
+                    CREATE TABLE keypoints (
+                        image_id INTEGER PRIMARY KEY NOT NULL,
+                        rows INTEGER NOT NULL,
+                        cols INTEGER NOT NULL,
+                        data BLOB,
+                        FOREIGN KEY(image_id) REFERENCES images(image_id) ON DELETE CASCADE
+                    )
+                """)
+
+                main_cursor.execute("""
+                    CREATE TABLE descriptors (
+                        image_id INTEGER PRIMARY KEY NOT NULL,
+                        rows INTEGER NOT NULL,
+                        cols INTEGER NOT NULL,
+                        data BLOB,
+                        FOREIGN KEY(image_id) REFERENCES images(image_id) ON DELETE CASCADE
+                    )
+                """)
+
+                camera_id_offset = 0
+                image_id_offset = 0
+            else:
+                main_cursor.execute("SELECT MAX(camera_id) FROM cameras")
+                result = main_cursor.fetchone()
+                camera_id_offset = (result[0] if result[0] is not None else 0)
+
+                main_cursor.execute("SELECT MAX(image_id) FROM images")
+                result = main_cursor.fetchone()
+                image_id_offset = (result[0] if result[0] is not None else 0)
 
             print("  Copying cameras...")
             camera_cols_adjusted = ", ".join([
@@ -374,7 +441,6 @@ class COLMAPVocabTrainer:
         main_cursor.execute("CREATE INDEX IF NOT EXISTS index_images_camera_id ON images(camera_id)")
         main_conn.commit()
 
-        # Final validation
         print("\nValidating merged database...")
         main_cursor.execute("SELECT COUNT(*) FROM descriptors WHERE data IS NULL")
         final_null = main_cursor.fetchone()[0]
@@ -393,7 +459,7 @@ class COLMAPVocabTrainer:
             print(f"  Total corrupted images cleaned: {total_null_cleaned}")
 
     def train_vocabulary_tree(self, num_visual_words: int = 1000000,
-                              branching_factor: int = 32, num_iterations: int = 12):
+                              num_iterations: int = 12):
         if SKIP_TRAINING:
             print("\n" + "=" * 60)
             print("SKIPPING TRAINING (SKIP_TRAINING = True)")
@@ -443,11 +509,93 @@ class COLMAPVocabTrainer:
             size_mb = self.vocab_tree_path.stat().st_size / (1024 * 1024)
             print(f"  File size: {size_mb:.1f} MB")
 
+    def create_subsample_database(self, num_images: int = 25000):
+        """Create a randomly subsampled database for vocab tree training"""
+        import random
+
+        subsample_path = self.output_base / "training_subsample.db"
+
+        if subsample_path.exists():
+            print(f"Subsample database already exists: {subsample_path}")
+            return subsample_path
+
+        print(f"\nCreating subsampled database with {num_images} images...")
+
+        source_conn = sqlite3.connect(str(self.db_path))
+        source_cursor = source_conn.cursor()
+
+        # Get random image IDs
+        source_cursor.execute("SELECT image_id FROM images ORDER BY RANDOM() LIMIT ?", (num_images,))
+        selected_ids = [row[0] for row in source_cursor.fetchall()]
+        print(f"Selected {len(selected_ids)} random images")
+
+        # Get camera IDs for selected images (batch to avoid SQL variable limit)
+        camera_ids = set()
+        batch_size = 500
+        for i in range(0, len(selected_ids), batch_size):
+            batch = selected_ids[i:i + batch_size]
+            placeholders = ','.join('?' * len(batch))
+            source_cursor.execute(
+                f"SELECT DISTINCT camera_id FROM images WHERE image_id IN ({placeholders})",
+                batch
+            )
+            camera_ids.update(row[0] for row in source_cursor.fetchall())
+
+        print(f"Found {len(camera_ids)} cameras")
+
+        # Create subsample database
+        sub_conn = sqlite3.connect(str(subsample_path))
+        sub_cursor = sub_conn.cursor()
+
+        # Create tables with proper schema
+        source_cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='cameras'")
+        sub_cursor.execute(source_cursor.fetchone()[0])
+
+        source_cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='images'")
+        sub_cursor.execute(source_cursor.fetchone()[0])
+
+        source_cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='keypoints'")
+        sub_cursor.execute(source_cursor.fetchone()[0])
+
+        source_cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='descriptors'")
+        sub_cursor.execute(source_cursor.fetchone()[0])
+
+        # Copy cameras
+        for cam_id in camera_ids:
+            source_cursor.execute("SELECT * FROM cameras WHERE camera_id=?", (cam_id,))
+            sub_cursor.execute("INSERT INTO cameras VALUES (?,?,?,?,?,?)", source_cursor.fetchone())
+
+        # Copy images, keypoints, descriptors with progress
+        print("Copying image data...")
+        for idx, img_id in enumerate(selected_ids):
+            if idx % 1000 == 0:
+                print(f"  Copied {idx}/{len(selected_ids)} images...", end='\r')
+
+            source_cursor.execute("SELECT * FROM images WHERE image_id=?", (img_id,))
+            sub_cursor.execute("INSERT INTO images VALUES (?,?,?)", source_cursor.fetchone())
+
+            source_cursor.execute("SELECT * FROM keypoints WHERE image_id=?", (img_id,))
+            row = source_cursor.fetchone()
+            if row:
+                sub_cursor.execute("INSERT INTO keypoints VALUES (?,?,?,?)", row)
+
+            source_cursor.execute("SELECT * FROM descriptors WHERE image_id=?", (img_id,))
+            row = source_cursor.fetchone()
+            if row:
+                sub_cursor.execute("INSERT INTO descriptors VALUES (?,?,?,?)", row)
+
+        print(f"  Copied {len(selected_ids)}/{len(selected_ids)} images")
+
+        sub_conn.commit()
+        sub_conn.close()
+        source_conn.close()
+
+        size_mb = subsample_path.stat().st_size / (1024 * 1024)
+        print(f"Subsample database created: {size_mb:.1f} MB")
+
+        return subsample_path
+
 def extract_features_worker(camera_subdir: Path, db_path: Path):
-    """
-    Worker function to extract features for a single camera model.
-    Uses its own database to avoid locking issues.
-    """
     camera_model = camera_subdir.name
     print(f"\n[{camera_model}] Starting feature extraction...")
 
@@ -466,7 +614,7 @@ def extract_features_worker(camera_subdir: Path, db_path: Path):
         "--SiftExtraction.use_gpu", "1",
         "--SiftExtraction.gpu_index", "0",
         "--SiftExtraction.max_image_size", "3200",
-        "--SiftExtraction.max_num_features", "8384",
+        "--SiftExtraction.max_num_features", "8000",
         "--SiftExtraction.num_threads", "32",
     ]
 
@@ -478,49 +626,6 @@ def extract_features_worker(camera_subdir: Path, db_path: Path):
     return camera_model
 
 
-def validate_colmap_installation():
-    try:
-        result = subprocess.run(
-            [COLMAP_PATH],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
-        output = result.stdout + result.stderr
-        if "COLMAP" in output or "feature_extractor" in output:
-            print(f"COLMAP found at: {COLMAP_PATH}")
-            return True
-        else:
-            print("ERROR: COLMAP executable found but doesn't respond correctly")
-            return False
-    except FileNotFoundError:
-        print(f"ERROR: COLMAP not found at: {COLMAP_PATH}")
-        return False
-    except subprocess.TimeoutExpired:
-        print("ERROR: COLMAP command timed out")
-        return False
-
-
-def validate_cuda_availability():
-    try:
-        result = subprocess.run(
-            ["nvidia-smi"],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
-        if result.returncode == 0:
-            print("CUDA GPU detected via nvidia-smi")
-            return True
-        else:
-            print("WARNING: nvidia-smi found but returned error")
-            return False
-    except FileNotFoundError:
-        print("WARNING: nvidia-smi not found - CUDA may not be available")
-        return False
-    except subprocess.TimeoutExpired:
-        print("WARNING: nvidia-smi command timed out")
-        return False
 
 
 def main():
@@ -533,16 +638,6 @@ def main():
     print(f"  SKIP_DECIMATION = {SKIP_DECIMATION}")
     print(f"  SKIP_FEATURE_EXTRACTION = {SKIP_FEATURE_EXTRACTION}")
     print(f"  SKIP_TRAINING = {SKIP_TRAINING}")
-    print()
-
-#    print("Validating installation...")
-#    if not validate_colmap_installation():
-#        print("\nAborting: COLMAP not found or not working")
-#        sys.exit(1)
-
- #   if not validate_cuda_availability():
- #       print("WARNING: Continuing without CUDA GPU acceleration")
-
     print()
 
     output_path = r"Z:\colmap vocab training"
@@ -568,19 +663,20 @@ def main():
 
         trainer.extract_features_parallel(max_workers=3)
 
-        trainer.train_vocabulary_tree(
-            num_visual_words=10000,
-            num_iterations=5
-        )
+        # Create subsample for training
+        subsample_db = trainer.create_subsample_database(num_images=50000)
 
-        # Uncomment to clean up staging after completion
-        # trainer.cleanup_staging()
+        # Train using subsample
+        original_db = trainer.db_path
+        trainer.db_path = subsample_db
+        trainer.train_vocabulary_tree(num_visual_words=256000, num_iterations=12)
+        trainer.db_path = original_db
 
         print("\n" + "=" * 60)
         print("VOCABULARY TREE TRAINING COMPLETE")
         print("=" * 60)
         print(f"Vocabulary tree: {trainer.vocab_tree_path}")
-        print(f"Database: {trainer.db_path}")
+        print(f"Database (subsample used for training): {subsample_db}")
         print("\nUsage in COLMAP GUI:")
         print("  Processing -> Vocabulary tree matching")
         print("  Select vocab_tree.bin")
@@ -591,9 +687,24 @@ def main():
         sys.exit(1)
 
     except Exception as e:
-        print(f"\nERROR : {e}")
+        print(f"\nERROR: {e}")
         print(f"\nPartial results may be in: {output_path}")
         raise
+
+    trainer = COLMAPVocabTrainer(output_path)
+
+    try:
+        # Decimate existing staging folder
+        decimated_staging = trainer.decimate_staging_folder(target_images_per_camera=3000)
+
+        # Point to decimated folder
+        trainer.staging_dir = decimated_staging
+
+        # Extract features from decimated set only
+        trainer.extract_features_parallel(max_workers=3)
+
+        # Train (no subsampling needed - already small enough)
+        trainer.train_vocabulary_tree(num_visual_words=256000, num_iterations=12)
 
 
 if __name__ == "__main__":
