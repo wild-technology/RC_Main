@@ -16,6 +16,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 import seaborn as sns
 import warnings
+import glob
 
 
 class BatchDirectory(RCModule):
@@ -24,18 +25,39 @@ class BatchDirectory(RCModule):
     def __init__(self, logger):
         super().__init__("Batch Directory", logger)
         self.logger.info(f"Matplotlib {matplotlib.__version__}, Seaborn {sns.__version__}")
+        self.utm_zone_suffix = None
 
     def get_parameters(self) -> dict[str, Parameter]:
         additional_params = {}
 
-        additional_params['batch_num_zones'] = Parameter(
-            name='Number of Zones',
-            cli_short='b_z',
-            cli_long='b_num_zones',
+        additional_params['batch_target_images_per_zone'] = Parameter(
+            name='Target Images Per Zone',
+            cli_short='b_t',
+            cli_long='b_target_images',
             type=int,
-            default_value=4,
-            description='The number of geographic zones to batch images into.',
+            default_value=3000,
+            description='Target number of images per zone (zones will be split/merged to approach this)',
             prompt_user=True
+        )
+
+        additional_params['batch_min_zone_size'] = Parameter(
+            name='Minimum Zone Size',
+            cli_short='b_min',
+            cli_long='b_min_zone',
+            type=int,
+            default_value=1000,  # <-- changed from 500 to 1000
+            description='Minimum images in a zone (smaller zones will be merged)',
+            prompt_user=False
+        )
+
+        additional_params['batch_max_zone_size'] = Parameter(
+            name='Maximum Zone Size',
+            cli_short='b_max',
+            cli_long='b_max_zone',
+            type=int,
+            default_value=4000,
+            description='Maximum images in a zone (larger zones will be split)',
+            prompt_user=False
         )
 
         additional_params['batch_initial_overlap_percent'] = Parameter(
@@ -64,7 +86,7 @@ class BatchDirectory(RCModule):
             cli_long='b_kde_bandwidth',
             type=float,
             default_value=0.0,
-            description='Kernel density bandwidth. 0 uses Scottâ€™s rule.',
+            description='Kernel density bandwidth. 0 uses Scotts rule.',
             prompt_user=False
         )
 
@@ -103,19 +125,48 @@ class BatchDirectory(RCModule):
             return self.params['batch_flight_log_path'].get_value()
         else:
             if 'geo_input_image_dir' in self.params:
-                return os.path.join(self.params['geo_input_image_dir'].get_value(), "flight_log.txt")
+                search_dir = self.params['geo_input_image_dir'].get_value()
             else:
-                return os.path.join(self.params['output_dir'].get_value(), "flight_log.txt")
+                search_dir = self.params['output_dir'].get_value()
+
+            pattern = os.path.join(search_dir, "flight_log_*_UTM.txt")
+            matches = glob.glob(pattern)
+            if matches:
+                return matches[0]
+
+            fallback = os.path.join(search_dir, "flight_log.txt")
+            if os.path.isfile(fallback):
+                return fallback
+
+            return None
 
     def __read_flight_log_gdf(self, flight_log_path):
         if flight_log_path is None:
             return None
+
+        filename = os.path.basename(flight_log_path)
+        if "_UTM.txt" in filename:
+            zone_part = filename.replace("flight_log_", "").replace("_UTM.txt", "")
+            self.utm_zone_suffix = f"_{zone_part}"
+        else:
+            self.utm_zone_suffix = ""
+
         try:
             df = pd.read_csv(flight_log_path, delimiter=';')
-            df = df.rename(columns={'Name': 'filename', 'X (East)': 'x', 'Y (North)': 'y'})
-            df = df[['filename', 'x', 'y']].dropna(subset=['x', 'y'])
+
+            if 'Name' in df.columns:
+                df = df.rename(columns={'Name': 'filename'})
+
+            if 'X (East)' in df.columns and 'Y (North)' in df.columns:
+                df = df.rename(columns={'X (East)': 'x', 'Y (North)': 'y'})
+            elif 'x' not in df.columns or 'y' not in df.columns:
+                self.logger.error("Flight log missing X (East) and Y (North) columns")
+                return None
+
+            df = df.dropna(subset=['x', 'y'])
             geometry = [Point(float(x), float(y)) for x, y in zip(df.x, df.y)]
             gdf = gpd.GeoDataFrame(df, geometry=geometry)
+
             return gdf
         except Exception as e:
             self.logger.error(f"Error reading or processing flight log: {e}")
@@ -123,8 +174,7 @@ class BatchDirectory(RCModule):
 
     @staticmethod
     def __scott_bandwidth(xy: np.ndarray) -> float:
-        # Scottâ€™s rule-of-thumb for 2D. Use pooled std for an isotropic kernel.
-        n, d = xy.shape  # d=2
+        n, d = xy.shape
         if n < 2:
             return 1.0
         std = np.std(xy, axis=0, ddof=1)
@@ -137,33 +187,154 @@ class BatchDirectory(RCModule):
     def __compute_density(self, coords: np.ndarray, bandwidth: float) -> np.ndarray:
         kde = KernelDensity(kernel='gaussian', bandwidth=bandwidth).fit(coords)
         log_d = kde.score_samples(coords)
-        # Convert to positive density and stabilize
         d = np.exp(log_d)
-        # Avoid zeros
         d = np.maximum(d, np.finfo(np.float64).tiny)
         return d
 
-    def __density_aware_kmeans(self, coords: np.ndarray, density: np.ndarray, k: int, density_weight: float) -> np.ndarray:
-        # Feature = [x, y, log(density)] with standardization
+    def __density_aware_kmeans(self, coords: np.ndarray, density: np.ndarray, k: int,
+                               density_weight: float) -> np.ndarray:
         logd = np.log(density)
         features = np.column_stack([coords[:, 0], coords[:, 1], logd])
         scaler = StandardScaler()
         X = scaler.fit_transform(features)
-        # Blend effect by shrinking the density dimension if desired
-        # Density weight âˆˆ [0,1]; scale the density feature accordingly
         X[:, 2] *= float(density_weight)
         km = KMeans(n_clusters=k, random_state=42, n_init=10)
         labels = km.fit_predict(X)
         return labels
 
-    def __create_geographic_zones(self, gdf, num_zones, overlap_percent, density_weight, kde_bw):
+    def __split_zone(self, zone_gdf, density_weight):
+        """Split a zone into 2 sub-zones using density-aware k-means."""
+        if len(zone_gdf) < 2:
+            return [zone_gdf]
+
+        coords = np.column_stack([zone_gdf.geometry.x.to_numpy(np.float64),
+                                  zone_gdf.geometry.y.to_numpy(np.float64)])
+        density = zone_gdf['density'].to_numpy()
+
+        labels = self.__density_aware_kmeans(coords, density, 2, density_weight)
+
+        return [zone_gdf[labels == 0].copy(), zone_gdf[labels == 1].copy()]
+
+    def __find_nearest_zone(self, zone_gdf, other_zones):
+        """Find the nearest zone based on centroid distance."""
+        zone_centroid = np.array([zone_gdf.geometry.x.mean(), zone_gdf.geometry.y.mean()])
+
+        min_dist = float('inf')
+        nearest_zone = None
+        nearest_idx = None
+
+        for idx, other_zone in enumerate(other_zones):
+            if other_zone is zone_gdf:
+                continue
+            other_centroid = np.array([other_zone.geometry.x.mean(), other_zone.geometry.y.mean()])
+            dist = np.linalg.norm(zone_centroid - other_centroid)
+
+            if dist < min_dist:
+                min_dist = dist
+                nearest_zone = other_zone
+                nearest_idx = idx
+
+        return nearest_zone, nearest_idx
+
+    def __adaptive_zone_creation(self, gdf, target_size, min_size, max_size, density_weight):
+        """Create zones targeting specific image count with split/merge post-processing."""
+
+        # Initial estimate of zones needed
+        initial_k = max(2, int(np.ceil(len(gdf) / target_size)))
+        self.logger.info(f"Starting with {initial_k} initial zones for {len(gdf)} images")
+
+        # Initial clustering
+        coords = np.column_stack([gdf.geometry.x.to_numpy(np.float64),
+                                  gdf.geometry.y.to_numpy(np.float64)])
+        density = gdf['density'].to_numpy()
+
+        labels = self.__density_aware_kmeans(coords, density, initial_k, density_weight)
+        gdf['cluster'] = labels
+
+        zones = [gdf[gdf['cluster'] == i].copy() for i in range(initial_k)]
+
+        # Iterative split/merge refinement
+        max_iterations = 10
+        iteration = 0
+
+        while iteration < max_iterations:
+            iteration += 1
+            modified = False
+            new_zones = []
+            zones_to_merge = []
+
+            for zone in zones:
+                zone_size = len(zone)
+
+                if zone_size > max_size:
+                    # Split oversized zone
+                    self.logger.info(f"Splitting zone with {zone_size} images")
+                    split_zones = self.__split_zone(zone, density_weight)
+                    new_zones.extend(split_zones)
+                    modified = True
+
+                elif zone_size < min_size:
+                    # Mark for merging
+                    zones_to_merge.append(zone)
+
+                else:
+                    # Zone is acceptable size
+                    new_zones.append(zone)
+
+            # Process merges
+            while zones_to_merge:
+                small_zone = zones_to_merge.pop(0)
+
+                # Find nearest zone from acceptable zones or other small zones
+                search_zones = new_zones + zones_to_merge
+                nearest_zone, nearest_idx = self.__find_nearest_zone(small_zone, search_zones)
+
+                if nearest_zone is not None:
+                    combined_size = len(small_zone) + len(nearest_zone)
+
+                    if combined_size <= max_size:
+                        # Merge zones
+                        self.logger.info(f"Merging zones: {len(small_zone)} + {len(nearest_zone)} = {combined_size}")
+                        merged = pd.concat([small_zone, nearest_zone])
+
+                        # Remove nearest from its list
+                        if nearest_zone in new_zones:
+                            new_zones.remove(nearest_zone)
+                        elif nearest_zone in zones_to_merge:
+                            zones_to_merge.remove(nearest_zone)
+
+                        new_zones.append(merged)
+                        modified = True
+                    else:
+                        # Can't merge, keep small zone
+                        new_zones.append(small_zone)
+                else:
+                    # No zones to merge with, keep it
+                    new_zones.append(small_zone)
+
+            zones = new_zones
+
+            if not modified:
+                self.logger.info(f"Converged after {iteration} iterations")
+                break
+
+        # Renumber clusters
+        for i, zone in enumerate(zones):
+            zone['cluster'] = i
+
+        # Combine back into single GeoDataFrame
+        final_gdf = pd.concat(zones, ignore_index=True)
+
+        return final_gdf, len(zones)
+
+    def __create_geographic_zones(self, gdf, target_size, min_size, max_size,
+                                  overlap_percent, density_weight, kde_bw):
         if gdf is None or gdf.empty:
             return [], {}, None
 
         coords = np.column_stack([gdf.geometry.x.to_numpy(np.float64),
                                   gdf.geometry.y.to_numpy(np.float64)])
 
-        # KDE bandwidth
         bw = float(kde_bw)
         if bw <= 0.0:
             bw = self.__scott_bandwidth(coords)
@@ -172,20 +343,19 @@ class BatchDirectory(RCModule):
         density = self.__compute_density(coords, bw)
         gdf['density'] = density
 
-        # Density-aware clustering
-        labels = self.__density_aware_kmeans(coords, density, int(num_zones), float(density_weight))
-        gdf['cluster'] = labels
+        # Adaptive zone creation
+        gdf_processed, num_zones = self.__adaptive_zone_creation(
+            gdf, target_size, min_size, max_size, density_weight
+        )
 
-        base_zones_gdf = [gdf[gdf['cluster'] == i] for i in range(num_zones)]
+        base_zones_gdf = [gdf_processed[gdf_processed['cluster'] == i] for i in range(num_zones)]
         base_zones_files = {i: zone['filename'].tolist() for i, zone in enumerate(base_zones_gdf)}
 
-        # Density-aware overlap selection
         final_zones = []
         if overlap_percent > 0:
-            # Precompute arrays
             for i in range(num_zones):
                 zone_i = base_zones_gdf[i]
-                other = gdf[gdf['cluster'] != i]
+                other = gdf_processed[gdf_processed['cluster'] != i]
 
                 final_zone_files = list(base_zones_files[i])
 
@@ -198,18 +368,15 @@ class BatchDirectory(RCModule):
                     final_zones.append(final_zone_files)
                     continue
 
-                # Distances to nearest point in zone i
                 tree = cKDTree(np.column_stack([zone_i.geometry.x.to_numpy(np.float64),
                                                 zone_i.geometry.y.to_numpy(np.float64)]))
                 other_xy = np.column_stack([other.geometry.x.to_numpy(np.float64),
                                             other.geometry.y.to_numpy(np.float64)])
                 dists, _ = tree.query(other_xy, k=1)
 
-                # Get density values for other points and compute inverse density
                 other_density = other['density'].to_numpy()
                 invdens = 1.0 / other_density
 
-                # Normalize distance and density for scoring
                 d_ptp = np.ptp(dists)
                 d_norm = (dists - dists.min()) / (d_ptp if d_ptp > 0 else 1.0)
 
@@ -223,13 +390,12 @@ class BatchDirectory(RCModule):
                 idx = np.argsort(score)[:overlap_size]
                 files_to_add = other.iloc[idx]['filename'].tolist()
 
-                # Append
                 final_zone_files.extend(files_to_add)
                 final_zones.append(final_zone_files)
         else:
             final_zones = [files for _, files in base_zones_files.items()]
 
-        return final_zones, base_zones_files, gdf
+        return final_zones, base_zones_files, gdf_processed
 
     def __plot_results(self, gdf, zones, output_dir):
         os.makedirs(output_dir, exist_ok=True)
@@ -237,7 +403,6 @@ class BatchDirectory(RCModule):
         x = gdf.geometry.x.to_numpy(dtype=np.float64, copy=False)
         y = gdf.geometry.y.to_numpy(dtype=np.float64, copy=False)
 
-        # Figure 1: KDE + density-colored points
         fig1, ax1 = plt.subplots(figsize=(12, 10))
         try:
             sns.kdeplot(x=x, y=y, ax=ax1, cmap="viridis", fill=True, levels=25, bw_adjust=1.0, thresh=None)
@@ -284,7 +449,6 @@ class BatchDirectory(RCModule):
         plt.close(fig1)
         self.logger.info(f"Kernel density plot saved to: {kernel_plot_path}")
 
-        # Figure 2: Zones + hulls
         fig2, ax2 = plt.subplots(figsize=(12, 10))
         palette = sns.color_palette("husl", len(zones))
         ax2.scatter(x, y, color='gray', s=10, alpha=0.2, label='All Points')
@@ -318,38 +482,82 @@ class BatchDirectory(RCModule):
         plt.close(fig2)
         self.logger.info(f"Batch zones plot saved to: {zones_plot_path}")
 
+    def __determine_camera_subfolder(self, filename):
+        """Determine camera subfolder based on filename."""
+        if "HERC" in filename:
+            return "zeuss"
+        elif filename.startswith("camlower"):
+            return "camlower"
+        elif filename.startswith("cammid"):
+            return "cammid"
+        elif filename.startswith("camupper"):
+            return "camupper"
+        else:
+            return "other"
+
     def __copy_files(self, input_dir, batch_folder_dir, files):
+        """Copy files to camera-specific subfolders."""
         for file in files:
+            camera_subfolder = self.__determine_camera_subfolder(file)
+            camera_dir = os.path.join(batch_folder_dir, camera_subfolder)
+            os.makedirs(camera_dir, exist_ok=True)
+
             file_path = os.path.join(input_dir, file)
-            output_path = os.path.join(batch_folder_dir, file)
+            output_path = os.path.join(camera_dir, file)
             if not os.path.exists(output_path):
                 shutil.copy(file_path, output_path)
 
     def __create_batch_folders(self, output_dir, zones, input_dir, flight_log_path=None):
+        """
+        Create per-zone folders and write zone-specific flight logs including all original columns.
+        """
         if not zones:
             raise ValueError('No geographic zones were created.')
 
         flight_log_df = None
-        if flight_log_path:
-            flight_log_df = pd.read_csv(flight_log_path, delimiter=';').set_index('Name')
+        if flight_log_path and os.path.isfile(flight_log_path):
+            # Read all columns exactly as they appear
+            flight_log_df = pd.read_csv(flight_log_path, delimiter=';', dtype=str, keep_default_na=False)
+            if 'Name' in flight_log_df.columns:
+                flight_log_df = flight_log_df.rename(columns={'Name': 'filename'})
+            flight_log_df.set_index('filename', inplace=True)
 
         bar = self._initialize_loading_bar(len(zones), 'Creating Batch Folders')
+
         for i, zone_files in enumerate(zones):
             batch_folder_name = f"zone_{i + 1}"
             batch_folder_dir = os.path.join(output_dir, batch_folder_name)
-
-            if not os.path.isdir(batch_folder_dir):
-                os.makedirs(batch_folder_dir)
+            os.makedirs(batch_folder_dir, exist_ok=True)
 
             unique_zone_files = list(dict.fromkeys(zone_files))
             self.__copy_files(input_dir, batch_folder_dir, unique_zone_files)
 
+            # Create flight log per zone
             if flight_log_df is not None:
-                batch_flight_log_path = os.path.join(batch_folder_dir, 'flight_log.txt')
-                zone_flight_log_df = flight_log_df.loc[flight_log_df.index.isin(unique_zone_files)]
-                zone_flight_log_df.to_csv(batch_flight_log_path, sep=';')
+                # Maintain full column order
+                zone_flight_log_df = flight_log_df.loc[
+                    flight_log_df.index.isin(unique_zone_files)
+                ].copy()
+
+                # Keep original columns even if some missing
+                missing = [col for col in flight_log_df.columns if col not in zone_flight_log_df.columns]
+                for col in missing:
+                    zone_flight_log_df[col] = ""
+
+                # Write out zone-specific flight log
+                batch_flight_log_name = f'flight_log{self.utm_zone_suffix}_UTM.txt'
+                batch_flight_log_path = os.path.join(batch_folder_dir, batch_flight_log_name)
+
+                zone_flight_log_df.to_csv(
+                    batch_flight_log_path,
+                    sep=';',
+                    index=True,
+                    index_label='filename',
+                    columns=flight_log_df.columns  # preserve column order
+                )
 
             self._update_loading_bar(bar, 1)
+
 
     def run(self):
         success, message = self.validate_parameters()
@@ -357,7 +565,9 @@ class BatchDirectory(RCModule):
             self.logger.error(message)
             return {'Success': False}
 
-        num_zones = int(self.params['batch_num_zones'].get_value())
+        target_size = int(self.params['batch_target_images_per_zone'].get_value())
+        min_size = int(self.params['batch_min_zone_size'].get_value())
+        max_size = int(self.params['batch_max_zone_size'].get_value())
         overlap_percent = float(self.params['batch_initial_overlap_percent'].get_value())
         density_weight = float(self.params['batch_density_weight'].get_value())
         kde_bw = float(self.params['batch_kde_bandwidth'].get_value())
@@ -372,22 +582,40 @@ class BatchDirectory(RCModule):
             return {'Success': False}
 
         self.logger.info(f"Total number of georeferenced points: {len(gdf)}")
+        self.logger.info(f"Target zone size: {target_size} images (min: {min_size}, max: {max_size})")
+        if self.utm_zone_suffix:
+            self.logger.info(f"UTM zone suffix detected: {self.utm_zone_suffix}")
 
         while True:
             final_zones, base_zones, gdf_processed = self.__create_geographic_zones(
-                gdf, num_zones, overlap_percent, density_weight, kde_bw
+                gdf, target_size, min_size, max_size, overlap_percent, density_weight, kde_bw
             )
 
             print("\n--- Batch Summary ---")
+            print(f"Total unique images: {len(gdf)}")
+            print(f"Number of zones created: {len(final_zones)}")
+            print(f"Target: {target_size} images/zone (min: {min_size}, max: {max_size})")
+            print("\nPer-zone breakdown:")
+
             total_in_batches = 0
-            for i in range(num_zones):
+            for i in range(len(final_zones)):
                 final_files_in_zone = list(dict.fromkeys(final_zones[i]))
                 total_count = len(final_files_in_zone)
                 base_count = len(base_zones[i])
                 overlap_count = total_count - base_count
                 total_in_batches += total_count
-                print(f"Zone {i + 1}: {total_count} images ({base_count} base + {overlap_count} overlap)")
-            print(f"Total images across all batches: {total_in_batches} ({len(gdf)} unique)")
+
+                status = "OK"
+                if total_count > max_size:
+                    status = "OVERSIZED"
+                elif total_count < min_size:
+                    status = "UNDERSIZED"
+
+                print(
+                    f"  Zone {i + 1}: {total_count:4d} images ({base_count:4d} base + {overlap_count:3d} overlap) [{status}]")
+
+            print(f"\nTotal images across all batches: {total_in_batches}")
+            print(f"Average zone size: {total_in_batches / len(final_zones):.0f} images")
             print("---------------------\n")
 
             self.__plot_results(gdf_processed, final_zones, output_dir)
@@ -397,20 +625,20 @@ class BatchDirectory(RCModule):
                 self.logger.info("Batches accepted. Proceeding to copy files.")
                 break
             elif user_input == 'r':
-                # Ask for both overlap and number of zones
                 while True:
                     try:
-                        new_z = int(input("Enter new number of zones (>=1): "))
-                        if new_z >= 1:
-                            num_zones = new_z
+                        new_target = int(input(f"Enter new target images per zone (current: {target_size}): "))
+                        if new_target >= 100:
+                            target_size = new_target
                             break
                         else:
-                            print("Please enter an integer >= 1.")
+                            print("Please enter a value >= 100.")
                     except ValueError:
                         print("Invalid input. Please enter an integer.")
+
                 while True:
                     try:
-                        new_overlap = float(input("Enter new overlap percentage (0..100): "))
+                        new_overlap = float(input(f"Enter new overlap percentage (current: {overlap_percent}): "))
                         if 0.0 <= new_overlap <= 100.0:
                             overlap_percent = new_overlap
                             break
@@ -418,7 +646,11 @@ class BatchDirectory(RCModule):
                             print("Please enter a value between 0 and 100.")
                     except ValueError:
                         print("Invalid input. Please enter a number.")
-                # Clean and recreate plots dir
+
+                # Update min/max based on new target
+                min_size = max(100, int(target_size * 0.2))
+                max_size = int(target_size * 1.5)
+
                 if os.path.isdir(output_dir):
                     shutil.rmtree(output_dir)
                 os.makedirs(output_dir)
@@ -428,13 +660,19 @@ class BatchDirectory(RCModule):
 
         try:
             self.__create_batch_folders(output_dir, final_zones, input_dir, flight_log_path)
+
+            avg_zone_size = total_in_batches / len(final_zones) if final_zones else 0
+
             return {
                 'Success': True,
                 'Number of Zones': len(final_zones),
+                'Target Zone Size': target_size,
+                'Average Zone Size': int(avg_zone_size),
                 'Final Overlap': f"{overlap_percent}%",
                 'Total Unique Images': len(gdf),
                 'Total Images in Batches': total_in_batches,
-                'Output Directory': output_dir
+                'Output Directory': output_dir,
+                'UTM Zone': self.utm_zone_suffix or 'N/A'
             }
         except ValueError as e:
             self.logger.error(e)
@@ -445,8 +683,12 @@ class BatchDirectory(RCModule):
         if not success:
             return success, message
 
-        if 'batch_num_zones' not in self.params or self.params['batch_num_zones'].get_value() < 1:
-            return False, 'Number of zones is invalid'
+        if 'batch_target_images_per_zone' not in self.params:
+            return False, 'Target images per zone parameter not found'
+
+        target = self.params['batch_target_images_per_zone'].get_value()
+        if target < 100:
+            return False, 'Target images per zone must be at least 100'
 
         if 'batch_initial_overlap_percent' not in self.params:
             return False, 'Initial overlap percent parameter not found'
