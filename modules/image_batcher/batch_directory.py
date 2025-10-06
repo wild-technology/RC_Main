@@ -504,7 +504,17 @@ class BatchDirectory(RCModule):
             camera_dir = os.path.join(batch_folder_dir, camera_subfolder)
             os.makedirs(camera_dir, exist_ok=True)
 
-            file_path = os.path.join(input_dir, file)
+            # Search recursively for the file in input_dir
+            file_path = None
+            for root, dirs, filenames in os.walk(input_dir):
+                if file in filenames:
+                    file_path = os.path.join(root, file)
+                    break
+
+            if file_path is None:
+                self.logger.warning(f"File not found: {file}")
+                continue
+
             output_path = os.path.join(camera_dir, file)
             if not os.path.exists(output_path):
                 shutil.copy(file_path, output_path)
