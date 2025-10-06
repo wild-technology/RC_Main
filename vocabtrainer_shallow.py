@@ -442,7 +442,7 @@ def main():
         trainer.merge_databases(temp_db_paths)
 
         trainer.train_vocabulary_tree(
-            num_visual_words=100000,
+            num_visual_words=50000,
             branching_factor=32,
             num_iterations=12
         )

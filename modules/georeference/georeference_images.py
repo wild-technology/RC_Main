@@ -79,28 +79,25 @@ class GeoreferenceImages(RCModule):
         """Wrap angle to [0, 360) range."""
         return angle_deg % 360.0
 
-    def _get_camera_offsets(self, filename: str) -> tuple[float, float, float]:
+    def _get_camera_pitch_accuracy(self, filename: str) -> float:
         """
-        Return camera position offsets relative to vehicle center.
-
-        Returns:
-            (forward_offset, lateral_offset, down_offset) in meters
-            - forward: positive = ahead of vehicle center
-            - lateral: positive = right of vehicle center (not used currently)
-            - down: positive = below vehicle center
+        Return pitch accuracy (degrees) for a camera based on its name.
+        Yaw and Roll are fixed at 3° for all cameras.
         """
         filename_lower = filename.lower()
-        if 'camupper' in filename_lower:
-            return (1.0, 0.0, 0.0)  # 1m forward, same depth
-        elif 'cammid' in filename_lower:
-            return (1.0, 0.0, 1.0)  # 1m forward, 1m down
-        elif 'camlower' in filename_lower:
-            return (1.0, 0.0, 1.0)  # 1m forward, 1m down
-        elif '_herc_' in filename_lower or 'zeuss' in filename_lower:
-            return (0.5, 0.0, 0.5)  # 0.5m forward, 0.5m down
+
+        if filename_lower.startswith('camupper'):
+            return 10.0
+        elif filename_lower.startswith('cammid'):
+            return 10.0
+        elif filename_lower.startswith('camlower'):
+            return 5.0
+        elif '_herc_' in filename_lower:
+            return 30.0
         else:
-            self.logger.warning(f"Unknown camera type for {filename}, assuming no offset")
-            return (0.0, 0.0, 0.0)
+            self.logger.warning(f"Unknown camera type for {filename}, using default pitch accuracy 10°")
+            return 10.0
+
 
     def _get_camera_pitch_offset(self, filename: str) -> float:
         """
@@ -432,9 +429,74 @@ class GeoreferenceImages(RCModule):
 
         return matches_made
 
+    def _get_camera_offsets(self, filename: str) -> tuple[float, float, float]:
+        """
+        Return camera position offsets relative to vehicle center.
+
+        Returns:
+            (forward_offset, lateral_offset, down_offset) in meters
+            - forward: positive = ahead of vehicle center
+            - lateral: positive = right of vehicle center (not used currently)
+            - down: positive = below vehicle center
+        """
+        filename_lower = filename.lower()
+
+        # Check specific camera types first (most specific to least specific)
+        if filename_lower.startswith('camupper'):
+            return (1.0, 0.0, 0.0)  # 1m forward, same depth
+        elif filename_lower.startswith('cammid'):
+            return (1.0, 0.0, 1.0)  # 1m forward, 1m down
+        elif filename_lower.startswith('camlower'):
+            return (1.0, 0.0, 1.0)  # 1m forward, 1m down
+        elif '_herc_' in filename_lower:
+            return (0.5, 0.0, 0.5)  # 0.5m forward, 0.5m down
+        else:
+            self.logger.warning(f"Unknown camera type for {filename}, assuming no offset")
+            return (0.0, 0.0, 0.0)
+
+    def _get_camera_pitch_offset(self, filename: str) -> float:
+        """
+        Return camera pitch offset (degrees down from vehicle forward axis).
+        Positive values = camera pointing down relative to vehicle.
+        """
+        filename_lower = filename.lower()
+
+        # Check specific camera types first (most specific to least specific)
+        if filename_lower.startswith('camupper'):
+            return 70.0  # pointing down 70°
+        elif filename_lower.startswith('cammid'):
+            return 20.0  # pointing down 20°
+        elif filename_lower.startswith('camlower'):
+            return 10.0  # pointing down 10°
+        elif '_herc_' in filename_lower:
+            return 30.0  # Zeuss pointing down 30°
+        else:
+            self.logger.warning(f"Unknown camera type for {filename}, assuming 0° pitch offset")
+            return 0.0
+
+    def _get_camera_accuracy(self, filename: str) -> tuple[float, float, float]:
+        """
+        Return yaw, pitch, roll accuracy (degrees) for a camera based on its name.
+        Default values: upper=10, mid=10, lower=5, zeuss=30
+        """
+        filename_lower = filename.lower()
+
+        # Check specific camera types first (most specific to least specific)
+        if filename_lower.startswith('camupper'):
+            return 10.0, 10.0, 10.0
+        elif filename_lower.startswith('cammid'):
+            return 10.0, 10.0, 10.0
+        elif filename_lower.startswith('camlower'):
+            return 5.0, 5.0, 5.0
+        elif '_herc_' in filename_lower:
+            return 30.0, 30.0, 30.0
+        else:
+            self.logger.warning(f"Unknown camera type for {filename}, using default accuracy 10°")
+            return 10.0, 10.0, 10.0
+
     def __generate_flight_log(self, image_data, image_folder):
         """Generate a flight log file with position and orientation accuracy."""
-        zone_suffix = self.utm_zone_suffix if self.utm_zone_suffix else "UNKNOWN"
+        zone_suffix = self.utm_zone if self.utm_zone else "UNKNOWN"
         flight_log_filename = os.path.join(image_folder, f"flight_log_{zone_suffix}_UTM.txt")
 
         if os.path.exists(flight_log_filename):
@@ -444,54 +506,29 @@ class GeoreferenceImages(RCModule):
         accepted_images = [img for img in image_data if img.get("ACCEPTED", False)]
         decl_deg = self.params['magnetic_declination_deg'].get_value()
 
-        # Fixed positional accuracy (always same values)
-        x_accuracy = 10.0
-        y_accuracy = 10.0
-        alt_accuracy = 1.0
-
-        # Default per-camera yaw/pitch/roll accuracies (deg)
-        default_orientation_accuracy = {
-            "upper": 10.0,
-            "mid": 10.0,
-            "lower": 5.0,
-            "zeuss": 30.0
-        }
+        # Fixed accuracy values
+        pos_x_acc = 10.0
+        pos_y_acc = 10.0
+        alt_acc = 1.0
+        yaw_acc = 3.0
+        roll_acc = 3.0
 
         with open(flight_log_filename, "w") as f:
-            # Header with accuracy columns
             f.write(
-                "Name;X (East);Y (North);Alt;X Accuracy;Y Accuracy;Alt Accuracy;"
-                "Yaw;Pitch;Roll;Yaw Accuracy;Pitch Accuracy;Roll Accuracy\n"
+                "Name;X (East);Y (North);Alt;X Accuracy;Y Accuracy;Alt Accuracy;Yaw;Pitch;Roll;Yaw Accuracy;Pitch Accuracy;Roll Accuracy\n"
             )
 
             for image in accepted_images:
                 heading_mag = image.get("HEADING_MAG")
                 pitch_vehicle = image.get("PITCH_VEHICLE")
                 roll_vehicle = image.get("ROLL_VEHICLE")
-                filename = image["FILENAME"].lower()
-
-                # Determine camera accuracy group
-                if "camupper" in filename:
-                    cam_key = "upper"
-                elif "cammid" in filename:
-                    cam_key = "mid"
-                elif "camlower" in filename:
-                    cam_key = "lower"
-                elif "zeuss" in filename or "_herc_" in filename:
-                    cam_key = "zeuss"
-                else:
-                    cam_key = "mid"  # fallback
-
-                # Retrieve per-camera yaw/pitch/roll accuracy
-                yaw_accuracy = default_orientation_accuracy[cam_key]
-                pitch_accuracy = yaw_accuracy
-                roll_accuracy = yaw_accuracy
 
                 camera_pitch_offset = self._get_camera_pitch_offset(image["FILENAME"])
-
                 rc_yaw, rc_pitch, rc_roll = self._convert_to_rc_orientation(
                     heading_mag, pitch_vehicle, roll_vehicle, camera_pitch_offset, decl_deg
                 )
+
+                pitch_acc = self._get_camera_pitch_accuracy(image["FILENAME"])
 
                 def fmt(val):
                     return f"{val:.6f}" if val is not None else ""
@@ -501,15 +538,15 @@ class GeoreferenceImages(RCModule):
                     fmt(image.get("UTM_X")),
                     fmt(image.get("UTM_Y")),
                     fmt(image.get("ALTITUDE_EST")),
-                    fmt(x_accuracy),
-                    fmt(y_accuracy),
-                    fmt(alt_accuracy),
+                    fmt(pos_x_acc),
+                    fmt(pos_y_acc),
+                    fmt(alt_acc),
                     fmt(rc_yaw),
                     fmt(rc_pitch),
                     fmt(rc_roll),
-                    fmt(yaw_accuracy),
-                    fmt(pitch_accuracy),
-                    fmt(roll_accuracy)
+                    fmt(yaw_acc),
+                    fmt(pitch_acc),
+                    fmt(roll_acc)
                 ])
                 f.write(line + "\n")
 
@@ -518,7 +555,6 @@ class GeoreferenceImages(RCModule):
         print(f"  Lines written: {self.stats['written_to_flight_log']}")
 
         return flight_log_filename
-
 
     def run(self):
         success, message = self.validate_parameters()

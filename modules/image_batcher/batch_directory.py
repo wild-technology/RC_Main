@@ -281,6 +281,10 @@ class BatchDirectory(RCModule):
                     # Zone is acceptable size
                     new_zones.append(zone)
 
+            # Helper to remove a zone by identity
+            def remove_zone_from_list(zone_list, target_zone):
+                return [z for z in zone_list if z is not target_zone]
+
             # Process merges
             while zones_to_merge:
                 small_zone = zones_to_merge.pop(0)
@@ -298,10 +302,8 @@ class BatchDirectory(RCModule):
                         merged = pd.concat([small_zone, nearest_zone])
 
                         # Remove nearest from its list
-                        if nearest_zone in new_zones:
-                            new_zones.remove(nearest_zone)
-                        elif nearest_zone in zones_to_merge:
-                            zones_to_merge.remove(nearest_zone)
+                        new_zones = remove_zone_from_list(new_zones, nearest_zone)
+                        zones_to_merge = remove_zone_from_list(zones_to_merge, nearest_zone)
 
                         new_zones.append(merged)
                         modified = True
