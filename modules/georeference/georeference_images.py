@@ -515,7 +515,7 @@ class GeoreferenceImages(RCModule):
 
         with open(flight_log_filename, "w") as f:
             f.write(
-                "Name;X (East);Y (North);Alt;X Accuracy;Y Accuracy;Alt Accuracy;Yaw;Pitch;Roll;Yaw Accuracy;Pitch Accuracy;Roll Accuracy\n"
+                "filename;X (East);Y (North);Alt;X Accuracy;Y Accuracy;Alt Accuracy;Yaw;Pitch;Roll;Yaw Accuracy;Pitch Accuracy;Roll Accuracy\n"
             )
 
             for image in accepted_images:

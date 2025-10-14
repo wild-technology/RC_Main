@@ -154,8 +154,10 @@ class BatchDirectory(RCModule):
         try:
             df = pd.read_csv(flight_log_path, delimiter=';')
 
+            # Standardize to 'filename' column
             if 'Name' in df.columns:
                 df = df.rename(columns={'Name': 'filename'})
+            # If already 'filename', no change needed
 
             if 'X (East)' in df.columns and 'Y (North)' in df.columns:
                 df = df.rename(columns={'X (East)': 'x', 'Y (North)': 'y'})
@@ -498,7 +500,7 @@ class BatchDirectory(RCModule):
             return "other"
 
     def __copy_files(self, input_dir, batch_folder_dir, files):
-        """Copy files to camera-specific subfolders."""
+        """Copy files to camera-specific subfolders and generate XMP sidecars."""
         for file in files:
             camera_subfolder = self.__determine_camera_subfolder(file)
             camera_dir = os.path.join(batch_folder_dir, camera_subfolder)
@@ -512,12 +514,96 @@ class BatchDirectory(RCModule):
                     break
 
             if file_path is None:
-                self.logger.warning(f"File not found: {file}")
+                # Check if it's an extension mismatch
+                base_name = os.path.splitext(file)[0]
+                found_with_diff_ext = False
+                for root, dirs, filenames in os.walk(input_dir):
+                    for fn in filenames:
+                        if os.path.splitext(fn)[0] == base_name:
+                            self.logger.warning(f"File '{file}' not found, but found '{fn}' - flight log may have wrong extension")
+                            found_with_diff_ext = True
+                            break
+                    if found_with_diff_ext:
+                        break
+
+                if not found_with_diff_ext:
+                    self.logger.warning(f"File not found: {file} - flight log filename does not match any files in directory")
                 continue
 
             output_path = os.path.join(camera_dir, file)
             if not os.path.exists(output_path):
                 shutil.copy(file_path, output_path)
+
+            # Generate XMP sidecar file with camera calibration priors
+            self.__generate_xmp_sidecar(file, camera_dir, camera_subfolder)
+
+    def __generate_xmp_sidecar(self, image_filename: str, output_path: str, camera_type: str) -> None:
+        """
+        Generate XMP sidecar file for RealityCapture camera calibration.
+
+        Args:
+            image_filename: Name of the image file
+            output_path: Full path where the image is located
+            camera_type: Camera type (zeuss, cammid, camupper, camlower, other)
+        """
+        xmp_path = os.path.join(output_path, f"{image_filename}.xmp")
+
+        # Define camera-specific settings
+        if camera_type == "zeuss":
+            # Rectilinear camera, focal length unknown
+            calib_group = "1"
+            calib_prior = "Unknown"
+            focal_length = None  # Unknown
+            lens_group = "1"
+            lens_prior = "Approximate"  # Low distortion expected
+            distortion_model = "brown3"
+        elif camera_type in ["cammid", "camupper"]:
+            # Fisheye cameras with approximate 12mm focal length
+            calib_group = "2"
+            calib_prior = "Approximate"
+            focal_length = "12.0"  # 12mm approximate
+            lens_group = "2"
+            lens_prior = "Unknown"  # High distortion/fisheye requires Unknown
+            distortion_model = "division"
+        elif camera_type == "camlower":
+            # Fisheye camera
+            calib_group = "2"
+            calib_prior = "Approximate"
+            focal_length = "12.0"
+            lens_group = "2"
+            lens_prior = "Unknown"  # Fisheye requires Unknown
+            distortion_model = "division"
+        else:
+            # Unknown camera type
+            self.logger.warning(f"Unknown camera type '{camera_type}' for {image_filename}, skipping XMP generation")
+            return
+
+        # Build XMP content
+        xmp_content = ['<?xml version="1.0" encoding="UTF-8"?>']
+        xmp_content.append(
+            '<x:xmpmeta xmlns:x="adobe:ns:meta/" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">')
+        xmp_content.append('  <rdf:RDF>')
+        xmp_content.append(
+            '    <rdf:Description xmlns:Camera="http://www.capturingreality.com/ns/camera/1.0/" xmlns:xcr="http://www.capturingreality.com/ns/xcr/1.0/">')
+        xmp_content.append(f'      <Camera:CalibrationGroup>{calib_group}</Camera:CalibrationGroup>')
+        xmp_content.append(f'      <Camera:CalibrationPrior>{calib_prior}</Camera:CalibrationPrior>')
+
+        if focal_length is not None:
+            xmp_content.append(f'      <xcr:FocalLength35mm>{focal_length}</xcr:FocalLength35mm>')
+
+        xmp_content.append(f'      <Camera:LensDistortionGroup>{lens_group}</Camera:LensDistortionGroup>')
+        xmp_content.append(f'      <Camera:LensDistortionPrior>{lens_prior}</Camera:LensDistortionPrior>')
+        xmp_content.append(f'      <Camera:DistortionModel>{distortion_model}</Camera:DistortionModel>')
+        xmp_content.append('    </rdf:Description>')
+        xmp_content.append('  </rdf:RDF>')
+        xmp_content.append('</x:xmpmeta>')
+
+        # Write XMP file
+        try:
+            with open(xmp_path, 'w', encoding='utf-8') as f:
+                f.write('\n'.join(xmp_content))
+        except Exception as e:
+            self.logger.error(f"Failed to write XMP file {xmp_path}: {e}")
 
     def __create_batch_folders(self, output_dir, zones, input_dir, flight_log_path=None):
         """
@@ -577,13 +663,6 @@ class BatchDirectory(RCModule):
             self.logger.error(message)
             return {'Success': False}
 
-        target_size = int(self.params['batch_target_images_per_zone'].get_value())
-        min_size = int(self.params['batch_min_zone_size'].get_value())
-        max_size = int(self.params['batch_max_zone_size'].get_value())
-        overlap_percent = float(self.params['batch_initial_overlap_percent'].get_value())
-        density_weight = float(self.params['batch_density_weight'].get_value())
-        kde_bw = float(self.params['batch_kde_bandwidth'].get_value())
-
         output_dir = os.path.join(self.params['output_dir'].get_value(), 'batched_images_by_zone')
         input_dir = self.__get_input_dir()
         flight_log_path = self.__get_flight_log_path()
@@ -594,6 +673,34 @@ class BatchDirectory(RCModule):
             return {'Success': False}
 
         self.logger.info(f"Total number of georeferenced points: {len(gdf)}")
+
+        # Prompt for min/max zone size based on total image count
+        self.logger.info(f"Recommended min zone size: {max(100, len(gdf) // 10)}")
+        self.logger.info(f"Recommended max zone size: {max(1000, len(gdf) // 2)}")
+
+        min_zone = input(f"Minimum zone size (default {self.params['batch_min_zone_size'].get_value()}): ").strip()
+        if min_zone:
+            try:
+                self.params['batch_min_zone_size'].set_value(int(min_zone))
+            except ValueError:
+                self.logger.error("Invalid minimum zone size")
+                return {'Success': False}
+
+        max_zone = input(f"Maximum zone size (default {self.params['batch_max_zone_size'].get_value()}): ").strip()
+        if max_zone:
+            try:
+                self.params['batch_max_zone_size'].set_value(int(max_zone))
+            except ValueError:
+                self.logger.error("Invalid maximum zone size")
+                return {'Success': False}
+
+        target_size = int(self.params['batch_target_images_per_zone'].get_value())
+        min_size = int(self.params['batch_min_zone_size'].get_value())
+        max_size = int(self.params['batch_max_zone_size'].get_value())
+        overlap_percent = float(self.params['batch_initial_overlap_percent'].get_value())
+        density_weight = float(self.params['batch_density_weight'].get_value())
+        kde_bw = float(self.params['batch_kde_bandwidth'].get_value())
+
         self.logger.info(f"Target zone size: {target_size} images (min: {min_size}, max: {max_size})")
         if self.utm_zone_suffix:
             self.logger.info(f"UTM zone suffix detected: {self.utm_zone_suffix}")
@@ -716,6 +823,9 @@ class BatchDirectory(RCModule):
         flight_log_path = self.__get_flight_log_path()
         if not flight_log_path or not os.path.isfile(flight_log_path):
             return False, 'A valid flight log is required for geographic batching.'
+
+        # Note: Image counting and min/max prompting now happens in run() method
+        # after loading flight log data, not during validation
 
         output_dir = os.path.join(self.params['output_dir'].get_value(), 'batched_images_by_zone')
         if os.path.isdir(output_dir) and os.listdir(output_dir):
