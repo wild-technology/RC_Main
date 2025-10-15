@@ -1,0 +1,133 @@
+<FlightLogs>
+
+    <format id="{8F1BB334-5376-46C2-91E6-BC968FB11EA4}" descID="8397" desc="Name, Lon, Lat, Alt (character-separated)" reader="RealityScan.Import.CSVFlightLog">
+        <parser allowedSeparators=",; &tab;" comment="#" showIgnoreFirstline="true" qualifiers="&quot;optional" >
+            <Image index="0" format="name.ext"/>
+            <Longitude index="1" format="degrees"/>
+            <Latitude index="2" format="degrees"/>
+            <Altitude index="3" format="value"/>
+        </parser>
+    </format>
+	
+    <format id="{A438A617-1434-4A24-B1B7-48980F28345A}" descID="8430" desc="Name, Lat, Lon, Alt (character-separated)" reader="RealityScan.Import.CSVFlightLog">
+        <parser allowedSeparators=",; &tab;" comment="#" showIgnoreFirstline="true" qualifiers="&quot;optional" >
+            <Image index="0" format="name.ext"/>
+            <Latitude index="1" format="degrees"/>
+            <Longitude index="2" format="degrees"/>
+            <Altitude index="3" format="value"/>
+        </parser>
+    </format>
+
+
+    <format id="{B438A617-2434-5A24-C1B7-58980F28345A}" descID="2345" desc="Name,X (East), Y (North), Altitude, XAccuracy, YAccuracy, AltitudeAccuracy, YawAccuracy, PitchAccuracy, RollAccuracy" reader="RealityScan.Import.CSVFlightLog">
+        <parser allowedSeparators=",; &tab;" comment="#" showIgnoreFirstline="true" qualifiers="&quot;optional">
+            <Image index="0" format="name.ext"/>
+            <X index="1" format="value"/>
+            <Y index="2" format="value"/>
+            <Altitude index="3" format="value"/>
+            <XAccuracy index="4" format="value"/>
+            <YAccuracy index="5" format="value"/>
+            <AltitudeAccuracy index="6" format="value"/>
+            <Yaw index="7" format="value"/>
+            <Pitch index="8" format="value"/>
+            <Roll index="9" format="value"/>
+            <YawAccuracy index="10" format="value"/>
+            <PitchAccuracy index="11" format="value"/>
+            <RollAccuracy index="12" format="value"/>
+            </parser>
+        </format>
+
+    <format id="{45881112-C09A-49FD-92E1-5170016D9AB5}" descID="8398" desc="Name, X (East), Y (North), Alt (character-separated)" reader="RealityScan.Import.CSVFlightLog">
+        <parser allowedSeparators=",; &tab;" comment="#" showIgnoreFirstline="true" qualifiers="&quot;optional" >
+            <Image index="0" format="name.ext"/>
+            <X index="1" format="value"/>
+            <Y index="2" format="value"/>
+            <Altitude index="3" format="value"/>
+        </parser>
+    </format>
+
+    <format id="{C2B41ED1-9567-43C7-8AE6-1452EBEB9F1F}" descID="8399" desc="Name, Y (North), X (East), Alt (character-separated)" reader="RealityScan.Import.CSVFlightLog">
+        <parser allowedSeparators=",; &tab;" comment="#" showIgnoreFirstline="true" qualifiers="&quot;optional" >
+            <Image index="0" format="name.ext"/>
+            <Y index="1" format="value"/>
+            <X index="2" format="value"/>
+            <Altitude index="3" format="value"/>
+        </parser>
+    </format>
+	
+    <format id="{397B736E-64F1-4AA8-BBD8-CE854AA0E93C}" descID="8431" desc="Name, Lon, Lat, Alt, Lon Accuracy, Lat Accuracy, Alt Accuracy (character-separated)" reader="RealityScan.Import.CSVFlightLog">
+        <parser allowedSeparators=",; &tab;" comment="#" showIgnoreFirstline="true" qualifiers="&quot;optional" >
+            <Image index="0" format="name.ext"/>
+            <Longitude index="1" format="degrees"/>
+            <Latitude index="2" format="degrees"/>
+            <Altitude index="3" format="value"/>
+            <LongitudeAccuracy index="4" format="value"/>
+            <LatitudeAccuracy index="5" format="value"/>
+            <AltitudeAccuracy index="6" format="value"/>
+        </parser>
+    </format>
+	
+    <format id="{101DECDF-B210-457B-B119-39B637DF65A7}" descID="8432" desc="Name, Lat, Lon, Alt, Lat Accuracy, Lon Accuracy, Alt Accuracy (character-separated)" reader="RealityScan.Import.CSVFlightLog">
+        <parser allowedSeparators=",; &tab;" comment="#" showIgnoreFirstline="true" qualifiers="&quot;optional" >
+            <Image index="0" format="name.ext"/>
+            <Latitude index="1" format="degrees"/>
+            <Longitude index="2" format="degrees"/>
+            <Altitude index="3" format="value"/>
+            <LatitudeAccuracy index="4" format="value"/>
+            <LongitudeAccuracy index="5" format="value"/>
+            <AltitudeAccuracy index="6" format="value"/>
+        </parser>
+    </format>
+	
+    <format id="{0E9850E2-73E1-4538-B2CF-B18BEF6CECEB}" descID="8433" desc="Name, X (East), Y (North), Alt, X Accuracy, Y Accuracy, Alt Accuracy (character-separated)" reader="RealityScan.Import.CSVFlightLog">
+        <parser allowedSeparators=",; &tab;" comment="#" showIgnoreFirstline="true" qualifiers="&quot;optional" >
+            <Image index="0" format="name.ext"/>
+            <X index="1" format="value"/>
+            <Y index="2" format="value"/>
+            <Altitude index="3" format="value"/>
+            <XAccuracy index="4" format="value"/>
+            <YAccuracy index="5" format="value"/>
+            <AltitudeAccuracy index="6" format="value"/>
+        </parser>
+    </format>
+
+    <format id="{EFEB661F-A61E-460E-9499-386ACABBD0F6}" descID="8434" desc="Name, Y (North), X (East), Alt, Y Accuracy, X Accuracy, Alt Accuracy (character-separated)" reader="RealityScan.Import.CSVFlightLog">
+        <parser allowedSeparators=",; &tab;" comment="#" showIgnoreFirstline="true" qualifiers="&quot;optional" >
+            <Image index="0" format="name.ext"/>
+            <Y index="1" format="value"/>
+            <X index="2" format="value"/>
+            <Altitude index="3" format="value"/>
+            <YAccuracy index="4" format="value"/>
+            <XAccuracy index="5" format="value"/>
+            <AltitudeAccuracy index="6" format="value"/>
+        </parser>
+    </format>
+
+    <format id="{35CD8B84-6573-417D-8FEE-BE8BBEEC00D3}" descID="8435" desc="Name, X (East), Y (North), Alt, Yaw, Pitch, Roll (character-separated)" reader="RealityScan.Import.CSVFlightLog">
+        <parser allowedSeparators=",; &tab;" comment="#" showIgnoreFirstline="true" qualifiers="&quot;optional" >
+            <Image index="0" format="name.ext"/>
+            <X index="1" format="value"/>
+            <Y index="2" format="value"/>
+            <Altitude index="3" format="value"/>
+            <Yaw index="4" format="value"/>
+            <Pitch index="5" format="value"/>
+            <Roll index="6" format="value"/>
+        </parser>
+    </format>	
+	
+    <format id="{97F08A22-F231-4AB4-A2FD-6FA42BB6D663}" descID="8436" desc="Name, X (East), Y (North), Alt, X Accuracy, Y Accuracy, Alt Accuracy, Yaw, Pitch, Roll (character-separated)" reader="RealityScan.Import.CSVFlightLog">
+        <parser allowedSeparators=",; &tab;" comment="#" showIgnoreFirstline="true" qualifiers="&quot;optional">
+            <Image index="0" format="name.ext"/>
+            <X index="1" format="value"/>
+            <Y index="2" format="value"/>
+            <Altitude index="3" format="value"/>
+            <XAccuracy index="4" format="value"/>
+            <YAccuracy index="5" format="value"/>
+            <AltitudeAccuracy index="6" format="value"/>
+            <Yaw index="7" format="value"/>
+            <Pitch index="8" format="value"/>
+            <Roll index="9" format="value"/>
+        </parser>
+    </format>
+	
+</FlightLogs>
