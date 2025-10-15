@@ -1,10 +1,9 @@
 @echo off
 
 echo Reading default variables
+set RootFolder=%~dp0..\
+set MetadataDir=%RootFolder%Metadata
 call SetVariables.bat
-
-set RootFolder=%~dp0\\..\\
-set MetadataDir=%RootFolder%\Metadata
 set HighModelTexture=%MetadataDir%\Texturing_HighPolyTexture.xml
 set SimplifiedModelTexture=%MetadataDir%\Texturing_SimplifiedPolyTexture.xml
 set SimplifyParams=%MetadataDir%\SimplifyAutomationParams.xml

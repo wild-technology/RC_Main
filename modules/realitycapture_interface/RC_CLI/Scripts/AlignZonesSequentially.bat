@@ -8,16 +8,18 @@ echo.
 
 rem Read default variables
 echo [1/10] Reading default variables...
-call SetVariables.bat
+call "%~dp0SetVariables.bat"
 if errorlevel 1 (
     echo ERROR: Failed to load SetVariables.bat
     exit /b 1
 )
 
-set RootFolder=%~dp0\\..\\
-set MetadataDir=%RootFolder%\Metadata
+set RootFolder=%~dp0..\
+set MetadataDir=%RootFolder%Metadata
 set AlignmentParams=%MetadataDir%\AlignmentParams.xml
 set FlightLogParams=%MetadataDir%\FlightLogParams.xml
+set ErrorPath=%RootFolder%Errors
+set ErrorWriter=%ErrorPath%\ErrorWriter.bat
 
 rem Validate metadata files exist
 if not exist "%AlignmentParams%" (
@@ -67,8 +69,14 @@ echo    Images Found: %image_count%
 echo    SUCCESS: Input validated
 echo.
 
+rem Create required directories
+echo [3/10] Creating required directories...
+if not exist "%ErrorPath%" (
+    mkdir "%ErrorPath%"
+    echo    Created error directory: %ErrorPath%
+)
+
 rem Create output directory
-echo [3/10] Creating output directory...
 if not exist "%zone_output%" (
     mkdir "%zone_output%"
     if errorlevel 1 (
