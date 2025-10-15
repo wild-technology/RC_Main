@@ -6,6 +6,7 @@ import subprocess
 import time
 import os
 import shutil
+import glob
 from ..file_metadata_parser import parse_timestamp, parse_timestamp_str, parse_frame_number, parse_frame_number_str
 
 
@@ -32,9 +33,9 @@ class RealityCaptureAlignment(RCModule):
             cli_short='r_d',
             cli_long='r_display_output',
             type=bool,
-            default_value=False,
+            default_value=True,
             description='Whether to display the RealityCapture output',
-            prompt_user=True
+            prompt_user=False
         )
 
         additional_params['rc_flight_log_path'] = Parameter(
@@ -48,45 +49,46 @@ class RealityCaptureAlignment(RCModule):
             disable_when_module_active=['Batch Directory', 'Georeference Images']
         )
 
-        additional_params['rc_model_generate'] = Parameter(
-            name='Generate Model',
-            cli_short='r_m',
-            cli_long='r_model_generate',
-            type=bool,
-            default_value=True,
-            description='Whether to automatically generate the model',
-            prompt_user=True
-        )
+        # TEMPORARILY COMMENTED OUT - Model generation not yet implemented
+        # additional_params['rc_model_generate'] = Parameter(
+        #     name='Generate Model',
+        #     cli_short='r_m',
+        #     cli_long='r_model_generate',
+        #     type=bool,
+        #     default_value=True,
+        #     description='Whether to automatically generate the model',
+        #     prompt_user=True
+        # )
 
-        additional_params['rc_model_cull_poly'] = Parameter(
-            name='Model Polygon Culling',
-            cli_short='r_c',
-            cli_long='r_model_cull_poly',
-            type=bool,
-            default_value=True,
-            description='Whether to automatically cull large and floating polygons on the generated model',
-            prompt_user=True
-        )
+        # additional_params['rc_model_cull_poly'] = Parameter(
+        #     name='Model Polygon Culling',
+        #     cli_short='r_c',
+        #     cli_long='r_model_cull_poly',
+        #     type=bool,
+        #     default_value=True,
+        #     description='Whether to automatically cull large and floating polygons on the generated model',
+        #     prompt_user=True
+        # )
 
-        additional_params['rc_model_texture'] = Parameter(
-            name='Model Texturing',
-            cli_short='r_t',
-            cli_long='r_model_texture',
-            type=bool,
-            default_value=True,
-            description='Whether to automatically texture the generated model',
-            prompt_user=True
-        )
+        # additional_params['rc_model_texture'] = Parameter(
+        #     name='Model Texturing',
+        #     cli_short='r_t',
+        #     cli_long='r_model_texture',
+        #     type=bool,
+        #     default_value=True,
+        #     description='Whether to automatically texture the generated model',
+        #     prompt_user=True
+        # )
 
-        additional_params['rc_model_simplify'] = Parameter(
-            name='Model Simplification',
-            cli_short='r_s',
-            cli_long='r_model_simplify',
-            type=bool,
-            default_value=True,
-            description='Whether to automatically simplify the generated model',
-            prompt_user=True
-        )
+        # additional_params['rc_model_simplify'] = Parameter(
+        #     name='Model Simplification',
+        #     cli_short='r_s',
+        #     cli_long='r_model_simplify',
+        #     type=bool,
+        #     default_value=True,
+        #     description='Whether to automatically simplify the generated model',
+        #     prompt_user=True
+        # )
 
         return {**super().get_parameters(), **additional_params}
 
@@ -101,20 +103,25 @@ class RealityCaptureAlignment(RCModule):
     def __run_subprocess(self, command, cwd, log_folder, display_output=False):
         """
         Runs a subprocess command and waits for it to finish.
+        Returns the exit code.
         """
         self.__check_and_create_folder(os.path.join(cwd, log_folder))
 
         cur_time = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
         output_path = os.path.join(cwd, log_folder, f"output_{cur_time}.txt")
 
-        output_file = open(output_path, "w")
+        with open(output_path, "w") as output_file:
+            result = subprocess.Popen(command, cwd=cwd, stdout=output_file, stderr=output_file,
+                                      creationflags=subprocess.CREATE_NO_WINDOW if not display_output else subprocess.CREATE_NEW_CONSOLE)
+            stdout, stderr = result.communicate()
 
-        result = subprocess.Popen(command, cwd=cwd, stdout=output_file, stderr=output_file,
-                                  creationflags=subprocess.CREATE_NO_WINDOW if not display_output else subprocess.CREATE_NEW_CONSOLE)
-        stdout, stderr = result.communicate()
+        return_code = result.returncode
 
-        if stderr:
-            self.logger.error(f"Command error: {stderr}")
+        if return_code != 0:
+            self.logger.error(f"Command failed with exit code: {return_code}")
+            self.logger.error(f"Check log file: {output_path}")
+
+        return return_code
 
     def __get_flight_log_path(self, batch_path=None):
         """
@@ -124,7 +131,15 @@ class RealityCaptureAlignment(RCModule):
         # if batch_path is specified that means we are using batched images, so use the batched flight log
         # if it isn't specified, we are using a single folder of images, so we need to return the overall flight log
         if batch_path is not None:
-            return os.path.join(batch_path, "flight_log.txt")
+            pattern = os.path.join(batch_path, "flight_log*_UTM.txt")
+            matches = glob.glob(pattern)
+            if matches:
+                return matches[0]
+            # Fallback to flight_log.txt
+            fallback = os.path.join(batch_path, "flight_log.txt")
+            if os.path.isfile(fallback):
+                return fallback
+            return None
 
         # if the flight log path is specified, use that
         if 'rc_flight_log_path' in self.params:
@@ -137,11 +152,10 @@ class RealityCaptureAlignment(RCModule):
         else:
             return os.path.join(self.params['output_dir'].get_value(), "flight_log.txt")
 
-    def __align_images(self, input_folder, output_folder, component_file_name, flight_log_path, flight_log_params_path,
-                       display_output=False, generate_model=True, cull_polygons=False, texture_model=False,
-                       simplify_model=False):
+    def __align_images(self, input_folder, output_folder, display_output=True):
         """
         Aligns images in a folder and saves the component file to the output folder.
+        Batch script handles flight log discovery internally.
         """
 
         if not input_folder:
@@ -156,105 +170,79 @@ class RealityCaptureAlignment(RCModule):
 
         self.__check_and_create_folder(output_folder)
 
-        if flight_log_path is None or not os.path.isfile(flight_log_path):
-            flight_log_path = ""
-
-        if flight_log_params_path is None or not os.path.isfile(flight_log_params_path) or flight_log_path == "":
-            flight_log_params_path = ""
-
         this_file_dir = os.path.dirname(os.path.realpath(__file__))
         scripts_dir = os.path.join(this_file_dir, 'RC_CLI', 'Scripts')
+        log_dir = os.path.join(scripts_dir, "logs")
 
-        generate_model_str = "true" if generate_model else "false"
-        cull_polygons_str = "true" if cull_polygons else "false"
-        texture_model_str = "true" if texture_model else "false"
-        simplify_model_str = "true" if simplify_model else "false"
+        exit_code = self.__run_subprocess(
+            ["cmd", "/c", "AlignZonesSequentially.bat", input_folder, output_folder],
+            scripts_dir,
+            log_dir,
+            display_output
+        )
 
-        log_dir = os.path.join(os.path.dirname(output_folder), "logs")
+        # Check if batch script failed
+        if exit_code != 0:
+            self.logger.error(f"Batch script failed with exit code: {exit_code}")
+            component_data = {'Success': False, 'Component Count': 0}
+            scene_data = {'Success': False}
+            return component_data, scene_data
 
-        self.__run_subprocess(["cmd", "/c", "AlignImagesFromFolder.bat", input_folder, output_folder, flight_log_path,
-                               flight_log_params_path, generate_model_str, cull_polygons_str, component_file_name,
-                               texture_model_str, simplify_model_str],
-                              scripts_dir, log_dir, display_output)
+        # Batch script already waits for RC to quit, so just give filesystem time to sync
+        self.logger.info("Alignment complete, verifying outputs...")
+        time.sleep(2)
 
-        # subprocess returns early, wait for the program to finish before continuing
-        while True:
-            reality_capture_running = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq RealityCapture.exe'],
-                                                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        # Count exported component folders/files in output folder
+        # RC exports component directories, not .rcalign files
+        try:
+            output_items = os.listdir(output_folder)
+            # Count directories that start with "Component" or any .rcalign files
+            component_dirs = [d for d in output_items if os.path.isdir(os.path.join(output_folder, d)) and d.startswith("Component")]
+            component_files = [f for f in output_items if f.endswith(".rcalign")]
+            outputted_component_count = len(component_dirs) + len(component_files)
 
-            if 'RealityCapture.exe' not in reality_capture_running.stdout:
-                break
+            self.logger.info(f"Found {len(component_dirs)} component directories and {len(component_files)} component files")
+        except Exception as e:
+            self.logger.error(f"Error counting components: {e}")
+            outputted_component_count = 0
 
-            time.sleep(1)
-
-        generated_component_files = [f for f in os.listdir(output_folder) if
-                                     f.startswith("Component") and f.endswith(".rcalign")]
-        component_path_base = os.path.join(output_folder, component_file_name)
-
-        outputted_component_count = 0
-        outputted_scene = False
-
-        if not generated_component_files or len(generated_component_files) == 0:
-            return {'Success': False, 'Component Count': 0}, {'Success': False}
-
-        # use index for loop so we can index the name
-        for index, generated_component_file in enumerate(generated_component_files):
-            generated_component_path = os.path.join(output_folder, generated_component_file)
-            component_path = f"{component_path_base}_{index}.rcalign"
-
-            if os.path.exists(component_path):
-                self.logger.warning('Component "%s" already exists. Overwrite? (y/n)', component_path)
-                overwrite = input()
-
-                if overwrite.lower() != 'y':
-                    self.logger.warning('Component not created')
-                    os.remove(generated_component_path)
-                    continue
-                else:
-                    os.remove(component_path)
-
-            os.rename(generated_component_path, component_path)
-            outputted_component_count += 1
-
-        generated_scene_files = [f for f in os.listdir(output_folder) if
-                                 f.startswith("Scene") and f.endswith(".rcproj")]
-
-        if generated_scene_files and len(generated_scene_files) == 1:
-            generated_scene_path = os.path.join(output_folder, generated_scene_files[0])
-            scene_path = f"{component_path_base}.rcproj"
-
-            if os.path.exists(scene_path):
-                self.logger.warning('Scene "%s" already exists. Overwrite? (y/n)', scene_path)
-                overwrite = input()
-
-                if overwrite.lower() != 'y':
-                    self.logger.warning('Scene not created')
-                    os.remove(generated_scene_path)
-                else:
-                    os.remove(scene_path)
-                    os.rename(generated_scene_path, scene_path)
-                    outputted_scene = True
-            else:
-                os.rename(generated_scene_path, scene_path)
-                outputted_scene = True
+        # Check for project file in input folder (where batch script saves it)
+        try:
+            project_files = [f for f in os.listdir(input_folder) if f.endswith(".rcproj")]
+            outputted_scene = len(project_files) > 0
+            if outputted_scene:
+                self.logger.info(f"Project file saved: {project_files[0]}")
+        except Exception as e:
+            self.logger.error(f"Error checking for project file: {e}")
+            outputted_scene = False
 
         component_data = {}
-        component_data['Success'] = True
+        component_data['Success'] = outputted_component_count > 0
         component_data['Component Count'] = outputted_component_count
 
         scene_data = {}
-        scene_data['Success'] = True
+        scene_data['Success'] = outputted_scene
         return component_data, scene_data
 
     def __get_component_file_name(self, image_folder):
         """
         Gets the name of the component output file for a folder of images based on the start and end frame files.
+        Recursively searches subfolders for images.
         """
 
         if image_folder is None or not os.path.isdir(image_folder):
             raise ValueError("Image folder is not specified or is invalid")
 
-        files = [f for f in os.listdir(image_folder) if f.endswith((".png", ".heif", ".jpg", ".jpeg"))]
+        # Recursively search for image files in all subfolders
+        files = []
+        for root, dirs, filenames in os.walk(image_folder):
+            for f in filenames:
+                if f.endswith((".png", ".heif", ".jpg", ".jpeg")):
+                    files.append(f)
+
+        if not files:
+            raise ValueError(f"No image files found in {image_folder} or its subfolders")
+
         files.sort(key=lambda x: (parse_timestamp(x), parse_frame_number(x)))
 
         start_file = files[0]
@@ -282,10 +270,6 @@ class RealityCaptureAlignment(RCModule):
 
         output_dir = os.path.join(self.params['output_dir'].get_value(), "aligned_components")
         display_output = self.params['rc_display_output'].get_value()
-        generate_model = self.params['rc_model_generate'].get_value()
-        cull_polygons = self.params['rc_model_cull_poly'].get_value()
-        texture_model = self.params['rc_model_texture'].get_value()
-        simplify_model = self.params['rc_model_simplify'].get_value()
 
         this_file_dir = os.path.dirname(os.path.realpath(__file__))
         metadata_dir = os.path.join(this_file_dir, 'RC_CLI', 'Metadata')
@@ -293,8 +277,7 @@ class RealityCaptureAlignment(RCModule):
 
         process_data = []
 
-        def queue_folder_to_process(local_input_folder, local_output_dir, local_flight_log_path,
-                                    local_flight_log_params_path, local_display_output):
+        def queue_folder_to_process(local_input_folder, local_output_dir, local_display_output):
             if not os.path.isdir(local_input_folder):
                 raise ValueError(f"Input folder {local_input_folder} is not a directory")
 
@@ -303,14 +286,9 @@ class RealityCaptureAlignment(RCModule):
 
             # only process the folder if there are image files in it
             if local_image_files and len(local_image_files) > 0:
-                local_component_file_name = self.__get_component_file_name(local_input_folder)
-
                 process_data.append({
                     'input_folder': local_input_folder,
                     'output_dir': local_output_dir,
-                    'component_file_name': local_component_file_name,
-                    'flight_log_path': local_flight_log_path,
-                    'flight_log_params_path': local_flight_log_params_path,
                     'display_output': local_display_output
                 })
 
@@ -319,18 +297,14 @@ class RealityCaptureAlignment(RCModule):
                           os.path.isdir(os.path.join(local_input_folder, f))]
             for subfolder in subfolders:
                 subfolder_path = os.path.join(local_input_folder, subfolder)
-
-                queue_folder_to_process(subfolder_path, local_output_dir, local_flight_log_path,
-                                        local_flight_log_params_path, local_display_output)
+                queue_folder_to_process(subfolder_path, local_output_dir, local_display_output)
 
         # single folder input (not running after batched images module)
         if 'rc_input_image_dir' in self.params:
             input_folder = self.params['rc_input_image_dir'].get_value()
-            overall_flight_log_path = self.__get_flight_log_path()
 
             try:
-                queue_folder_to_process(input_folder, output_dir, overall_flight_log_path, flight_log_params_path,
-                                        display_output)
+                queue_folder_to_process(input_folder, output_dir, display_output)
             except Exception as e:
                 self.logger.error(f"Error queueing folder to process: {e}")
         # ----------------- MODIFIED LOGIC START -----------------
@@ -350,18 +324,13 @@ class RealityCaptureAlignment(RCModule):
 
             for batch_folder in batch_folders:
                 batch_input_folder = os.path.join(batch_directory, batch_folder)
-                batch_flight_log_path = self.__get_flight_log_path(batch_input_folder)
+                # Create zone-specific output folder to avoid file collisions
+                zone_output_dir = os.path.join(output_dir, batch_folder)
 
                 try:
-                    # We only want to process the top-level batch folder, not its subfolders,
-                    # so we call __align_images directly instead of queue_folder_to_process
-                    component_file_name = self.__get_component_file_name(batch_input_folder)
                     process_data.append({
                         'input_folder': batch_input_folder,
-                        'output_dir': output_dir,
-                        'component_file_name': component_file_name,
-                        'flight_log_path': batch_flight_log_path,
-                        'flight_log_params_path': flight_log_params_path,
+                        'output_dir': zone_output_dir,
                         'display_output': display_output
                     })
                 except Exception as e:
@@ -380,24 +349,20 @@ class RealityCaptureAlignment(RCModule):
         # process the data
         for data in process_data:
             input_folder = data['input_folder']
-            output_dir = data['output_dir']
-            component_file_name = data['component_file_name']
-            flight_log_path = data['flight_log_path']
-            flight_log_params_path = data['flight_log_params_path']
+            zone_output_dir = data['output_dir']
             display_output = data['display_output']
 
-            component_path_base = os.path.join(output_dir, component_file_name)
+            zone_name = os.path.basename(input_folder)
 
             try:
-                component_data, scene_data = self.__align_images(input_folder, output_dir, component_file_name,
-                                                                 flight_log_path, flight_log_params_path,
-                                                                 display_output, generate_model, cull_polygons,
-                                                                 texture_model, simplify_model)
-                # The key for the output data should be based on the base name, as __align_images handles numbering
-                output_data['Components'][component_path_base] = component_data
-                output_data['Scenes'][component_path_base + ".rcproj"] = scene_data
+                component_data, scene_data = self.__align_images(input_folder, zone_output_dir, display_output)
+
+                output_data['Components'][zone_name] = component_data
+                output_data['Scenes'][zone_name] = scene_data
             except Exception as e:
-                self.logger.error(f"Error aligning images: {e}")
+                self.logger.error(f"Error aligning images in {zone_name}: {e}")
+                output_data['Components'][zone_name] = {'Success': False, 'Component Count': 0}
+                output_data['Scenes'][zone_name] = {'Success': False}
 
             self._update_loading_bar(bar, 1)
 
@@ -411,17 +376,22 @@ class RealityCaptureAlignment(RCModule):
         if not 'rc_display_output' in self.params:
             return False, 'Display output parameter not found'
 
-        if not 'rc_model_generate' in self.params:
-            return False, 'Generate model parameter not found'
+        # Check if running after Batch Directory module (zones should exist)
+        if 'rc_input_image_dir' not in self.params or self.params['rc_input_image_dir'].get_value() is None:
+            # Running after Batch Directory - validate zones exist
+            batch_directory = os.path.join(self.params['output_dir'].get_value(), 'batched_images_by_zone')
 
-        if not 'rc_model_cull_poly' in self.params:
-            self.params['rc_model_cull_poly'] = False
+            if not os.path.isdir(batch_directory):
+                return False, f'Batch directory not found: {batch_directory}. Please run Batch Directory module first.'
 
-        if not 'rc_model_texture' in self.params:
-            self.params['rc_model_texture'] = False
+            # Check for zone folders
+            zone_folders = [d for d in os.listdir(batch_directory)
+                           if os.path.isdir(os.path.join(batch_directory, d)) and 'zone' in d.lower()]
 
-        if not 'rc_model_simplify' in self.params:
-            self.params['rc_model_simplify'] = False
+            if not zone_folders:
+                return False, f'No zone folders found in: {batch_directory}'
+
+            self.logger.info(f"Found {len(zone_folders)} zones to process")
 
         # Validate output directory
         output_dir = os.path.join(self.params['output_dir'].get_value(), 'aligned_components')
