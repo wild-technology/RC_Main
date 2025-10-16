@@ -454,26 +454,6 @@ class GeoreferenceImages(RCModule):
             self.logger.warning(f"Unknown camera type for {filename}, assuming no offset")
             return (0.0, 0.0, 0.0)
 
-    def _get_camera_pitch_offset(self, filename: str) -> float:
-        """
-        Return camera pitch offset (degrees down from vehicle forward axis).
-        Positive values = camera pointing down relative to vehicle.
-        """
-        filename_lower = filename.lower()
-
-        # Check specific camera types first (most specific to least specific)
-        if filename_lower.startswith('camupper'):
-            return 70.0  # pointing down 70°
-        elif filename_lower.startswith('cammid'):
-            return 20.0  # pointing down 20°
-        elif filename_lower.startswith('camlower'):
-            return 10.0  # pointing down 10°
-        elif '_herc_' in filename_lower:
-            return 30.0  # Zeuss pointing down 30°
-        else:
-            self.logger.warning(f"Unknown camera type for {filename}, assuming 0° pitch offset")
-            return 0.0
-
     def _get_camera_accuracy(self, filename: str) -> tuple[float, float, float]:
         """
         Return yaw, pitch, roll accuracy (degrees) for a camera based on its name.
@@ -504,6 +484,10 @@ class GeoreferenceImages(RCModule):
             os.remove(flight_log_filename)
 
         accepted_images = [img for img in image_data if img.get("ACCEPTED", False)]
+
+        if not accepted_images:
+            raise ValueError("No accepted images to write to flight log")
+
         decl_deg = self.params['magnetic_declination_deg'].get_value()
 
         # Fixed accuracy values
@@ -513,46 +497,64 @@ class GeoreferenceImages(RCModule):
         yaw_acc = 3.0
         roll_acc = 3.0
 
-        with open(flight_log_filename, "w") as f:
-            f.write(
-                "filename;X (East);Y (North);Alt;X Accuracy;Y Accuracy;Alt Accuracy;Yaw;Pitch;Roll;Yaw Accuracy;Pitch Accuracy;Roll Accuracy\n"
-            )
-
-            for image in accepted_images:
-                heading_mag = image.get("HEADING_MAG")
-                pitch_vehicle = image.get("PITCH_VEHICLE")
-                roll_vehicle = image.get("ROLL_VEHICLE")
-
-                camera_pitch_offset = self._get_camera_pitch_offset(image["FILENAME"])
-                rc_yaw, rc_pitch, rc_roll = self._convert_to_rc_orientation(
-                    heading_mag, pitch_vehicle, roll_vehicle, camera_pitch_offset, decl_deg
+        try:
+            with open(flight_log_filename, "w", encoding='utf-8') as f:
+                f.write(
+                    "filename;X (East);Y (North);Alt;X Accuracy;Y Accuracy;Alt Accuracy;Yaw;Pitch;Roll;Yaw Accuracy;Pitch Accuracy;Roll Accuracy\n"
                 )
 
-                pitch_acc = self._get_camera_pitch_accuracy(image["FILENAME"])
+                for image in accepted_images:
+                    heading_mag = image.get("HEADING_MAG")
+                    pitch_vehicle = image.get("PITCH_VEHICLE")
+                    roll_vehicle = image.get("ROLL_VEHICLE")
 
-                def fmt(val):
-                    return f"{val:.6f}" if val is not None else ""
+                    camera_pitch_offset = self._get_camera_pitch_offset(image["FILENAME"])
+                    rc_yaw, rc_pitch, rc_roll = self._convert_to_rc_orientation(
+                        heading_mag, pitch_vehicle, roll_vehicle, camera_pitch_offset, decl_deg
+                    )
 
-                line = ";".join([
-                    image["FILENAME"],
-                    fmt(image.get("UTM_X")),
-                    fmt(image.get("UTM_Y")),
-                    fmt(image.get("ALTITUDE_EST")),
-                    fmt(pos_x_acc),
-                    fmt(pos_y_acc),
-                    fmt(alt_acc),
-                    fmt(rc_yaw),
-                    fmt(rc_pitch),
-                    fmt(rc_roll),
-                    fmt(yaw_acc),
-                    fmt(pitch_acc),
-                    fmt(roll_acc)
-                ])
-                f.write(line + "\n")
+                    pitch_acc = self._get_camera_pitch_accuracy(image["FILENAME"])
+
+                    def fmt(val):
+                        return f"{val:.6f}" if val is not None else ""
+
+                    line = ";".join([
+                        image["FILENAME"],
+                        fmt(image.get("UTM_X")),
+                        fmt(image.get("UTM_Y")),
+                        fmt(image.get("ALTITUDE_EST")),
+                        fmt(pos_x_acc),
+                        fmt(pos_y_acc),
+                        fmt(alt_acc),
+                        fmt(rc_yaw),
+                        fmt(rc_pitch),
+                        fmt(rc_roll),
+                        fmt(yaw_acc),
+                        fmt(pitch_acc),
+                        fmt(roll_acc)
+                    ])
+                    f.write(line + "\n")
+
+                # Ensure data is flushed to disk
+                f.flush()
+                os.fsync(f.fileno())
+
+        except IOError as e:
+            self.logger.error(f"Failed to write flight log: {e}")
+            raise
+
+        # Validate written file
+        if not os.path.exists(flight_log_filename):
+            raise IOError(f"Flight log not found after write: {flight_log_filename}")
+
+        file_size = os.path.getsize(flight_log_filename)
+        if file_size < 100:
+            raise IOError(f"Flight log suspiciously small ({file_size} bytes)")
 
         self.stats['written_to_flight_log'] = len(accepted_images)
         print(f"Flight log: {flight_log_filename}")
         print(f"  Lines written: {self.stats['written_to_flight_log']}")
+        print(f"  File size: {file_size} bytes")
 
         return flight_log_filename
 
@@ -574,7 +576,12 @@ class GeoreferenceImages(RCModule):
             data_rows = self.__read_csv_data(flight_log)
             image_data = self.__read_image_filenames(input_dir, input_type)
             matches_made = self.__estimate_location(image_data, data_rows, input_type)
-            output_path = self.__generate_flight_log(image_data, input_dir)
+
+            try:
+                output_path = self.__generate_flight_log(image_data, input_dir)
+            except (ValueError, IOError) as e:
+                self.logger.error(f"Failed to generate flight log: {e}")
+                return {"Success": False, "Error": f"Flight log generation failed: {e}"}
 
             output_data['Success'] = True
             output_data['CSV Rows'] = int(self.stats.get('csv_rows', 0))

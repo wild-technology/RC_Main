@@ -17,6 +17,9 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import warnings
 import glob
+from typing import Optional, List
+import logging
+from pathlib import Path
 
 
 class BatchDirectory(RCModule):
@@ -26,6 +29,7 @@ class BatchDirectory(RCModule):
         super().__init__("Batch Directory", logger)
         self.logger.info(f"Matplotlib {matplotlib.__version__}, Seaborn {sns.__version__}")
         self.utm_zone_suffix = None
+        self._file_index = None
 
     def get_parameters(self) -> dict[str, Parameter]:
         additional_params = {}
@@ -45,7 +49,7 @@ class BatchDirectory(RCModule):
             cli_short='b_min',
             cli_long='b_min_zone',
             type=int,
-            default_value=1000,  # <-- changed from 500 to 1000
+            default_value=1000,
             description='Minimum images in a zone (smaller zones will be merged)',
             prompt_user=False
         )
@@ -154,10 +158,8 @@ class BatchDirectory(RCModule):
         try:
             df = pd.read_csv(flight_log_path, delimiter=';')
 
-            # Standardize to 'filename' column
             if 'Name' in df.columns:
                 df = df.rename(columns={'Name': 'filename'})
-            # If already 'filename', no change needed
 
             if 'X (East)' in df.columns and 'Y (North)' in df.columns:
                 df = df.rename(columns={'X (East)': 'x', 'Y (North)': 'y'})
@@ -241,11 +243,9 @@ class BatchDirectory(RCModule):
     def __adaptive_zone_creation(self, gdf, target_size, min_size, max_size, density_weight):
         """Create zones targeting specific image count with split/merge post-processing."""
 
-        # Initial estimate of zones needed
         initial_k = max(2, int(np.ceil(len(gdf) / target_size)))
         self.logger.info(f"Starting with {initial_k} initial zones for {len(gdf)} images")
 
-        # Initial clustering
         coords = np.column_stack([gdf.geometry.x.to_numpy(np.float64),
                                   gdf.geometry.y.to_numpy(np.float64)])
         density = gdf['density'].to_numpy()
@@ -255,7 +255,6 @@ class BatchDirectory(RCModule):
 
         zones = [gdf[gdf['cluster'] == i].copy() for i in range(initial_k)]
 
-        # Iterative split/merge refinement
         max_iterations = 10
         iteration = 0
 
@@ -269,29 +268,23 @@ class BatchDirectory(RCModule):
                 zone_size = len(zone)
 
                 if zone_size > max_size:
-                    # Split oversized zone
                     self.logger.info(f"Splitting zone with {zone_size} images")
                     split_zones = self.__split_zone(zone, density_weight)
                     new_zones.extend(split_zones)
                     modified = True
 
                 elif zone_size < min_size:
-                    # Mark for merging
                     zones_to_merge.append(zone)
 
                 else:
-                    # Zone is acceptable size
                     new_zones.append(zone)
 
-            # Helper to remove a zone by identity
             def remove_zone_from_list(zone_list, target_zone):
                 return [z for z in zone_list if z is not target_zone]
 
-            # Process merges
             while zones_to_merge:
                 small_zone = zones_to_merge.pop(0)
 
-                # Find nearest zone from acceptable zones or other small zones
                 search_zones = new_zones + zones_to_merge
                 nearest_zone, nearest_idx = self.__find_nearest_zone(small_zone, search_zones)
 
@@ -299,21 +292,17 @@ class BatchDirectory(RCModule):
                     combined_size = len(small_zone) + len(nearest_zone)
 
                     if combined_size <= max_size:
-                        # Merge zones
                         self.logger.info(f"Merging zones: {len(small_zone)} + {len(nearest_zone)} = {combined_size}")
                         merged = pd.concat([small_zone, nearest_zone])
 
-                        # Remove nearest from its list
                         new_zones = remove_zone_from_list(new_zones, nearest_zone)
                         zones_to_merge = remove_zone_from_list(zones_to_merge, nearest_zone)
 
                         new_zones.append(merged)
                         modified = True
                     else:
-                        # Can't merge, keep small zone
                         new_zones.append(small_zone)
                 else:
-                    # No zones to merge with, keep it
                     new_zones.append(small_zone)
 
             zones = new_zones
@@ -322,11 +311,9 @@ class BatchDirectory(RCModule):
                 self.logger.info(f"Converged after {iteration} iterations")
                 break
 
-        # Renumber clusters
         for i, zone in enumerate(zones):
             zone['cluster'] = i
 
-        # Combine back into single GeoDataFrame
         final_gdf = pd.concat(zones, ignore_index=True)
 
         return final_gdf, len(zones)
@@ -347,7 +334,6 @@ class BatchDirectory(RCModule):
         density = self.__compute_density(coords, bw)
         gdf['density'] = density
 
-        # Adaptive zone creation
         gdf_processed, num_zones = self.__adaptive_zone_creation(
             gdf, target_size, min_size, max_size, density_weight
         )
@@ -499,111 +485,314 @@ class BatchDirectory(RCModule):
         else:
             return "other"
 
-    def __copy_files(self, input_dir, batch_folder_dir, files):
-        """Copy files to camera-specific subfolders and generate XMP sidecars."""
-        for file in files:
-            camera_subfolder = self.__determine_camera_subfolder(file)
-            camera_dir = os.path.join(batch_folder_dir, camera_subfolder)
-            os.makedirs(camera_dir, exist_ok=True)
-
-            # Search recursively for the file in input_dir
-            file_path = None
-            for root, dirs, filenames in os.walk(input_dir):
-                if file in filenames:
-                    file_path = os.path.join(root, file)
-                    break
-
-            if file_path is None:
-                # Check if it's an extension mismatch
-                base_name = os.path.splitext(file)[0]
-                found_with_diff_ext = False
-                for root, dirs, filenames in os.walk(input_dir):
-                    for fn in filenames:
-                        if os.path.splitext(fn)[0] == base_name:
-                            self.logger.warning(f"File '{file}' not found, but found '{fn}' - flight log may have wrong extension")
-                            found_with_diff_ext = True
-                            break
-                    if found_with_diff_ext:
-                        break
-
-                if not found_with_diff_ext:
-                    self.logger.warning(f"File not found: {file} - flight log filename does not match any files in directory")
-                continue
-
-            output_path = os.path.join(camera_dir, file)
-            if not os.path.exists(output_path):
-                shutil.copy(file_path, output_path)
-
-            # Generate XMP sidecar file with camera calibration priors
-            self.__generate_xmp_sidecar(file, camera_dir, camera_subfolder)
-
-    def __generate_xmp_sidecar(self, image_filename: str, output_path: str, camera_type: str) -> None:
+    def __generate_xmp_sidecar(
+            self,
+            image_filename: str,
+            output_path: str,
+            camera_type: str
+    ) -> None:
         """
         Generate XMP sidecar file for RealityCapture camera calibration.
 
         Args:
             image_filename: Name of the image file
-            output_path: Full path where the image is located
+            output_path: Directory where the image is located
             camera_type: Camera type (zeuss, cammid, camupper, camlower, other)
+
+        Raises:
+            ValueError: If camera_type is unknown
+            IOError: If XMP file cannot be written
+            RuntimeError: If XMP content generation fails
         """
         xmp_path = os.path.join(output_path, f"{image_filename}.xmp")
 
-        # Define camera-specific settings
+        if camera_type == "other" or camera_type not in ["zeuss", "cammid", "camupper", "camlower"]:
+            raise ValueError(
+                f"Unknown camera type '{camera_type}' for {image_filename}. "
+                f"Cannot generate XMP calibration priors."
+            )
+
         if camera_type == "zeuss":
-            # Rectilinear camera, focal length unknown
             calib_group = "1"
             calib_prior = "Unknown"
-            focal_length = None  # Unknown
+            focal_length = None
             lens_group = "1"
-            lens_prior = "Approximate"  # Low distortion expected
+            lens_prior = "Approximate"
             distortion_model = "brown3"
-        elif camera_type in ["cammid", "camupper"]:
-            # Fisheye cameras with approximate 12mm focal length
+        elif camera_type == "cammid":
             calib_group = "2"
-            calib_prior = "Approximate"
-            focal_length = "12.0"  # 12mm approximate
+            calib_prior = "Unknown"
+            focal_length = None
             lens_group = "2"
-            lens_prior = "Unknown"  # High distortion/fisheye requires Unknown
+            lens_prior = "Unknown"
+            distortion_model = "division"
+        elif camera_type == "camupper":
+            calib_group = "3"
+            calib_prior = "Unknown"
+            focal_length = None
+            lens_group = "3"
+            lens_prior = "Unknown"
             distortion_model = "division"
         elif camera_type == "camlower":
-            # Fisheye camera
-            calib_group = "2"
-            calib_prior = "Approximate"
-            focal_length = "12.0"
-            lens_group = "2"
-            lens_prior = "Unknown"  # Fisheye requires Unknown
+            calib_group = "4"
+            calib_prior = "Unknown"
+            focal_length = None
+            lens_group = "4"
+            lens_prior = "Unknown"
             distortion_model = "division"
-        else:
-            # Unknown camera type
-            self.logger.warning(f"Unknown camera type '{camera_type}' for {image_filename}, skipping XMP generation")
-            return
 
-        # Build XMP content
-        xmp_content = ['<?xml version="1.0" encoding="UTF-8"?>']
-        xmp_content.append(
-            '<x:xmpmeta xmlns:x="adobe:ns:meta/" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">')
-        xmp_content.append('  <rdf:RDF>')
-        xmp_content.append(
-            '    <rdf:Description xmlns:Camera="http://www.capturingreality.com/ns/camera/1.0/" xmlns:xcr="http://www.capturingreality.com/ns/xcr/1.0/">')
-        xmp_content.append(f'      <Camera:CalibrationGroup>{calib_group}</Camera:CalibrationGroup>')
-        xmp_content.append(f'      <Camera:CalibrationPrior>{calib_prior}</Camera:CalibrationPrior>')
+        xmp_content = [
+            '<?xml version="1.0" encoding="UTF-8"?>',
+            '<x:xmpmeta xmlns:x="adobe:ns:meta/" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">',
+            '  <rdf:RDF>',
+            '    <rdf:Description xmlns:Camera="http://www.capturingreality.com/ns/camera/1.0/" xmlns:xcr="http://www.capturingreality.com/ns/xcr/1.0/">',
+            f'      <Camera:CalibrationGroup>{calib_group}</Camera:CalibrationGroup>',
+            f'      <Camera:CalibrationPrior>{calib_prior}</Camera:CalibrationPrior>',
+        ]
 
         if focal_length is not None:
             xmp_content.append(f'      <xcr:FocalLength35mm>{focal_length}</xcr:FocalLength35mm>')
 
-        xmp_content.append(f'      <Camera:LensDistortionGroup>{lens_group}</Camera:LensDistortionGroup>')
-        xmp_content.append(f'      <Camera:LensDistortionPrior>{lens_prior}</Camera:LensDistortionPrior>')
-        xmp_content.append(f'      <Camera:DistortionModel>{distortion_model}</Camera:DistortionModel>')
-        xmp_content.append('    </rdf:Description>')
-        xmp_content.append('  </rdf:RDF>')
-        xmp_content.append('</x:xmpmeta>')
+        xmp_content.extend([
+            f'      <Camera:LensDistortionGroup>{lens_group}</Camera:LensDistortionGroup>',
+            f'      <Camera:LensDistortionPrior>{lens_prior}</Camera:LensDistortionPrior>',
+            f'      <Camera:DistortionModel>{distortion_model}</Camera:DistortionModel>',
+            '    </rdf:Description>',
+            '  </rdf:RDF>',
+            '</x:xmpmeta>'
+        ])
 
-        # Write XMP file
+        xmp_text = '\n'.join(xmp_content)
+
+        # Validate XML structure
+        if '<?xml version="1.0"' not in xmp_text or '</x:xmpmeta>' not in xmp_text:
+            raise RuntimeError(f"Generated XMP content is malformed (missing XML header or closing tag)")
+
+        if len(xmp_text) < 200:
+            raise RuntimeError(f"Generated XMP content is suspiciously short ({len(xmp_text)} bytes)")
+
+        temp_xmp_path = None
         try:
-            with open(xmp_path, 'w', encoding='utf-8') as f:
-                f.write('\n'.join(xmp_content))
+            output_dir = Path(output_path)
+            if not output_dir.exists():
+                raise IOError(f"Output directory does not exist: {output_path}")
+
+            if not os.access(output_path, os.W_OK):
+                raise IOError(f"Output directory is not writable: {output_path}")
+
+            temp_xmp_path = f"{xmp_path}.tmp"
+
+            with open(temp_xmp_path, 'w', encoding='utf-8') as f:
+                f.write(xmp_text)
+                f.flush()
+                os.fsync(f.fileno())
+
+            os.replace(temp_xmp_path, xmp_path)
+
+            if not os.path.exists(xmp_path):
+                raise IOError(f"XMP file not found after write: {xmp_path}")
+
+            written_size = os.path.getsize(xmp_path)
+            # Allow small size difference due to line ending normalization (Windows CRLF vs LF)
+            size_diff = abs(written_size - len(xmp_text))
+            if size_diff > 10:
+                self.logger.warning(
+                    f"XMP file size mismatch for {image_filename}: "
+                    f"expected {len(xmp_text)} bytes, got {written_size} bytes (diff: {size_diff})"
+                )
+            elif size_diff > 0:
+                # Size difference within tolerance (typically due to CRLF line endings on Windows)
+                self.logger.debug(
+                    f"XMP size diff for {image_filename}: {size_diff} bytes (CRLF line endings)"
+                )
+
+            # Verify file is readable as XML
+            try:
+                with open(xmp_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    if 'Camera:CalibrationGroup' not in content:
+                        raise ValueError("XMP file missing calibration metadata")
+            except Exception as e:
+                raise IOError(f"Written XMP file failed validation: {e}")
+
+            self.logger.debug(f"✓ XMP sidecar created: {Path(xmp_path).name} ({written_size} bytes)")
+            self.logger.debug(f"   Calibration Group: {calib_group}, Lens Group: {lens_group}, Model: {distortion_model}")
+
+        except (IOError, OSError) as e:
+            if temp_xmp_path and os.path.exists(temp_xmp_path):
+                try:
+                    os.remove(temp_xmp_path)
+                except:
+                    pass
+
+            self.logger.error(
+                f"Failed to write XMP sidecar for {image_filename} to {output_path}: {e}\n"
+                f"Camera type: {camera_type}, XMP length: {len(xmp_text)} bytes"
+            )
+            raise IOError(
+                f"Failed to write XMP sidecar for {image_filename}: {e}"
+            ) from e
+
         except Exception as e:
-            self.logger.error(f"Failed to write XMP file {xmp_path}: {e}")
+            if temp_xmp_path and os.path.exists(temp_xmp_path):
+                try:
+                    os.remove(temp_xmp_path)
+                except:
+                    pass
+            raise RuntimeError(
+                f"Unexpected error generating XMP for {image_filename}: {e}"
+            ) from e
+
+    def __copy_files(
+            self,
+            input_dir: str,
+            batch_folder_dir: str,
+            files: List[str]
+    ) -> None:
+        """
+        Copy files to camera-specific subfolders and generate XMP sidecars.
+
+        Args:
+            input_dir: Source directory containing images
+            batch_folder_dir: Destination zone directory
+            files: List of filenames to copy
+
+        Raises:
+            RuntimeError: If critical files cannot be copied or XMP generation fails
+        """
+        if self._file_index is None:
+            self._file_index = self.__build_file_index(input_dir)
+
+        stats = {
+            'copied': 0,
+            'skipped_existing': 0,
+            'skipped_notfound': 0,
+            'xmp_generated': 0,
+            'xmp_failed': 0,
+            'errors': []
+        }
+
+        bar = self._initialize_loading_bar(len(files), 'Copying Files and Generating XMP')
+
+        for file in files:
+            try:
+                camera_subfolder = self.__determine_camera_subfolder(file)
+
+                if camera_subfolder == "other":
+                    self.logger.warning(
+                        f"Unknown camera type for {file}, skipping XMP generation"
+                    )
+
+                camera_dir = os.path.join(batch_folder_dir, camera_subfolder)
+                os.makedirs(camera_dir, exist_ok=True)
+
+                file_path = self._file_index.get(file)
+
+                if file_path is None:
+                    self.logger.warning(f"File not found in index: {file}")
+                    stats['skipped_notfound'] += 1
+                    self._update_loading_bar(bar, 1)
+                    continue
+
+                output_path = os.path.join(camera_dir, file)
+
+                if os.path.exists(output_path):
+                    stats['skipped_existing'] += 1
+                else:
+                    shutil.copy2(file_path, output_path)
+                    stats['copied'] += 1
+
+                if camera_subfolder != "other":
+                    try:
+                        self.__generate_xmp_sidecar(file, camera_dir, camera_subfolder)
+                        stats['xmp_generated'] += 1
+                    except (ValueError, IOError, RuntimeError) as e:
+                        stats['xmp_failed'] += 1
+                        stats['errors'].append(f"{file}: {str(e)}")
+
+                        if stats['xmp_failed'] > len(files) * 0.01:
+                            raise RuntimeError(
+                                f"XMP generation failure rate exceeded threshold: "
+                                f"{stats['xmp_failed']}/{len(files)} failures. "
+                                f"Recent errors: {stats['errors'][-5:]}"
+                            )
+
+                        self.logger.error(f"XMP generation failed for {file}: {e}")
+
+                self._update_loading_bar(bar, 1)
+
+            except Exception as e:
+                self.logger.error(f"Failed to process {file}: {e}")
+                stats['errors'].append(f"{file}: {str(e)}")
+                self._update_loading_bar(bar, 1)
+
+                # Warn but don't abort for large failure rates
+                error_rate = len(stats['errors']) / len(files)
+                if error_rate > 0.05 and len(stats['errors']) % 100 == 0:
+                    self.logger.error(
+                        f"High failure rate: {error_rate*100:.1f}% "
+                        f"({len(stats['errors'])}/{len(files)} files). "
+                        f"Recent errors: {stats['errors'][-5:]}"
+                    )
+
+        self._finish_loading_bar(bar)
+
+        self.logger.info(f"File copy summary:")
+        self.logger.info(f"  Copied: {stats['copied']}")
+        self.logger.info(f"  Skipped (existing): {stats['skipped_existing']}")
+        self.logger.info(f"  Skipped (not found): {stats['skipped_notfound']}")
+        self.logger.info(f"  XMP generated: {stats['xmp_generated']}")
+        self.logger.info(f"  XMP failed: {stats['xmp_failed']}")
+
+        if stats['errors']:
+            self.logger.warning(f"Total errors: {len(stats['errors'])}")
+            self.logger.warning(f"First 5 errors: {stats['errors'][:5]}")
+
+        if stats['xmp_failed'] > 0:
+            self.logger.warning(
+                f"⚠ {stats['xmp_failed']} images are missing XMP sidecars. "
+                f"RealityCapture may use incorrect camera calibration priors."
+            )
+
+        if stats['copied'] == 0 and stats['skipped_existing'] == 0:
+            raise RuntimeError("No files were copied - check input directory and file list")
+
+    def __build_file_index(self, input_dir: str) -> dict[str, str]:
+        """
+        Build filename → full_path index once. O(n) instead of O(n²).
+
+        Args:
+            input_dir: Root directory to index
+
+        Returns:
+            Dictionary mapping filename to full path
+        """
+        self.logger.info(f"Building file index for {input_dir}...")
+
+        file_index = {}
+        duplicate_count = 0
+
+        for root, _, filenames in os.walk(input_dir):
+            for filename in filenames:
+                ext = os.path.splitext(filename)[1].lower()
+                if ext in self.ACCEPTED_EXTENSIONS:
+                    full_path = os.path.join(root, filename)
+
+                    if filename in file_index:
+                        duplicate_count += 1
+                        self.logger.warning(
+                            f"Duplicate filename found: {filename} "
+                            f"(keeping first occurrence)"
+                        )
+                    else:
+                        file_index[filename] = full_path
+
+        self.logger.info(
+            f"Indexed {len(file_index)} files "
+            f"({duplicate_count} duplicates skipped)"
+        )
+
+        return file_index
 
     def __create_batch_folders(self, output_dir, zones, input_dir, flight_log_path=None):
         """
@@ -614,7 +803,6 @@ class BatchDirectory(RCModule):
 
         flight_log_df = None
         if flight_log_path and os.path.isfile(flight_log_path):
-            # Read all columns exactly as they appear
             flight_log_df = pd.read_csv(flight_log_path, delimiter=';', dtype=str, keep_default_na=False)
             if 'Name' in flight_log_df.columns:
                 flight_log_df = flight_log_df.rename(columns={'Name': 'filename'})
@@ -630,20 +818,20 @@ class BatchDirectory(RCModule):
             unique_zone_files = list(dict.fromkeys(zone_files))
             self.__copy_files(input_dir, batch_folder_dir, unique_zone_files)
 
-            # Create flight log per zone
             if flight_log_df is not None:
-                # Maintain full column order
                 zone_flight_log_df = flight_log_df.loc[
                     flight_log_df.index.isin(unique_zone_files)
                 ].copy()
 
-                # Keep original columns even if some missing
                 missing = [col for col in flight_log_df.columns if col not in zone_flight_log_df.columns]
                 for col in missing:
                     zone_flight_log_df[col] = ""
 
-                # Write out zone-specific flight log
-                batch_flight_log_name = f'flight_log{self.utm_zone_suffix}_UTM.txt'
+                if self.utm_zone_suffix:
+                    batch_flight_log_name = f'flight_log{self.utm_zone_suffix}_UTM.txt'
+                else:
+                    batch_flight_log_name = 'flight_log.txt'
+
                 batch_flight_log_path = os.path.join(batch_folder_dir, batch_flight_log_name)
 
                 zone_flight_log_df.to_csv(
@@ -651,11 +839,12 @@ class BatchDirectory(RCModule):
                     sep=';',
                     index=True,
                     index_label='filename',
-                    columns=flight_log_df.columns  # preserve column order
+                    columns=flight_log_df.columns
                 )
 
             self._update_loading_bar(bar, 1)
 
+        self._finish_loading_bar(bar)
 
     def run(self):
         success, message = self.validate_parameters()
@@ -674,25 +863,26 @@ class BatchDirectory(RCModule):
 
         self.logger.info(f"Total number of georeferenced points: {len(gdf)}")
 
-        # Prompt for min/max zone size based on total image count
         self.logger.info(f"Recommended min zone size: {max(100, len(gdf) // 10)}")
         self.logger.info(f"Recommended max zone size: {max(1000, len(gdf) // 2)}")
 
-        min_zone = input(f"Minimum zone size (default {self.params['batch_min_zone_size'].get_value()}): ").strip()
-        if min_zone:
-            try:
-                self.params['batch_min_zone_size'].set_value(int(min_zone))
-            except ValueError:
-                self.logger.error("Invalid minimum zone size")
-                return {'Success': False}
+        no_prompt = os.environ.get('RC_NO_PROMPT', '').strip().lower() in ('1', 'true', 'yes', 'y')
+        if not no_prompt:
+            min_zone = input(f"Minimum zone size (default {self.params['batch_min_zone_size'].get_value()}): ").strip()
+            if min_zone:
+                try:
+                    self.params['batch_min_zone_size'].set_value(int(min_zone))
+                except ValueError:
+                    self.logger.error("Invalid minimum zone size")
+                    return {'Success': False}
 
-        max_zone = input(f"Maximum zone size (default {self.params['batch_max_zone_size'].get_value()}): ").strip()
-        if max_zone:
-            try:
-                self.params['batch_max_zone_size'].set_value(int(max_zone))
-            except ValueError:
-                self.logger.error("Invalid maximum zone size")
-                return {'Success': False}
+            max_zone = input(f"Maximum zone size (default {self.params['batch_max_zone_size'].get_value()}): ").strip()
+            if max_zone:
+                try:
+                    self.params['batch_max_zone_size'].set_value(int(max_zone))
+                except ValueError:
+                    self.logger.error("Invalid maximum zone size")
+                    return {'Success': False}
 
         target_size = int(self.params['batch_target_images_per_zone'].get_value())
         min_size = int(self.params['batch_min_zone_size'].get_value())
@@ -739,7 +929,10 @@ class BatchDirectory(RCModule):
 
             self.__plot_results(gdf_processed, final_zones, output_dir)
 
-            user_input = input("Accept these batches? (a)ccept, (r)eject and set new params: ").lower()
+            if no_prompt:
+                user_input = 'a'
+            else:
+                user_input = input("Accept these batches? (a)ccept, (r)eject and set new params: ").lower()
             if user_input == 'a':
                 self.logger.info("Batches accepted. Proceeding to copy files.")
                 break
@@ -766,7 +959,6 @@ class BatchDirectory(RCModule):
                     except ValueError:
                         print("Invalid input. Please enter a number.")
 
-                # Update min/max based on new target
                 min_size = max(100, int(target_size * 0.2))
                 max_size = int(target_size * 1.5)
 
@@ -793,9 +985,15 @@ class BatchDirectory(RCModule):
                 'Output Directory': output_dir,
                 'UTM Zone': self.utm_zone_suffix or 'N/A'
             }
+        except RuntimeError as e:
+            self.logger.error(f"Batch folder creation failed: {e}")
+            return {'Success': False, 'Error': str(e)}
         except ValueError as e:
-            self.logger.error(e)
-            return {'Success': False}
+            self.logger.error(f"Invalid parameter or data: {e}")
+            return {'Success': False, 'Error': str(e)}
+        except Exception as e:
+            self.logger.error(f"Unexpected error during batching: {e}")
+            return {'Success': False, 'Error': str(e)}
 
     def validate_parameters(self) -> (bool, str):
         success, message = super().validate_parameters()
@@ -824,17 +1022,23 @@ class BatchDirectory(RCModule):
         if not flight_log_path or not os.path.isfile(flight_log_path):
             return False, 'A valid flight log is required for geographic batching.'
 
-        # Note: Image counting and min/max prompting now happens in run() method
-        # after loading flight log data, not during validation
-
         output_dir = os.path.join(self.params['output_dir'].get_value(), 'batched_images_by_zone')
+
+        # Check for existing output before proceeding
         if os.path.isdir(output_dir) and os.listdir(output_dir):
-            self.logger.warning('Batched images folder already exists and may contain old plots. Overwrite? (y/n)')
-            overwrite = input()
-            if overwrite.lower() != 'y':
-                return False, 'Batched images folder not created'
-            else:
+            no_prompt = os.environ.get('RC_NO_PROMPT', '').strip().lower() in ('1', 'true', 'yes', 'y')
+            auto_overwrite = os.environ.get('RC_OVERWRITE', '').strip().lower() in ('1', 'true', 'yes', 'y')
+
+            if auto_overwrite or no_prompt:
+                self.logger.warning('Batched images folder exists. Auto-overwriting due to RC_OVERWRITE/RC_NO_PROMPT.')
                 shutil.rmtree(output_dir)
+            else:
+                self.logger.warning('Batched images folder already exists and may contain old plots. Overwrite? (y/n)')
+                overwrite = input()
+                if overwrite.lower() != 'y':
+                    return False, 'Batched images folder not created'
+                else:
+                    shutil.rmtree(output_dir)
 
         if not os.path.isdir(output_dir):
             os.makedirs(output_dir)

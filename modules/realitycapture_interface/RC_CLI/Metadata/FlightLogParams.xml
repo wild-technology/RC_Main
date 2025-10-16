@@ -4,8 +4,8 @@
   <entry key="gpsLogFileFormat" value="{B438A617-2434-5A24-C1B7-58980F28345A}"/>
   <entry key="CoordinateSystemFlightLog" value="+proj=utm +zone=4 +datum=WGS84 +units=m +no_defs"/>
   <entry key="CoordinateSystemFlightLogType" value="epsg:32604 - WGS 84 / UTM zone 4N"/>
-  <entry key="ifKGrp" value="2"/>
-  <entry key="csvFLIgn" value="true"/>
+  <entry key="ifKGrp" value="0"/>
+  <entry key="csvFLIgn" value="false"/>
   <entry key="ifuuInh" value="0"/>
   <entry key="ifKmode" value="0x0"/>
   <entry key="csvFLSep" value="1"/>

@@ -24,22 +24,28 @@ if [%2] == [] (
 )
 
 if [%3] == [] (
+    set /P zone_name="Zone Name (for project file): "
+) else (
+    set zone_name=%~3
+)
+
+if [%4] == [] (
     set /P flight_log_dir="Path to Flight Log (or empty if no flight log): "
 ) else (
-    set flight_log_dir=%~3
+    set flight_log_dir=%~4
 )
 
-if not [flight_log_dir] == [] if [%4] == [] (
+if not [flight_log_dir] == [] if [%5] == [] (
     set /P flight_log_params_dir="Path to Flight Log Params: "
 ) else (
-    set flight_log_params_dir=%~4
+    set flight_log_params_dir=%~5
 )
 
-if [%5] == [] (
+if [%6] == [] (
     CHOICE /C YN /M "Generate Model (Y/N):"
     set generate_model=%ERRORLEVEL%
 ) else (
-    set generate_model=%~5
+    set generate_model=%~6
 )
 
 set "GENERATE_MODEL_BOOL="
@@ -47,31 +53,25 @@ if [%generate_model%] == [Y] set GENERATE_MODEL_BOOL=1
 if [%generate_model%] == [true] set GENERATE_MODEL_BOOL=1
 
 if defined GENERATE_MODEL_BOOL (
-    if [%6] == [] (
+    if [%7] == [] (
         CHOICE /C YN /M "Cull Polygons (Y/N):"
         set cull_polygons=%ERRORLEVEL%
     ) else (
-        set cull_polygons=%~6
-    )
-
-    if [%7] == [] (
-        set /P scene_name="Scene name:"
-    ) else (
-        set scene_name=%~7
+        set cull_polygons=%~7
     )
 
     if [%8] == [] (
         CHOICE /C YN /M "Texture (Y/N):"
         set texture_model=%ERRORLEVEL%
     ) else (
-        set texture_model=%~6
+        set texture_model=%~8
     )
 
-    if [%8] == [] (
+    if [%9] == [] (
         CHOICE /C YN /M "Simplify (Y/N):"
         set simplify_model=%ERRORLEVEL%
     ) else (
-        set simplify_model=%~6
+        set simplify_model=%~9
     )
 )
 
@@ -95,110 +95,55 @@ set "SIMPLIFY_MODEL_BOOL="
 if [%simplify_model%] == [Y] set SIMPLIFY_MODEL_BOOL=1
 if [%simplify_model%] == [true] set SIMPLIFY_MODEL_BOOL=1
 
-echo Starting Reality Capture
-call startRealityCapture.bat
-
-echo Adding images to project
-%RealityCapture% -delegateTo RC1 -addFolder "%input_dir%"
-
-if not [flight_log_dir] == [] (
-    %RealityCapture% -delegateTo RC1 -importFlightLog "%flight_log_dir%" "%flight_log_params_dir%"
+REM Kill any existing RealityCapture/RealityScan instances
+echo Checking for existing RealityScan instances
+tasklist /FI "IMAGENAME eq RealityScan.exe" 2>NUL | find /I /N "RealityScan.exe">NUL
+if "%ERRORLEVEL%"=="0" (
+    echo Killing existing RealityScan instance
+    taskkill /F /IM RealityScan.exe >NUL 2>&1
+    timeout /t 3 /nobreak >NUL
 )
 
-echo Aligning images
-%RealityCapture% -delegateTo RC1 -align
-%RealityCapture% -delegateTo RC1 -exportXMP
+echo ========================================
+echo Starting RealityScan 2.0 Processing
+echo ========================================
+echo Input: %input_dir%
+echo Output: %output_dir%
+echo Flight log: %flight_log_dir%
+echo.
 
-echo Selecting maximal component and exporting
-%RealityCapture% -delegateTo RC1 -mergeComponents
-%RealityCapture% -delegateTo RC1 -renameSelectedComponent "Merged"
-%RealityCapture% -delegateTo RC1 -exportSelectedComponentDir "%output_dir%"
+REM Execute RealityScan with command sequence
+REM Per official docs, commands are chained on single line
+REM NOTE: RealityScan 2.0 automatically imports XMP sidecar files via -addFolder
+REM      No separate -importXMP command is needed (it causes "unknown command" error)
+REM IMPORTANT: Use -set "appIncSubdirs=true" to import from camera subfolders (per official docs)
 
-if defined GENERATE_MODEL_BOOL (
-    echo Generating model
-    %RealityCapture% -delegateTo RC1 -calculateHighModel
-    %RealityCapture% -delegateTo RC1 -renameSelectedModel "HighPoly"
+REM Build command in two steps to avoid batch parsing issues with nested quotes
+if not [%flight_log_dir%] == [] goto :WITH_FLIGHTLOG
 
-    if defined CULL_POLYGONS_BOOL (
-        echo Culling polygons
-        %RealityCapture% -delegateTo RC1 -cleanModel
-        %RealityCapture% -delegateTo RC1 -renameSelectedModel "CullTemp1"
+:WITHOUT_FLIGHTLOG
+echo Processing with XMP calibration priors (no flight log)...
+"%RealityCapture%" -newScene -set "appIncSubdirs=true" -set "appUseRelativeImagePaths=false" -addFolder "%input_dir%" -align -exportXMP -selectMaximalComponent -exportSelectedComponentDir "%output_dir%" -save "%input_dir%\%zone_name%.rcproj" -quit
+goto :END_PROCESSING
 
-        %RealityCapture% -delegateTo RC1 -selectLargeTrianglesRel 20
-        %RealityCapture% -delegateTo RC1 -removeSelectedTriangles
-        %RealityCapture% -delegateTo RC1 -renameSelectedModel "CullTemp2"
+:WITH_FLIGHTLOG
+echo Processing with flight log and XMP calibration priors...
+"%RealityCapture%" -newScene -set "appIncSubdirs=true" -set "appUseRelativeImagePaths=false" -addFolder "%input_dir%" -importFlightLog "%flight_log_dir%" "%flight_log_params_dir%" -align -exportXMP -selectMaximalComponent -exportSelectedComponentDir "%output_dir%" -save "%input_dir%\%zone_name%.rcproj" -quit
 
-        %RealityCapture% -delegateTo RC1 -cleanModel
-        %RealityCapture% -delegateTo RC1 -renameSelectedModel "Culled"
+:END_PROCESSING
 
-        %RealityCapture% -delegateTo RC1 -selectModel "CullTemp1"
-        %RealityCapture% -delegateTo RC1 -deleteSelectedModel
-
-        %RealityCapture% -delegateTo RC1 -selectModel "CullTemp2"
-        %RealityCapture% -delegateTo RC1 -deleteSelectedModel 
-
-        %RealityCapture% -delegateTo RC1 -selectModel "Culled"
-    )
-
-    if defined TEXTURE_MODEL_BOOL (
-        echo Texturing model
-        %RealityCapture% -delegateTo RC1 -calculateTexture %HighModelTexture%
-        %RealityCapture% -delegateTo RC1 -renameSelectedModel "HighPolyTextured"
-    )
-
-    if defined SIMPLIFY_MODEL_BOOL (
-        echo Simplifying model
-        %RealityCapture% -delegateTo RC1 -simplify %SimplifyParams%
-        %RealityCapture% -delegateTo RC1 -renameSelectedModel "SimplifyTemp1"
-        %RealityCapture% -delegateTo RC1 -cleanModel
-        %RealityCapture% -delegateTo RC1 -renameSelectedModel "SimplifyTemp2"
-        %RealityCapture% -delegateTo RC1 -simplify %SimplifyParams%
-        %RealityCapture% -delegateTo RC1 -renameSelectedModel "SimplifyTemp3"
-        %RealityCapture% -delegateTo RC1 -cleanModel
-        %RealityCapture% -delegateTo RC1 -renameSelectedModel "SimplifyTemp4"
-        %RealityCapture% -delegateTo RC1 -simplify %SimplifyParams%
-        %RealityCapture% -delegateTo RC1 -renameSelectedModel "SimplifyTemp5"
-        %RealityCapture% -delegateTo RC1 -cleanModel
-        %RealityCapture% -delegateTo RC1 -renameSelectedModel "SimplifyTemp6"
-        %RealityCapture% -delegateTo RC1 -simplify %SimplifyParams%
-        %RealityCapture% -delegateTo RC1 -renameSelectedModel "SimplifyTemp7"
-        %RealityCapture% -delegateTo RC1 -cleanModel
-        %RealityCapture% -delegateTo RC1 -renameSelectedModel "Simplified"
-
-        %RealityCapture% -delegateTo RC1 -selectModel "SimplifyTemp1"
-        %RealityCapture% -delegateTo RC1 -deleteSelectedModel
-
-        %RealityCapture% -delegateTo RC1 -selectModel "SimplifyTemp2"
-        %RealityCapture% -delegateTo RC1 -deleteSelectedModel
-
-        %RealityCapture% -delegateTo RC1 -selectModel "SimplifyTemp3"
-        %RealityCapture% -delegateTo RC1 -deleteSelectedModel
-
-        %RealityCapture% -delegateTo RC1 -selectModel "SimplifyTemp4"
-        %RealityCapture% -delegateTo RC1 -deleteSelectedModel
-
-        %RealityCapture% -delegateTo RC1 -selectModel "SimplifyTemp5"
-        %RealityCapture% -delegateTo RC1 -deleteSelectedModel
-
-        %RealityCapture% -delegateTo RC1 -selectModel "SimplifyTemp6"
-        %RealityCapture% -delegateTo RC1 -deleteSelectedModel
-
-        %RealityCapture% -delegateTo RC1 -selectModel "SimplifyTemp7"
-        %RealityCapture% -delegateTo RC1 -deleteSelectedModel
-
-        if defined TEXTURE_MODEL_BOOL (
-            echo Unwrapping simplified model
-            %RealityCapture% -delegateTo RC1 -selectModel "Simplified"
-            %RealityCapture% -delegateTo RC1 -unwrap %UnwrapSimplified%
-
-            echo Reprojecting onto simplified model
-            %RealityCapture% -delegateTo RC1 -reprojectTexture "HighPolyTextured" "Simplified"
-            %RealityCapture% -delegateTo RC1 -renameSelectedModel "SimplifiedTextured"
-        )
-    )
+if ERRORLEVEL 1 (
+    echo ERROR: RealityScan processing failed with exit code %ERRORLEVEL%
+    exit /b %ERRORLEVEL%
 )
 
-echo Saving project
-%RealityCapture% -delegateTo RC1 -save "%output_dir%\\%scene_name%.rcproj"
+echo ========================================
+echo ALL STEPS COMPLETE
+echo ========================================
+echo Components exported to: %output_dir%
+echo Project saved to: %input_dir%\%zone_name%.rcproj
+exit /b 0
 
-%RealityCapture% -delegateTo RC1 -quit
+REM TODO: Add model generation support in future version
+REM Model generation commands need to be added to the command sequence above
+REM Example: -calculateHighModel -cleanModel -calculateTexture params.xml
