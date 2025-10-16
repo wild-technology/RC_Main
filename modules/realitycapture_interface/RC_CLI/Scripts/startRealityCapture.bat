@@ -1,7 +1,16 @@
 :: These scripts were created by Epic Games Slovakia, who doesn't carry any liability in case issues related to the sample occur.
 @echo off
-
-set RealityCapture="C:\Program Files\Epic Games\RealityScan_2.0\RealityScan.exe"
+@echo off
+REM RealityScan 2.0 doesn't need separate startup
+REM Commands are executed directly in batch without delegation
+echo RealityScan will be invoked with command batch
+exit /b 0
+rem Allow override via environment variable RC_EXECUTABLE
+if defined RC_EXECUTABLE (
+    set RealityCapture="%RC_EXECUTABLE%"
+) else (
+    set RealityCapture="C:\Program Files\Epic Games\RealityScan_2.0\RealityScan.exe"
+)
 
 :: Test the RealityCapture is running
 %RealityCapture% -getStatus *

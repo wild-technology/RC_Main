@@ -122,28 +122,63 @@ if errorlevel 1 (
 echo    SUCCESS: Images added from %zone_input%
 echo.
 
-rem Find and import flight log
+REM Find and import flight log (FIXED VERSION)
 echo [7/10] Importing flight log...
 set flight_log_found=0
-for %%F in (%zone_input%\flight_log*.txt) do (
-    echo    Importing: %%F
-    %RealityCapture% -importFlightLog "%%F" "%FlightLogParams%"
-    if errorlevel 1 (
-        echo ERROR: Failed to import flight log: %%F
-        %RealityCapture% -quit
-        exit /b 1
-    ) else (
-        echo    SUCCESS: Flight log imported
-        set flight_log_found=1
-    )
+set flight_log_path=
+
+REM Search for flight logs with priority order
+REM Priority 1: Exact match
+if exist "%zone_input%\flight_log.txt" (
+    set flight_log_path=%zone_input%\flight_log.txt
+    goto :import_flight_log
 )
-if %flight_log_found% == 0 (
+
+REM Priority 2: Pattern match with _UTM suffix (most specific)
+for %%F in ("%zone_input%\flight_log*_UTM.txt") do (
+    set flight_log_path=%%F
+    goto :import_flight_log
+)
+
+REM Priority 3: Any flight_log*.txt
+for %%F in ("%zone_input%\flight_log*.txt") do (
+    set flight_log_path=%%F
+    goto :import_flight_log
+)
+
+REM If we get here, no flight log was found
+if "%flight_log_path%" == "" (
     echo ERROR: No flight log found in %zone_input%
+    echo    Searched for: flight_log*.txt
     echo    Flight log is REQUIRED for georeferenced alignment
     %RealityCapture% -quit
     exit /b 1
 )
-echo.
+
+:import_flight_log
+echo    Found: %flight_log_path%
+echo    Validating flight log structure...
+
+REM Validate CSV structure before importing
+findstr /i "filename;X (East);Y (North)" "%flight_log_path%" >nul
+if errorlevel 1 (
+    echo ERROR: Invalid flight log format
+    echo    Expected semicolon-delimited CSV with headers: filename;X (East);Y (North);...
+    echo    Found file: %flight_log_path%
+    %RealityCapture% -quit
+    exit /b 1
+)
+
+echo    Importing: %flight_log_path%
+%RealityCapture% -importFlightLog "%flight_log_path%" "%FlightLogParams%"
+if errorlevel 1 (
+    echo ERROR: Failed to import flight log: %flight_log_path%
+    echo    Check RealityCapture window for details
+    %RealityCapture% -quit
+    exit /b 1
+)
+echo    SUCCESS: Flight log imported
+set flight_log_found=1
 
 rem Verify XMP sidecars exist
 echo [8/10] Verifying XMP sidecars for camera calibration...
