@@ -561,7 +561,6 @@ class GeoreferenceImages(RCModule):
         if not success:
             self.logger.error(message)
             return {"Success": False}
-
         flight_log = self.params['geo_input_flight_log'].get_value()
         if 'geo_input_image_dir' in self.params:
             input_dir = self.params['geo_input_image_dir'].get_value()
