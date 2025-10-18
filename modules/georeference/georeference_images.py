@@ -515,7 +515,7 @@ class GeoreferenceImages(RCModule):
 
         with open(flight_log_filename, "w") as f:
             f.write(
-                "Name;X (East);Y (North);Alt;X Accuracy;Y Accuracy;Alt Accuracy;Yaw;Pitch;Roll;Yaw Accuracy;Pitch Accuracy;Roll Accuracy\n"
+                "filename;X (East);Y (North);Alt;X Accuracy;Y Accuracy;Alt Accuracy;Yaw;Pitch;Roll;Yaw Accuracy;Pitch Accuracy;Roll Accuracy\n"
             )
 
             for image in accepted_images:
@@ -561,7 +561,6 @@ class GeoreferenceImages(RCModule):
         if not success:
             self.logger.error(message)
             return {"Success": False}
-
         flight_log = self.params['geo_input_flight_log'].get_value()
         if 'geo_input_image_dir' in self.params:
             input_dir = self.params['geo_input_image_dir'].get_value()
