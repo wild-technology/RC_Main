@@ -109,28 +109,45 @@ def initialize_parameters(modules) -> dict[str, Parameter]:
                         continue
             params[pname] = p
 
+    # Auto-disable batch_input_image_dir prompt when both Georeference and Batch are active
+    if 'Georeference Images' in modules and 'Batch Directory' in modules:
+        if 'batch_input_image_dir' in params:
+            params['batch_input_image_dir'].prompt_user = False
+
     return params
 
 def parse_arguments(argv, params, logger) -> None:
     """
     Parses CLI args and prompts for any missing values.
     Honors RC_NO_INTERACTIVE env var to skip prompts and use defaults.
+    Also skips RealityCapture model-related prompts when model generation is disabled.
     """
     no_interactive = os.environ.get('RC_NO_INTERACTIVE', '').strip().lower() in ('1', 'true', 'yes', 'y')
 
     parser = argparse.ArgumentParser()
     for p in params.values():
         if p.get_type() is bool:
-            parser.add_argument(f'-{p.cli_short}', f'--{p.cli_long}', action='store_true', help=p.get_description())
+            parser.add_argument(f'-{p.cli_short}', f'--{p.cli_long}', action='store_true', default=None, help=p.get_description())
         else:
             parser.add_argument(f'-{p.cli_short}', f'--{p.cli_long}', type=p.get_type(), help=p.get_description())
     args = parser.parse_args(argv[1:])
 
+    # Track whether RC model generation is disabled to skip dependent prompts
+    rc_model_generate_value = None
+
     for p in params.values():
         val = getattr(args, p.cli_long, None)
-        if val is None and p.prompt_user and not no_interactive:
+
+        # If we've already determined rc_model_generate is False, skip prompts for its dependents
+        if rc_model_generate_value is False and p.cli_long in ('r_model_cull_poly', 'r_model_texture', 'r_model_simplify'):
+            # Do not prompt; force False to avoid confusion
+            val = False if val is None else val
+        elif val is None and p.prompt_user and not no_interactive:
             try:
-                inp = input(f'{p.get_description()}: ')
+                inp = input(f'{p.get_description()}: ').strip()
+                # Strip surrounding quotes if present
+                if inp and inp[0] in ('"', "'") and inp[-1] == inp[0]:
+                    inp = inp[1:-1]
                 if p.get_type() is bool:
                     val = inp.lower() in ('true', 't', 'yes', 'y')
                 else:
@@ -141,6 +158,10 @@ def parse_arguments(argv, params, logger) -> None:
         if val is None:
             val = p.get_default_value()
         p.set_value(val)
+
+        # Capture rc_model_generate choice as soon as it's set
+        if p.cli_long == 'r_model_generate':
+            rc_model_generate_value = bool(val)
 
 def update_parameters(params, modules) -> None:
     """

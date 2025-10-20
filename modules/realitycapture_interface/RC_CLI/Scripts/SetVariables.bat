@@ -27,8 +27,8 @@ if not exist "%Models%" mkdir "%Models%"
 
 :: A path to the Error folder.
 set ErrorPath=%RootFolder%\Errors
-::creates folder "Models" if it does not exists
-if not exist "%Errors%" mkdir "%Errors%"
+::creates folder "Errors" if it does not exists
+if not exist "%ErrorPath%" mkdir "%ErrorPath%"
 
 :: Variable storing name of file with Error write script.
 set ErrorWriter=%ErrorPath%\ErrorWriter.bat

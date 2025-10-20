@@ -8,8 +8,9 @@
   <!-- ZCAM F7 with 16-35mm through 5" dome - Lower position -->
   <camera model="ZCAM F7 16-35mm III Lower" ccdWidth="37.09"><lens type="division" focal="16" c1="0"/></camera>
 
-  <!-- Zeus Plus HD camera with zoom lens -->
-  <camera model="Zeus Plus" ccdWidth="11.0"/>
+  <!-- Zeuss Plus HD camera with zoom lens -->
+  <camera model="Zeuss Plus" ccdWidth="11.0"><lens type="Division" focal="24.67" c1="0"/></camera>
+
   <camera model="Ai3D Ai3D G1" ccdWidth="17.3"/>
   <camera model="Apple iPhone 3GS" ccdWidth="3.5800" GPSMode="ignore"/>
   <camera model="Apple iPhone 4" ccdWidth="4.5400" GPSMode="ignore"/>
