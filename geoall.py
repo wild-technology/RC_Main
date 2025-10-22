@@ -97,7 +97,7 @@ def get_camera_pitch_offset(filename: str) -> float:
     elif 'camlower' in filename_lower:
         return 10.0
     elif '_herc_' in filename_lower or 'zeuss' in filename_lower:
-        return 30.0
+        return 3python 0.0
     else:
         return 0.0
 
