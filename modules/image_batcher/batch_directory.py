@@ -812,7 +812,6 @@ class BatchDirectory(RCModule):
 				exif_dict = {"0th": {}, "Exif": {}, "GPS": {}, "1st": {}}
 
 			# Inject camera metadata
-			exif_dict["0th"][piexif.ImageIFD.Make] = config['make'].encode('utf-8')
 			exif_dict["0th"][piexif.ImageIFD.Model] = config['model'].encode('utf-8')
 			exif_dict["0th"][piexif.ImageIFD.ImageWidth] = width
 			exif_dict["0th"][piexif.ImageIFD.ImageLength] = height
@@ -828,12 +827,9 @@ class BatchDirectory(RCModule):
 
 			# Verify EXIF was written
 			verify_dict = piexif.load(output_path)
-			written_make = verify_dict["0th"].get(piexif.ImageIFD.Make, b'').decode('utf-8')
 			written_model = verify_dict["0th"].get(piexif.ImageIFD.Model, b'').decode('utf-8')
 			written_focal = verify_dict["Exif"].get(piexif.ExifIFD.FocalLength, (0, 1))
 
-			if written_make != config['make']:
-				raise ValueError(f"EXIF verification failed: Make mismatch")
 			if written_model != config['model']:
 				raise ValueError(f"EXIF verification failed: Model mismatch")
 			if written_focal != focal_rational:

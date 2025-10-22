@@ -6,7 +6,7 @@
   <camera model="ZCAM F6 8-15mm Fisheye Mid" ccdWidth="37.09"><lens type="division" focal="13.5" c1="0"/></camera>
 
   <!-- ZCAM F7 with 16-35mm through 5" dome - Lower position -->
-  <camera model="ZCAM F7 16-35mm III Lower" ccdWidth="37.09"><lens type="division" focal="16" c1="0"/></camera>
+  <camera model="ZCAM F6 16-35mm III Lower" ccdWidth="37.09"><lens type="division" focal="16" c1="0"/></camera>
 
   <!-- Zeuss Plus HD camera with zoom lens -->
   <camera model="Zeuss Plus" ccdWidth="11.0"><lens type="Division" focal="24.67" c1="0"/></camera>
