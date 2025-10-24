@@ -1184,6 +1184,20 @@ def batch_process_zones(zones_root: Path) -> None:
     def _run(step_index: int, label: str, func):
         start = time.time()
         out = func()
+        # Ensure RealityScan finishes executing delegated commands before proceeding in batch mode
+        try:
+            launcher = getattr(func, "__self__", None)
+            if launcher is not None:
+                rc_exe = getattr(launcher, "rc_exe", None)
+                instance_started = getattr(launcher, "instance_started", False)
+                instance_name = getattr(launcher, "instance_name", None)
+                display_output = getattr(launcher, "display_output", False)
+                if rc_exe is not None and instance_started and instance_name:
+                    # Explicitly wait for completion of any outstanding delegated tasks
+                    run_rc_command(rc_exe, ["-waitCompleted", instance_name], display_output)
+        except Exception:
+            # Non-fatal: proceed even if explicit wait fails
+            pass
         elapsed = time.time() - start
         # Step completion banner for batch mode
         banner_line = "-" * 75
@@ -1195,7 +1209,7 @@ def batch_process_zones(zones_root: Path) -> None:
         for line in _fmt_result(out):
             print("## " + line)
         print(banner_line + "\n")
-        # Enforce minimum wait between steps in batch mode
+        # Enforce minimum wait between steps in batch mode (after ensuring commands executed)
         print("Waiting 5 seconds before next step...")
         time.sleep(5.0)
         return out
@@ -1268,12 +1282,12 @@ def batch_process_zones(zones_root: Path) -> None:
         try:
             # Steps: launch -> load images -> load flight log (if present) -> params -> align -> export initial -> merge
             _run(1, "Launch new project", L.step_launch_new_project)
-            _run(2, "Load images (keep existing functionality)", L.step_load_images)
-            _run(3, "Load flight_log (keep existing functionality)", L.step_load_flight_log)
-            _run(4, "Set image parameters (stub for future script)", L.step_set_image_parameters)
-            _run(5, "Align images (adjust variables)", L.step_align_images)
+            _run(2, "Load images", L.step_load_images)
+            _run(3, "Load flight_log", L.step_load_flight_log)
+            _run(4, "Set camera/lens distortion parameters", L.step_set_image_parameters)
+            _run(5, "Align images", L.step_align_images)
             _run(6, "Rename and Export components in 'Alignments/InitialAlignments'", L.step_export_initial)
-            _run(7, "Merge components (adjust variables)", L.step_merge_components)
+            _run(7, "Merge components", L.step_merge_components)
         except Exception as e:
             print(f"[Error] Processing failed for {zone_dir.name}: {e}")
         finally:
@@ -1295,7 +1309,7 @@ def batch_process_zones(zones_root: Path) -> None:
                                 stopped = L._wait_instance_stopped(30.0)
                                 if stopped:
                                     break
-                                print("  Still stopping... continuing to wait.")
+                                print("  Continuing to wait for RealityScan instance to fully stop before moving to next zone...")
                             print("Instance stopped.")
                         except Exception:
                             pass
