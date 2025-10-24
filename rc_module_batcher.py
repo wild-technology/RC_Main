@@ -122,6 +122,24 @@ def build_project_name(expedition: str, dive: str, zone: str) -> str:
     return f"{expedition}_{dive}_{zone}"
 
 
+def normalize_zone_label(text: str) -> str:
+    """Normalize zone input to 'Zone<digits>' if digits present; otherwise title-case token."""
+    if text is None:
+        return "Zone"
+    text = str(text).strip()
+    digits = ''.join(ch for ch in text if ch.isdigit())
+    if digits:
+        try:
+            num = int(digits)
+            return f"Zone{num}"
+        except ValueError:
+            pass
+    # remove common prefixes and separators then title-case
+    base = text.replace('zone', '').replace('Zone', '').replace('_', ' ').replace('-', ' ').strip()
+    base = base or text
+    return base.title()
+
+
 def _timestamp() -> str:
     return datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -226,6 +244,8 @@ class InteractiveLauncher:
             print("All of Expedition, Dive, and Zone are required.")
             return False
 
+        # Normalize zone label to 'Zone#' style so project filename matches component export naming
+        self.zone = normalize_zone_label(self.zone)
         self.project_name = build_project_name(self.expedition, self.dive, self.zone)
         self.project_path = self.base_images_dir / f"{self.project_name}.rcproj"
 
@@ -1281,10 +1301,10 @@ def batch_process_zones(zones_root: Path) -> None:
                             pass
             except Exception:
                 pass
-            print(f"----------------------------------------------------------------")
-            print(f"===  Saved project at: {L.project_path}")
-            print(f"===  Completed zone: {zone_dir.name} ... proceeding to next zone ===\n")
-            print(f"----------------------------------------------------------------")
+            print(f"--------------------------- Zone {zone_dir.name} Complete ---------------------------")
+            print(f"===  Saved project at: {L.project_path}                                           === ")
+            print(f"===  Proceeding to next zone                                                      ===\n")
+            print(f"-------------------------------------------------------------------------------------")
 
 if __name__ == "__main__":
     # Offer batch processing of zone subfolders first
