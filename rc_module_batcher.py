@@ -212,6 +212,9 @@ class InteractiveLauncher:
         # Step 5 fallback option
         self.per_image_fallback: bool = False
 
+        # Flags
+        self.flight_log_imported: bool = False
+
     # Utility: prompt wrappers to support auto (non-interactive) mode
     def _get_yes_no(self, question: str, default: bool = True) -> bool:
         if self.auto_mode:
@@ -290,14 +293,24 @@ class InteractiveLauncher:
         return True
 
     # ---- instance helpers ----
-    def _wait_instance_ready(self) -> None:
+    def _wait_instance_ready(self, timeout: float = 60.0) -> None:
+        """
+        Wait until the named RC instance responds to -getStatus, with a bounded timeout.
+        Raises TimeoutError if the instance does not become responsive within the timeout.
+        """
         assert self.rc_exe and self.instance_name
+        deadline = time.time() + timeout
+        delay = 0.5
         while True:
             try:
                 run_rc_command(self.rc_exe, ["-getStatus", self.instance_name], self.display_output)
-                break
+                return
             except subprocess.CalledProcessError:
-                time.sleep(0.5)
+                if time.time() >= deadline:
+                    raise TimeoutError(f"RealityScan instance '{self.instance_name}' did not become ready within {timeout} seconds.")
+                time.sleep(delay)
+                # Exponential backoff up to 3s between attempts
+                delay = min(delay * 1.5, 3.0)
 
     def _wait_instance_stopped(self, timeout: float = 30.0) -> bool:
         """
@@ -359,10 +372,54 @@ class InteractiveLauncher:
 
     def _delegate(self, *args: str) -> None:
         assert self.rc_exe and self.instance_started
+        # Build the command that will block inside RealityScan until the delegated work finishes
         cmd = ["-delegateTo", self.instance_name] + list(args) + ["-waitCompleted", self.instance_name]
-        # Always show delegated command for transparency
         print("Delegating:", " ".join(cmd))
-        run_rc_command(self.rc_exe, cmd, self.display_output)
+        # Launch non-blocking so we can poll -getStatus and report progress
+        proc = subprocess.Popen([str(self.rc_exe)] + cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            last_text = None
+            last_print = 0.0
+            interval = 2.0  # seconds between status polls
+            start_time = time.time()
+            while True:
+                ret = proc.poll()
+                now = time.time()
+                if now - last_print >= interval:
+                    last_print = now
+                    status_text = self._get_status_text()
+                    if status_text:
+                        # Only print when changed to reduce noise
+                        if status_text != last_text:
+                            print(f"[Status] {status_text.strip()}")
+                            last_text = status_text
+                    else:
+                        # Fallback heartbeat if no status text is available
+                        elapsed = int(now - start_time)
+                        print(f"[Status] Working... {elapsed}s elapsed")
+                if ret is not None:
+                    break
+                time.sleep(0.25)
+            # Completed; collect outputs and check return code
+            stdout, stderr = proc.communicate(timeout=1)
+            if proc.returncode != 0:
+                # echo outputs for diagnostics
+                if stdout:
+                    print(stdout)
+                if stderr:
+                    print(stderr, file=sys.stderr)
+                raise subprocess.CalledProcessError(proc.returncode, [str(self.rc_exe)] + cmd, stdout, stderr)
+            # Print final status one more time (best-effort)
+            final_text = self._get_status_text()
+            if final_text and final_text != last_text:
+                print(f"[Status] {final_text.strip()}")
+        finally:
+            # Ensure process resources are cleaned up
+            if proc.poll() is None:
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
 
     def _delegate_no_wait(self, *args: str) -> None:
         """Delegate without waiting for completion (no -waitCompleted)."""
@@ -370,6 +427,88 @@ class InteractiveLauncher:
         cmd = ["-delegateTo", self.instance_name] + list(args)
         print("Delegating (no-wait):", " ".join(cmd))
         run_rc_command(self.rc_exe, cmd, self.display_output)
+
+    def _delegate_capture(self, *args: str) -> tuple[str, str, int]:
+        """
+        Delegate a command and wait for completion, returning (stdout, stderr, returncode)
+        without raising on non-zero exit. Progress/status is still printed periodically.
+        """
+        assert self.rc_exe and self.instance_started
+        cmd = ["-delegateTo", self.instance_name] + list(args) + ["-waitCompleted", self.instance_name]
+        print("Delegating (capture):", " ".join(cmd))
+        proc = subprocess.Popen([str(self.rc_exe)] + cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        last_text = None
+        last_print = 0.0
+        interval = 2.0
+        start_time = time.time()
+        while True:
+            ret = proc.poll()
+            now = time.time()
+            if now - last_print >= interval:
+                last_print = now
+                status_text = self._get_status_text()
+                if status_text:
+                    if status_text != last_text:
+                        print(f"[Status] {status_text.strip()}")
+                        last_text = status_text
+                else:
+                    elapsed = int(now - start_time)
+                    print(f"[Status] Working... {elapsed}s elapsed")
+            if ret is not None:
+                break
+            time.sleep(0.25)
+        try:
+            stdout, stderr = proc.communicate(timeout=1)
+        except Exception:
+            stdout, stderr = "", ""
+        return stdout or "", stderr or "", proc.returncode if proc.returncode is not None else -1
+
+    def _get_status_text(self) -> str:
+        """
+        Query RealityScan for current instance status text via -getStatus.
+        Returns a single-line string like:
+          id:0x10001 progress:57.5% runtime:4.26sec endEstimation:3.40sec
+        or an empty string if status is unavailable.
+        """
+        assert self.rc_exe and self.instance_name
+        try:
+            completed = subprocess.run([str(self.rc_exe), "-getStatus", self.instance_name], capture_output=True, text=True)
+            if completed.returncode == 0:
+                out = (completed.stdout or "").strip()
+                # Prefer the last non-empty line if multiple
+                if out:
+                    lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+                    if lines:
+                        return lines[-1]
+            return ""
+        except Exception:
+            return ""
+
+    def _check_result(self) -> None:
+        """
+        Python equivalent of batch 'CheckResult' step.
+        After a '-waitCompleted' barrier, validate instance responds to '-getStatus'.
+        Retries briefly to handle transient failures. Raises on persistent failure.
+        """
+        assert self.rc_exe and self.instance_name
+        attempts = 0
+        last_err: Optional[Exception] = None
+        while attempts < 3:
+            try:
+                run_rc_command(self.rc_exe, ["-getStatus", self.instance_name], self.display_output)
+                return
+            except subprocess.CalledProcessError as e:
+                last_err = e
+                attempts += 1
+                time.sleep(1.0)
+            except Exception as e:
+                last_err = e
+                attempts += 1
+                time.sleep(1.0)
+        print("[Error] RealityScan instance did not return status after completion barrier (after retries).")
+        if last_err:
+            raise last_err
+        raise RuntimeError("CheckResult failed without exception details")
 
     def _wait_for_components_stable(self, directory: Path, min_stable_seconds: float = 10.0, timeout_seconds: Optional[float] = 7200.0, poll_interval: float = 2.0) -> list[Path]:
         """
@@ -460,11 +599,31 @@ class InteractiveLauncher:
         guid, source = get_flightlog_format_id()
         if guid:
             print(f"Setting flight log format id: {guid} (source: {source})")
-            self._delegate("-set", f"gpsLogFileFormat={guid}")
+            # Use capture to observe any errors; treat non-zero as failure
+            so, se, rc = self._delegate_capture("-set", f"gpsLogFileFormat={guid}")
+            if rc != 0:
+                print(so)
+                if se:
+                    print(se, file=sys.stderr)
+                raise RuntimeError("Failed to set gpsLogFileFormat in RealityScan.")
         print(f"Importing flight log: {self.flight_log_path}")
-        self._delegate("-importFlightLog", str(self.flight_log_path))
+        so, se, rc = self._delegate_capture("-importFlightLog", str(self.flight_log_path))
+        if rc != 0:
+            # Surface RC outputs and stop progression
+            if so:
+                print(so)
+            if se:
+                print(se, file=sys.stderr)
+            raise RuntimeError("RealityScan failed to import the flight log. Aborting before alignment.")
+        # Best-effort heuristic: detect obvious error text even with rc==0
+        combined = (so or "") + "\n" + (se or "")
+        if any(tok in combined.lower() for tok in ["error", "failed", "invalid", "unable", "cannot"]):
+            print(combined)
+            raise RuntimeError("Flight log import appears to have errored according to RealityScan output. Aborting.")
+        # Save on success and set flag
         self._delegate("-save", str(self.project_path))
-        return {"Flight Log": str(self.flight_log_path), "FormatId": guid or "", "FormatSource": source}
+        self.flight_log_imported = True
+        return {"Flight Log": str(self.flight_log_path), "FormatId": guid or "", "FormatSource": source, "Imported": True}
 
     def _count_keyword_matches(self, keyword: str) -> int:
         """
@@ -624,6 +783,9 @@ class InteractiveLauncher:
         assert self.rc_exe and self.project_path and self.temp_components_dir and self.base_images_dir
         if not self.instance_started:
             self.start_instance()
+        # Hard gate: require successful flight log import before alignment
+        if self.flight_log_path is not None and not self.flight_log_imported:
+            raise RuntimeError("Flight log was provided but not successfully imported. Alignment is blocked to prevent invalid processing.")
         print("Align Images — available variables:")
         min_comp = self._get_int("Minimum component size (images)", 100)
         export_xmp = self._get_yes_no("Export XMP sidecars?", True)
@@ -907,9 +1069,13 @@ class InteractiveLauncher:
             for line in self._format_step_result(result):
                 print("## " + line)
             print(banner_line + "\n")
-            # Enforce minimum wait between steps
-            print("Waiting 10 seconds before next step...")
-            time.sleep(10.0)
+            # Authoritative confirmation using CheckResult instead of timers
+            try:
+                self._check_result()
+                print("CheckResult: Instance responsive and step confirmed complete.")
+            except Exception:
+                # If CheckResult fails, re-raise to stop progression
+                raise
         except subprocess.CalledProcessError as e:
             progress[idx]["status"] = "Failed"
             print("Error executing RealityScan command.")
@@ -1184,20 +1350,8 @@ def batch_process_zones(zones_root: Path) -> None:
     def _run(step_index: int, label: str, func):
         start = time.time()
         out = func()
-        # Ensure RealityScan finishes executing delegated commands before proceeding in batch mode
-        try:
-            launcher = getattr(func, "__self__", None)
-            if launcher is not None:
-                rc_exe = getattr(launcher, "rc_exe", None)
-                instance_started = getattr(launcher, "instance_started", False)
-                instance_name = getattr(launcher, "instance_name", None)
-                display_output = getattr(launcher, "display_output", False)
-                if rc_exe is not None and instance_started and instance_name:
-                    # Explicitly wait for completion of any outstanding delegated tasks
-                    run_rc_command(rc_exe, ["-waitCompleted", instance_name], display_output)
-        except Exception:
-            # Non-fatal: proceed even if explicit wait fails
-            pass
+        # Per-step delegated operations already include '-waitCompleted' inside _delegate.
+        # No additional waits are needed here; rely on post-step CheckResult below.
         elapsed = time.time() - start
         # Step completion banner for batch mode
         banner_line = "-" * 75
@@ -1209,9 +1363,15 @@ def batch_process_zones(zones_root: Path) -> None:
         for line in _fmt_result(out):
             print("## " + line)
         print(banner_line + "\n")
-        # Enforce minimum wait between steps in batch mode (after ensuring commands executed)
-        print("Waiting 5 seconds before next step...")
-        time.sleep(5.0)
+        # Authoritative confirmation using CheckResult instead of timers (batch mode)
+        try:
+            launcher = getattr(func, "__self__", None)
+            if launcher is not None and hasattr(launcher, "_check_result"):
+                launcher._check_result()
+                print("CheckResult: Instance responsive and step confirmed complete (batch mode).")
+        except Exception:
+            # Propagate failure to stop batch progression
+            raise
         return out
 
     for zone_dir in zones:
@@ -1302,15 +1462,19 @@ def batch_process_zones(zones_root: Path) -> None:
                             L._delegate("-quit")
                         except Exception:
                             pass
-                        # Ensure instance fully stops before next zone
+                        # Ensure instance fully stops before next zone (bounded attempts)
                         try:
                             print("Waiting for RealityScan instance to fully stop before moving to next zone...")
-                            while True:
+                            stopped = False
+                            for attempt in range(3):
                                 stopped = L._wait_instance_stopped(30.0)
                                 if stopped:
                                     break
-                                print("  Continuing to wait for RealityScan instance to fully stop before moving to next zone...")
-                            print("Instance stopped.")
+                                print("  Instance still running; waiting again (attempt", attempt + 2, "of 3)...")
+                            if stopped:
+                                print("Instance stopped.")
+                            else:
+                                print("[Warn] Instance did not stop after multiple attempts; proceeding to next zone.")
                         except Exception:
                             pass
             except Exception:
