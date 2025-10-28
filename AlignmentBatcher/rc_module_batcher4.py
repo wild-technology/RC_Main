@@ -459,10 +459,12 @@ class InteractiveLauncher:
         return result
 
     def _monitor_operation_with_status(self, operation_name: str, timeout_sec: float = 3600.0,
-                                       poll_interval: float = 5.0) -> None:
+                                   poll_interval: float = 5.0) -> None:
         """
         Monitor a delegated operation using -getStatus polling.
         Displays progress, ETA, and elapsed time.
+
+        CRITICAL: Detects operation start by transition from idle→busy, then monitors to completion.
 
         Args:
             operation_name: Human-readable operation name (e.g., "Alignment", "Merge")
@@ -471,8 +473,10 @@ class InteractiveLauncher:
         """
         start_time = time.time()
         last_print_time = start_time
+        operation_started = False
+        seen_idle = False  # Track if we've seen idle state initially
 
-        print(f"\n[{operation_name}] Starting operation...")
+        print(f"\n[{operation_name}] Waiting for operation to start...")
 
         while True:
             elapsed = time.time() - start_time
@@ -485,7 +489,22 @@ class InteractiveLauncher:
             status_text = self._get_status_text()
             status = self._parse_status_line(status_text)
 
-            # Update display every poll_interval seconds
+            # CRITICAL FIX: Detect operation start by transition from idle to non-idle
+            if not operation_started:
+                if status['is_idle']:
+                    seen_idle = True
+                    time.sleep(0.5)
+                    continue
+                elif seen_idle:
+                    # Transitioned from idle to non-idle - operation has started!
+                    operation_started = True
+                    print(f"[{operation_name}] Operation started, monitoring progress...")
+                else:
+                    # Haven't seen idle yet, keep waiting
+                    time.sleep(0.5)
+                    continue
+
+            # Now monitor progress
             current_time = time.time()
             if current_time - last_print_time >= poll_interval:
                 progress_pct = status['progress_pct']
@@ -500,14 +519,16 @@ class InteractiveLauncher:
                       f"Elapsed: {elapsed_min}m {elapsed_sec}s | "
                       f"ETA: {eta_display}")
 
-                last_print_time = current_time
+            last_print_time = current_time
 
-            # Check completion
-            if status['is_idle'] or status['progress_pct'] >= 100.0:
-                print(f"[{operation_name}] ✓ Complete (took {int(elapsed)}s)")
-                return
+        # Check completion
+        if status['is_idle'] or status['progress_pct'] >= 100.0:
+            print(f"[{operation_name}] ✓ Complete (took {int(elapsed)}s)")
+            # Extra grace period to ensure file writes finish
+            time.sleep(3.0)
+            return
 
-            time.sleep(2.0)  # Quick polls to catch completion
+        time.sleep(2.0)  # Quick polls to catch completion
 
     def _check_result(self) -> None:
         """
