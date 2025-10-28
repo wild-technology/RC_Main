@@ -16,6 +16,13 @@ Notes
 - Requires RealityCapture.exe or RealityScan.exe to be installed.
 - The CLI command semantics are documented in the project docs included with this repository.
 - This script is intentionally self‑contained and does not depend on other project modules to run.
+
+IMPROVEMENTS APPLIED:
+- Enhanced status monitoring with operation context and progress parsing
+- Expected component count validation for alignment
+- Merged alignment verification before advancing to next zone
+- Batch processing summary with statistics
+- Selective CheckResult calls for critical operations only
 """
 from __future__ import annotations
 
@@ -26,6 +33,7 @@ import time
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, Sequence
+
 
 # --------------- helpers ---------------
 
@@ -307,7 +315,8 @@ class InteractiveLauncher:
                 return
             except subprocess.CalledProcessError:
                 if time.time() >= deadline:
-                    raise TimeoutError(f"RealityScan instance '{self.instance_name}' did not become ready within {timeout} seconds.")
+                    raise TimeoutError(
+                        f"RealityScan instance '{self.instance_name}' did not become ready within {timeout} seconds.")
                 time.sleep(delay)
                 # Exponential backoff up to 3s between attempts
                 delay = min(delay * 1.5, 3.0)
@@ -371,48 +380,91 @@ class InteractiveLauncher:
             self._delegate("-newScene")
 
     def _delegate(self, *args: str) -> None:
+        """
+        IMPROVED: Enhanced with operation context and progress monitoring.
+        Delegate commands to RC instance, wait for completion, and monitor progress.
+        """
         assert self.rc_exe and self.instance_started
         # Build the command that will block inside RealityScan until the delegated work finishes
         cmd = ["-delegateTo", self.instance_name] + list(args) + ["-waitCompleted", self.instance_name]
-        print("Delegating:", " ".join(cmd))
+
+        # Detect operation type for contextual user feedback
+        operation = "Operation"
+        if "-align" in args:
+            operation = "Alignment"
+        elif "-mergeComponents" in args:
+            operation = "Component Merge"
+        elif "-importComponent" in args:
+            operation = "Component Import"
+        elif "-exportLatestComponents" in args:
+            operation = "Component Export"
+        elif "-importFlightLog" in args:
+            operation = "Flight Log Import"
+        elif "-add" in args:
+            operation = "Loading Images"
+
+        print(f"[Step] {operation}: Starting...")
+        if self.display_output:
+            print("  Command:", " ".join(cmd))
+
         # Launch non-blocking so we can poll -getStatus and report progress
         proc = subprocess.Popen([str(self.rc_exe)] + cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             last_text = None
+            last_progress = -1.0
             last_print = 0.0
             interval = 2.0  # seconds between status polls
             start_time = time.time()
+
             while True:
                 ret = proc.poll()
                 now = time.time()
                 if now - last_print >= interval:
                     last_print = now
                     status_text = self._get_status_text()
+                    elapsed = int(now - start_time)
+
                     if status_text:
-                        # Only print when changed to reduce noise
-                        if status_text != last_text:
-                            print(f"[Status] {status_text.strip()}")
-                            last_text = status_text
+                        # Parse progress percentage for clearer feedback
+                        import re
+                        progress_match = re.search(r'progress:(\d+(?:\.\d+)?)%', status_text.lower())
+                        current_progress = float(progress_match.group(1)) if progress_match else -1.0
+
+                        # Parse ETA if available
+                        eta_match = re.search(r'endEstimation:(\d+(?:\.\d+)?)sec', status_text.lower())
+                        eta_seconds = int(float(eta_match.group(1))) if eta_match else None
+
+                        # Display progress prominently
+                        if current_progress >= 0 and current_progress != last_progress:
+                            eta_str = f", ETA: {eta_seconds}s" if eta_seconds else ""
+                            print(f"[Status] {operation}: {current_progress:.1f}% (elapsed: {elapsed}s{eta_str})")
+                            last_progress = current_progress
+                        elif status_text != last_text and "idle" not in status_text.lower():
+                            print(f"[Status] {operation}: {status_text.strip()}")
+
+                        last_text = status_text
                     else:
                         # Fallback heartbeat if no status text is available
-                        elapsed = int(now - start_time)
-                        print(f"[Status] Working... {elapsed}s elapsed")
+                        print(f"[Status] {operation}: Working... {elapsed}s elapsed")
+
                 if ret is not None:
                     break
                 time.sleep(0.25)
+
             # Completed; collect outputs and check return code
             stdout, stderr = proc.communicate(timeout=1)
+            elapsed_total = time.time() - start_time
+
             if proc.returncode != 0:
+                print(f"[Error] {operation} FAILED after {elapsed_total:.1f}s")
                 # echo outputs for diagnostics
                 if stdout:
                     print(stdout)
                 if stderr:
                     print(stderr, file=sys.stderr)
                 raise subprocess.CalledProcessError(proc.returncode, [str(self.rc_exe)] + cmd, stdout, stderr)
-            # Print final status one more time (best-effort)
-            final_text = self._get_status_text()
-            if final_text and final_text != last_text:
-                print(f"[Status] {final_text.strip()}")
+
+            print(f"[Status] {operation}: Completed in {elapsed_total:.1f}s")
         finally:
             # Ensure process resources are cleaned up
             if proc.poll() is None:
@@ -472,7 +524,8 @@ class InteractiveLauncher:
         """
         assert self.rc_exe and self.instance_name
         try:
-            completed = subprocess.run([str(self.rc_exe), "-getStatus", self.instance_name], capture_output=True, text=True)
+            completed = subprocess.run([str(self.rc_exe), "-getStatus", self.instance_name], capture_output=True,
+                                       text=True)
             if completed.returncode == 0:
                 out = (completed.stdout or "").strip()
                 # Prefer the last non-empty line if multiple
@@ -511,10 +564,20 @@ class InteractiveLauncher:
         print("[Error] RealityScan instance did not return status after completion barrier (after retries).")
         if last_err:
             raise last_err
-        raise RuntimeError("CheckResult failed without exception details")
+        raise RuntimeError("CheckResult failed: instance became unresponsive. Check RC logs for crash details.")
 
-    def _wait_for_components_stable(self, directory: Path, min_stable_seconds: float = 10.0, timeout_seconds: Optional[float] = 900.0, poll_interval: float = 2.0, idle_grace_seconds: float = 30.0) -> list[Path]:
+    def _wait_for_components_stable(
+            self,
+            directory: Path,
+            expected_count: Optional[int] = None,
+            min_stable_seconds: float = 10.0,
+            timeout_seconds: Optional[float] = 900.0,
+            poll_interval: float = 2.0,
+            idle_grace_seconds: float = 30.0
+    ) -> list[Path]:
         """
+        IMPROVED: Added expected_count parameter and enhanced logging.
+
         Wait until exported Component*.rcalign/rsalign files in 'directory' become stable.
         Stability conditions:
           - If one or more component files exist and no changes in the set (path,size,mtime) for
@@ -523,49 +586,98 @@ class InteractiveLauncher:
             current list even if files are fluctuating slightly (to avoid hangs caused by metadata
             touches by external tools such as antivirus or indexing services).
         A finite `timeout_seconds` prevents indefinite waits; None keeps waiting forever.
-        Returns the list of component Paths observed at the moment of exit (may be empty).
+
+        Args:
+            directory: Path to watch for component files
+            expected_count: Expected number of components (for validation and better logging)
+            min_stable_seconds: Seconds files must remain unchanged
+            timeout_seconds: Maximum wait time
+            poll_interval: Seconds between checks
+            idle_grace_seconds: Accept current state if instance idle this long
+
+        Returns:
+            List of component Paths observed at the moment of exit (may be empty).
+
+        Raises:
+            TimeoutError: If timeout reached before stability
         """
         start = time.time()
         last_snapshot: dict[str, tuple[int, float]] = {}
         last_change_time = time.time()
         last_idle_seen: Optional[float] = None
         last_heartbeat = time.time()
+
+        # Initial message
+        if expected_count:
+            print(f"[Wait] Waiting for approximately {expected_count} component file(s) to stabilize...")
+        else:
+            print("[Wait] Waiting for component files to stabilize...")
+
         while True:
             comps = sorted(list(directory.glob("Component*.rcalign")) + list(directory.glob("Component*.rsalign")))
             # Build snapshot of file sizes and mtimes
             try:
                 snapshot = {str(p): (p.stat().st_size, p.stat().st_mtime) for p in comps if p.exists()}
             except Exception:
-                snapshot = {str(p): (getattr(p.stat(), 'st_size', 0), getattr(p.stat(), 'st_mtime', 0.0)) for p in comps if p.exists()}
+                snapshot = {str(p): (getattr(p.stat(), 'st_size', 0), getattr(p.stat(), 'st_mtime', 0.0)) for p in comps
+                            if p.exists()}
+
             if snapshot != last_snapshot:
                 last_snapshot = snapshot
                 last_change_time = time.time()
                 if comps:
-                    print(f"[Align] Detected {len(comps)} component file(s); waiting for writes to finish...")
+                    count_info = f"{len(comps)} component file(s)"
+                    if expected_count:
+                        count_info += f" (expecting ~{expected_count})"
+                    print(f"[Wait] Detected {count_info}; waiting for file writes to finish...")
+
             # Query instance status to detect idle
             try:
                 status = (self._get_status_text() or "").lower()
             except Exception:
                 status = ""
             now = time.time()
-            if "idle" in status or "progress:100" in status.replace(" ",""):
+
+            if "idle" in status or "progress:100" in status.replace(" ", ""):
                 if last_idle_seen is None:
                     last_idle_seen = now
+                    print("[Wait] Instance reported idle; entering grace period...")
                 # If idle sustained long enough, accept current state
                 if now - last_idle_seen >= idle_grace_seconds:
+                    if expected_count and len(comps) < expected_count:
+                        print(f"[Warning] Expected approximately {expected_count} components, found {len(comps)}")
+                    print(f"[Wait] Component files stabilized: {len(comps)} file(s) ready")
                     return comps
             else:
                 last_idle_seen = None
+
             # Heartbeat every ~60s so user sees we're still waiting
             if now - last_heartbeat >= 60.0:
                 waited = int(now - start)
-                print(f"[Align] Waiting for component exports to stabilize... waited {waited}s so far.")
+                count_info = f"{len(comps)} file(s) detected"
+                if expected_count:
+                    count_info += f" (expecting ~{expected_count})"
+                print(f"[Wait] Still waiting for stability... {waited}s elapsed, {count_info}")
                 last_heartbeat = now
+
             # Primary condition: at least one file and stable for min_stable_seconds
             if comps and (now - last_change_time) >= min_stable_seconds:
+                # If expecting more components, keep waiting unless timeout approaching
+                if expected_count and len(comps) < expected_count:
+                    remaining_timeout = (timeout_seconds or float('inf')) - (now - start)
+                    if remaining_timeout > 30:  # Keep waiting if >30s left
+                        time.sleep(poll_interval)
+                        continue
+                    print(f"[Warning] Expected approximately {expected_count} components, found {len(comps)}")
+
+                print(f"[Wait] Component files stabilized: {len(comps)} file(s) ready")
                 return comps
+
             if timeout_seconds is not None and (now - start) > timeout_seconds:
-                raise TimeoutError(f"Timed out waiting for components to stabilize in {directory}")
+                raise TimeoutError(
+                    f"Timed out waiting for components to stabilize in {directory}. "
+                    f"Found {len(comps)} component(s) after {int(now - start)}s"
+                )
             time.sleep(poll_interval)
 
     def _build_imagelist(self) -> tuple[Path, int]:
@@ -650,7 +762,8 @@ class InteractiveLauncher:
         # Save on success and set flag
         self._delegate("-save", str(self.project_path))
         self.flight_log_imported = True
-        return {"Flight Log": str(self.flight_log_path), "FormatId": guid or "", "FormatSource": source, "Imported": True}
+        return {"Flight Log": str(self.flight_log_path), "FormatId": guid or "", "FormatSource": source,
+                "Imported": True}
 
     def _count_keyword_matches(self, keyword: str) -> int:
         """
@@ -669,7 +782,8 @@ class InteractiveLauncher:
                 count += 1
         return count
 
-    def _apply_image_params_group(self, label: str, select_keywords: list[str], calib_group: int, lens_group: int, focal_mm: int, camera_model: str) -> int:
+    def _apply_image_params_group(self, label: str, select_keywords: list[str], calib_group: int, lens_group: int,
+                                  focal_mm: int, camera_model: str) -> int:
         """
         Select images using RealityScan's built-in path token matching (g/<token>/) and
         apply prior calibration/lens groups, camera model, and focal length.
@@ -682,6 +796,7 @@ class InteractiveLauncher:
         # Detect matches: any file path containing the token (case-insensitive)
         assert self.base_images_dir
         exts = {".jpg", ".jpeg", ".png", ".heif", ".tif", ".tiff"}
+
         def contains_token(p: Path, token: str) -> bool:
             return token.lower() in str(p).lower()
 
@@ -792,7 +907,8 @@ class InteractiveLauncher:
                         "Focal(mm)": g["focal"],
                         "Model": g["model"],
                     })
-                    print(f"  Group '{g['name']}': detected ~{detected} file(s) -> calib {g['calib']}, lens {g['lens']}, focal {g['focal']}mm, model {g['model']}")
+                    print(
+                        f"  Group '{g['name']}': detected ~{detected} file(s) -> calib {g['calib']}, lens {g['lens']}, focal {g['focal']}mm, model {g['model']}")
                 else:
                     print(f"  Group '{g['name']}': no matching images found — skipped.")
             except subprocess.CalledProcessError as e:
@@ -806,12 +922,16 @@ class InteractiveLauncher:
         return {"Groups Updated": len(per_group), "Images Matched (approx)": total_detected}
 
     def step_align_images(self) -> dict:
+        """
+        IMPROVED: Now estimates expected component count for better monitoring.
+        """
         assert self.rc_exe and self.project_path and self.temp_components_dir and self.base_images_dir
         if not self.instance_started:
             self.start_instance()
         # Hard gate: require successful flight log import before alignment
         if self.flight_log_path is not None and not self.flight_log_imported:
-            raise RuntimeError("Flight log was provided but not successfully imported. Alignment is blocked to prevent invalid processing.")
+            raise RuntimeError(
+                "Flight log was provided but not successfully imported. Alignment is blocked to prevent invalid processing.")
         print("Align Images — available variables:")
         min_comp = self._get_int("Minimum component size (images)", 100)
         export_xmp = self._get_yes_no("Export XMP sidecars?", True)
@@ -829,7 +949,6 @@ class InteractiveLauncher:
                 "-set", "xmpExGps=true",
                 "-exportXMP",
             ]
-        # FIXED: Use proper path string without manual backslash escaping
         args += [
             "-setMinComponentSize", str(min_comp),
             "-exportLatestComponents", str(self.temp_components_dir),
@@ -844,13 +963,22 @@ class InteractiveLauncher:
         # After completion, continue normally
         # Wait for exported components to appear and stabilize (handles async write/export behavior)
         print("Waiting for component exports to finish and stabilize...")
+
+        # IMPROVEMENT: Estimate expected component count
+        pre_total_images = sum(
+            1 for p in self.base_images_dir.rglob("*") if p.suffix.lower() in (".jpg", ".jpeg", ".png", ".heif"))
+        estimated_components = max(1, pre_total_images // min_comp)
+        print(
+            f"[Info] Expecting approximately {estimated_components} component(s) based on {pre_total_images} images and min size {min_comp}")
+
         # Derive a sane upper bound for waiting based on image count
-        pre_total_images = sum(1 for p in self.base_images_dir.rglob("*") if p.suffix.lower() in (".jpg", ".jpeg", ".png", ".heif"))
         # 2 seconds per image, minimum 5 minutes, maximum 2 hours
         wait_timeout = max(300.0, min(7200.0, float(pre_total_images) * 2.0))
+
         try:
             comp_files = self._wait_for_components_stable(
                 self.temp_components_dir,
+                expected_count=estimated_components,  # IMPROVED: Pass expected count
                 min_stable_seconds=10.0,
                 timeout_seconds=wait_timeout,
                 poll_interval=2.0,
@@ -864,15 +992,20 @@ class InteractiveLauncher:
             comp_rca = sorted(self.temp_components_dir.glob("Component*.rcalign"))
             comp_rsa = sorted(self.temp_components_dir.glob("Component*.rsalign"))
             comp_files = comp_rca + comp_rsa
+
         # Summarize
-        total_images = sum(1 for p in self.base_images_dir.rglob("*") if p.suffix.lower() in (".jpg", ".jpeg", ".png", ".heif"))
+        total_images = sum(
+            1 for p in self.base_images_dir.rglob("*") if p.suffix.lower() in (".jpg", ".jpeg", ".png", ".heif"))
         xmp_count = sum(1 for p in self.base_images_dir.rglob("*.xmp")) if export_xmp else 0
         print(f"Temporary components were exported to: {self.temp_components_dir}")
+
         # Validation: ensure components were actually saved to temp directory
         if comp_files:
-            print(f"Validation: saved {len(comp_files)} component file(s) to temporary folder. (rcalign={len(comp_rca)}, rsalign={len(comp_rsa)})")
+            print(
+                f"[Validation] Saved {len(comp_files)} component file(s) to temporary folder. (rcalign={len(comp_rca)}, rsalign={len(comp_rsa)})")
         else:
-            print("Validation FAILED: no component files were found in the temporary folder after alignment.")
+            print("[Validation] FAILED: no component files were found in the temporary folder after alignment.")
+
         summary = {
             "Components Found": len(comp_files),
             "Total Images": total_images,
@@ -894,14 +1027,16 @@ class InteractiveLauncher:
             # As a safety net, wait a short period in case alignment export is finishing
             try:
                 print("No components detected yet; waiting briefly for alignment exports to finish...")
-                comps = self._wait_for_components_stable(self.temp_components_dir, min_stable_seconds=10.0, timeout_seconds=120.0, poll_interval=2.0)
+                comps = self._wait_for_components_stable(self.temp_components_dir, min_stable_seconds=10.0,
+                                                         timeout_seconds=120.0, poll_interval=2.0)
             except TimeoutError:
                 pass
         if not comps:
             print("No components to export from temporary directory.")
             return exported
         # Decide overwrite strategy for InitialAlignments
-        export_dir, action = prompt_overwrite_strategy(self.initial_export_dir, "InitialAlignments", auto=self.auto_mode)
+        export_dir, action = prompt_overwrite_strategy(self.initial_export_dir, "InitialAlignments",
+                                                       auto=self.auto_mode)
         if action == 'cancel' or export_dir is None:
             print("Export cancelled by user.")
             return []
@@ -918,9 +1053,9 @@ class InteractiveLauncher:
         # Validation: ensure exported files exist in destination
         missing = [p for p in exported if not p.exists()]
         if missing:
-            print(f"Validation FAILED: {len(missing)} exported file(s) not found in destination.")
+            print(f"[Validation] FAILED: {len(missing)} exported file(s) not found in destination.")
         else:
-            print(f"Validation: saved {len(exported)} initial component file(s) to {export_dir}.")
+            print(f"[Validation] Saved {len(exported)} initial component file(s) to {export_dir}.")
         # Deliberate save barrier after export
         try:
             if self.rc_exe and self.project_path and self.instance_started:
@@ -932,7 +1067,8 @@ class InteractiveLauncher:
     def step_merge_components(self) -> list[Path]:
         assert self.rc_exe and self.project_path and self.initial_export_dir and self.merged_export_dir and self.project_name
         # Gather components with both extensions
-        initial_components = sorted(list(self.initial_export_dir.glob("*.rcalign")) + list(self.initial_export_dir.glob("*.rsalign")))
+        initial_components = sorted(
+            list(self.initial_export_dir.glob("*.rcalign")) + list(self.initial_export_dir.glob("*.rsalign")))
         if not initial_components:
             print("No initial components to merge; skipping.")
             return []
@@ -941,7 +1077,8 @@ class InteractiveLauncher:
         # Ask variables
         min_comp = self._get_int("Minimum component size (images) for merge", 50)
         # Feature source preference (based on AlignmentParams key lisPreferImagesAsFeatureSource)
-        prefer_images = self._get_yes_no("Set Features Source for all images to Prefer original images (instead of components)?", True)
+        prefer_images = self._get_yes_no(
+            "Set Features Source for all images to Prefer original images (instead of components)?", True)
         _confirm = self._get_yes_no("Proceed to merge all initial components into merged components?", True)
         if not _confirm:
             return []
@@ -966,7 +1103,6 @@ class InteractiveLauncher:
             self._delegate("-importComponent", str(comp))
         # Perform merge and export
         self._current_step = "merge"
-        # FIXED: Use proper path string without manual backslash escaping
         self._delegate(
             "-setMinComponentSize", str(min_comp),
             "-mergeComponents",
@@ -985,15 +1121,17 @@ class InteractiveLauncher:
             src.replace(dst)
             renamed.append(dst)
             print(f"  {src.name} -> {dst.name}")
+
         # Validation: ensure merged files exist in destination
         if not renamed:
-            print("Validation FAILED: no merged component files were produced.")
+            print("[Validation] FAILED: no merged component files were produced.")
         else:
             missing = [p for p in renamed if not p.exists()]
             if missing:
-                print(f"Validation FAILED: {len(missing)} merged file(s) not found in destination.")
+                print(f"[Validation] FAILED: {len(missing)} merged file(s) not found in destination.")
             else:
-                print(f"Validation: saved {len(renamed)} merged component file(s) to {export_dir}.")
+                print(f"[Validation] Saved {len(renamed)} merged component file(s) to {export_dir}.")
+
         # Deliberate save barrier after merge/export
         try:
             if self.rc_exe and self.project_path and self.instance_started:
@@ -1001,6 +1139,76 @@ class InteractiveLauncher:
         except Exception:
             pass
         return renamed
+
+    def _wait_until_idle(self, timeout: float = 300.0, poll_interval: float = 2.0) -> None:
+        """
+        Poll RealityScan status until it reports idle or 100% progress.
+        This ensures all background operations (like file exports) are complete.
+
+        Args:
+            timeout: Maximum seconds to wait for idle status
+            poll_interval: Seconds between status checks
+
+        Raises:
+            TimeoutError: If idle status not reached within timeout
+        """
+        assert self.rc_exe and self.instance_name
+        start = time.time()
+        last_status = None
+
+        print("[Wait] Waiting for RealityScan to finish all operations...")
+
+        while True:
+            elapsed = time.time() - start
+
+            if elapsed > timeout:
+                raise TimeoutError(
+                    f"RealityScan did not reach idle state within {timeout}s. "
+                    f"Last status: {last_status or 'unknown'}"
+                )
+
+            try:
+                status = self._get_status_text()
+                last_status = status
+
+                if not status:
+                    # No status means instance may be idle or unresponsive
+                    # Try to verify with -getStatus command
+                    try:
+                        run_rc_command(self.rc_exe, ["-getStatus", self.instance_name], False)
+                        # If we get here, instance is responsive and likely idle
+                        print("[Wait] RealityScan is idle and ready.")
+                        return
+                    except subprocess.CalledProcessError:
+                        # Instance not responding - not good
+                        time.sleep(poll_interval)
+                        continue
+
+                # Check for idle indicators in status text
+                status_lower = status.lower()
+                if "idle" in status_lower:
+                    print(f"[Wait] RealityScan reported idle: {status.strip()}")
+                    return
+
+                # Check for 100% completion
+                if "progress:100" in status_lower.replace(" ", ""):
+                    print(f"[Wait] RealityScan at 100% completion: {status.strip()}")
+                    # Give it a moment to finalize file operations
+                    time.sleep(2.0)
+                    return
+
+                # Parse progress percentage if available
+                import re
+                match = re.search(r'progress:(\d+(?:\.\d+)?)%', status_lower)
+                if match:
+                    progress = float(match.group(1))
+                    if int(elapsed) % 10 == 0:  # Log every 10 seconds
+                        print(f"[Wait] Progress: {progress:.1f}% (elapsed: {int(elapsed)}s)")
+
+            except Exception as e:
+                print(f"[Wait] Error checking status: {e}")
+
+            time.sleep(poll_interval)
 
     # ---- workflow orchestration ----
     def _init_progress(self, steps: list[tuple[str, callable]]) -> list[dict]:
@@ -1025,7 +1233,7 @@ class InteractiveLauncher:
         if ans.isdigit():
             target = int(ans)
             if 1 <= target <= len(steps):
-                return f'jump:{target-1}'
+                return f'jump:{target - 1}'
         return 'continue'
 
     def _step_key_from_index(self, idx: int) -> str:
@@ -1086,6 +1294,9 @@ class InteractiveLauncher:
         return lines
 
     def _execute_step(self, idx: int, steps: list[tuple[str, callable]], progress: list[dict]) -> None:
+        """
+        IMPROVED: Selective CheckResult calls for critical operations only.
+        """
         name, fn = steps[idx]
         print(f"\n=== Step {idx + 1}: {name} ===")
         progress[idx]["status"] = "Running"
@@ -1106,13 +1317,16 @@ class InteractiveLauncher:
             for line in self._format_step_result(result):
                 print("## " + line)
             print(banner_line + "\n")
-            # Authoritative confirmation using CheckResult instead of timers
-            try:
-                self._check_result()
-                print("CheckResult: Instance responsive and step confirmed complete.")
-            except Exception:
-                # If CheckResult fails, re-raise to stop progression
-                raise
+
+            # IMPROVED: Only verify instance health after critical operations
+            step_key = self._step_key_from_index(idx)
+            if step_key in ('align', 'merge', 'export_initial'):
+                try:
+                    self._check_result()
+                    print("[Validation] Instance responsive and step confirmed complete.")
+                except Exception:
+                    # If CheckResult fails, re-raise to stop progression
+                    raise
         except subprocess.CalledProcessError as e:
             progress[idx]["status"] = "Failed"
             print("Error executing RealityScan command.")
@@ -1181,7 +1395,6 @@ class InteractiveLauncher:
             if not self.prompt_initial():
                 return
 
-            # FIXED: Removed redundant Step 8
             steps = [
                 ("Launch new project", self.step_launch_new_project),
                 ("Save project with filename in base directory", self.step_save_project),
@@ -1198,12 +1411,14 @@ class InteractiveLauncher:
             # Offer to resume at step 8 (merge) if initial components exist
             start_index = 0
             try:
-                has_initial = any(self.initial_export_dir.glob("*.rcalign")) or any(self.initial_export_dir.glob("*.rsalign"))
+                has_initial = any(self.initial_export_dir.glob("*.rcalign")) or any(
+                    self.initial_export_dir.glob("*.rsalign"))
             except Exception:
                 has_initial = False
 
-            # FIXED: Updated step number references
-            if has_initial and prompt_yes_no("Detected initial components in 'Alignments/InitialAlignments'. Start directly at step 8 (Merge components)?", False):
+            if has_initial and prompt_yes_no(
+                    "Detected initial components in 'Alignments/InitialAlignments'. Start directly at step 8 (Merge components)?",
+                    False):
                 start_index = 7
                 for i in range(start_index):
                     if progress[i]["status"] == "Pending":
@@ -1212,10 +1427,13 @@ class InteractiveLauncher:
             else:
                 # Offer to resume at step 7 if temporary components exist
                 try:
-                    has_temp = any(self.temp_components_dir.glob("Component*.rcalign")) or any(self.temp_components_dir.glob("Component*.rsalign"))
+                    has_temp = any(self.temp_components_dir.glob("Component*.rcalign")) or any(
+                        self.temp_components_dir.glob("Component*.rsalign"))
                 except Exception:
                     has_temp = False
-                if has_temp and prompt_yes_no("Detected temporary components in 'Alignments/_TempExport'. Start directly at step 7 (Export Initial)?", False):
+                if has_temp and prompt_yes_no(
+                        "Detected temporary components in 'Alignments/_TempExport'. Start directly at step 7 (Export Initial)?",
+                        False):
                     start_index = 6
                     for i in range(start_index):
                         if progress[i]["status"] == "Pending":
@@ -1227,7 +1445,8 @@ class InteractiveLauncher:
                 print(f"  {i}. {name}")
             print("  r. Rerun selected step(s) at any checkpoint")
             print("  q. Exit at any checkpoint (project will be saved)")
-            print("  Tip: Enter a step number at a checkpoint to jump directly to that step (earlier Pending steps will be marked Skipped).")
+            print(
+                "  Tip: Enter a step number at a checkpoint to jump directly to that step (earlier Pending steps will be marked Skipped).")
 
             quitting = False
             idx = start_index
@@ -1349,6 +1568,8 @@ def _find_flight_log(zone_dir: Path) -> Optional[Path]:
 
 def batch_process_zones(zones_root: Path) -> None:
     """
+    IMPROVED: Enhanced with batch statistics, merged alignment verification, and better progress tracking.
+
     Iterate zone subfolders and run the existing workflow automatically per zone.
     Exports are saved inside each zone's Alignments directory.
     """
@@ -1362,7 +1583,17 @@ def batch_process_zones(zones_root: Path) -> None:
         print("RealityScan executable not found. Please install or use interactive mode.")
         return
 
-    print(f"Batch processing {len(zones)} subfolder(s) under: {zones_root}")
+    # IMPROVED: Batch tracking
+    print("=" * 80)
+    print(f"BATCH PROCESSING: {len(zones)} zone(s)")
+    print(f"Root: {zones_root}")
+    print("=" * 80)
+
+    batch_start = time.time()
+    zones_processed = 0
+    zones_failed = 0
+    zones_skipped = 0
+    zone_timings = []
 
     def _fmt_result(res) -> list[str]:
         if isinstance(res, dict):
@@ -1393,28 +1624,37 @@ def batch_process_zones(zones_root: Path) -> None:
         # Step completion banner for batch mode
         banner_line = "-" * 75
         print("\n" + banner_line)
-        print(f"--------------------------- Step {step_index} Complete ---------------------------")
-        print("## Summary Stats:")
-        print(f"## Name: {label}")
-        print(f"## Elapsed: {elapsed:.1f}s")
+        print(f"Step {step_index} Complete: {label}")
+        print(f"Elapsed: {elapsed:.1f}s")
         for line in _fmt_result(out):
-            print("## " + line)
-        print(banner_line + "\n")
-        # Authoritative confirmation using CheckResult instead of timers (batch mode)
-        try:
-            launcher = getattr(func, "__self__", None)
-            if launcher is not None and hasattr(launcher, "_check_result"):
-                launcher._check_result()
-                print("CheckResult: Instance responsive and step confirmed complete (batch mode).")
-        except Exception:
-            # Propagate failure to stop batch progression
-            raise
+            print(f"  {line}")
+        print(banner_line)
+
+        # IMPROVED: Selective CheckResult - only for critical operations
+        step_keys = {
+            5: 'align',
+            6: 'export_initial',
+            7: 'merge'
+        }
+        if step_index in step_keys:
+            try:
+                launcher = getattr(func, "__self__", None)
+                if launcher is not None and hasattr(launcher, "_check_result"):
+                    launcher._check_result()
+                    print("[Validation] Instance responsive and step confirmed complete.")
+            except Exception:
+                # Propagate failure to stop batch progression
+                raise
         return out
 
-    for zone_dir in zones:
+    for zone_idx, zone_dir in enumerate(zones, start=1):
+        zone_start = time.time()
+
         if not _has_images(zone_dir):
-            print(f"[Skip] No images found under {zone_dir}")
+            zones_skipped += 1
+            print(f"\n[Skip] Zone {zone_idx}/{len(zones)}: No images in {zone_dir.name}")
             continue
+
         expedition, dive = _parse_exp_dive_from_parents(zone_dir)
         if not expedition or not dive:
             # Try to interpret immediate grandparent if it contains combined token
@@ -1431,12 +1671,14 @@ def batch_process_zones(zones_root: Path) -> None:
 
         project_name = build_project_name(expedition, dive, zone_label)
 
-        print(f"\n=== Processing zone: {zone_dir.name} ===")
-        print(f"  Project: {project_name}")
+        print(f"\n{'=' * 80}")
+        print(f"ZONE {zone_idx}/{len(zones)}: {zone_dir.name}")
+        print(f"Project: {project_name}")
+        print(f"{'=' * 80}")
 
         L = InteractiveLauncher()
         # Use unique instance name per zone to prevent cross-talk and ensure strict sequencing
-        L.instance_name = f"RC_{zone_label}"
+        L.instance_name = f"RC_{zone_label}_{zone_idx}"  # IMPROVED: Include zone index for absolute uniqueness
         L.auto_mode = True
         L.base_images_dir = zone_dir
         L.expedition = expedition
@@ -1458,11 +1700,11 @@ def batch_process_zones(zones_root: Path) -> None:
         # Discover flight log in the zone root and set it if present
         fl_path = _find_flight_log(zone_dir)
         if fl_path is not None:
-            print(f"  Detected flight log: {fl_path}")
+            print(f"[Input] Flight log detected: {fl_path.name}")
             L.flight_log_path = fl_path
         else:
             # Mandatory: prompt user until a valid flight log path is provided for this zone
-            print("  No flight log found in zone root. A flight log is REQUIRED to continue.")
+            print("[Input] No flight log found in zone root. A flight log is REQUIRED to continue.")
             while True:
                 user_path = input(f"Enter path to the flight log for zone '{zone_dir.name}': ").strip().strip('"')
                 if not user_path:
@@ -1473,20 +1715,60 @@ def batch_process_zones(zones_root: Path) -> None:
                     print("  Provided path is invalid or not a file. Please try again.")
                     continue
                 L.flight_log_path = p
-                print(f"  Using flight log: {p}")
+                print(f"[Input] Using flight log: {p.name}")
                 break
 
         try:
-            # Steps: launch -> load images -> load flight log (if present) -> params -> align -> export initial -> merge
+            # Steps: launch -> load images -> load flight log -> params -> align -> export initial -> merge
             _run(1, "Launch new project", L.step_launch_new_project)
             _run(2, "Load images", L.step_load_images)
             _run(3, "Load flight_log", L.step_load_flight_log)
             _run(4, "Set camera/lens distortion parameters", L.step_set_image_parameters)
             _run(5, "Align images", L.step_align_images)
             _run(6, "Rename and Export components in 'Alignments/InitialAlignments'", L.step_export_initial)
-            _run(7, "Merge components", L.step_merge_components)
+            merge_result = _run(7, "Merge components", L.step_merge_components)
+
+            # CRITICAL IMPROVEMENT: Verify merged alignments exist before moving to next zone
+            print("\n[Validation] Verifying merged alignment files...")
+            merged_files = sorted(
+                list(L.merged_export_dir.glob(f"{project_name}_Merged_*.rcalign")) +
+                list(L.merged_export_dir.glob(f"{project_name}_Merged_*.rsalign"))
+            )
+
+            if not merged_files:
+                raise RuntimeError(
+                    f"Merge validation FAILED for zone {zone_dir.name}: "
+                    f"No merged alignment files found in {L.merged_export_dir}. "
+                    f"Cannot proceed to next zone."
+                )
+
+            print(f"[Validation] SUCCESS: {len(merged_files)} merged alignment file(s) verified:")
+            for mf in merged_files:
+                file_size_kb = mf.stat().st_size / 1024
+                print(f"  - {mf.name} ({file_size_kb:.1f} KB)")
+
+            # Success
+            zones_processed += 1
+            zone_elapsed = time.time() - zone_start
+            zone_timings.append(zone_elapsed)
+
+            print(f"\n[Summary] Zone {zone_idx}/{len(zones)} COMPLETED")
+            print(f"  Time: {zone_elapsed / 60:.1f} minutes")
+
+            # IMPROVED: Show progress and ETA
+            if zones_processed > 0:
+                avg_time = sum(zone_timings) / len(zone_timings)
+                remaining_zones = len(zones) - zone_idx
+                eta_minutes = (avg_time * remaining_zones) / 60
+                print(
+                    f"  Batch progress: {zones_processed}/{len(zones)} completed, {zones_failed} failed, {zones_skipped} skipped")
+                if remaining_zones > 0:
+                    print(f"  Estimated time remaining: {eta_minutes:.1f} minutes")
+
         except Exception as e:
-            print(f"[Error] Processing failed for {zone_dir.name}: {e}")
+            zones_failed += 1
+            print(f"\n[Error] Zone {zone_idx}/{len(zones)} FAILED: {e}")
+
         finally:
             try:
                 if L.rc_exe and L.project_path:
@@ -1501,29 +1783,48 @@ def batch_process_zones(zones_root: Path) -> None:
                             pass
                         # Ensure instance fully stops before next zone (bounded attempts)
                         try:
-                            print("Waiting for RealityScan instance to fully stop before moving to next zone...")
+                            print("[Cleanup] Waiting for RealityScan instance to fully stop...")
                             stopped = False
                             for attempt in range(3):
                                 stopped = L._wait_instance_stopped(30.0)
                                 if stopped:
                                     break
-                                print("  Instance still running; waiting again (attempt", attempt + 2, "of 3)...")
+                                print(f"  Instance still running; retry {attempt + 2}/3...")
                             if stopped:
-                                print("Instance stopped.")
+                                print("[Cleanup] Instance stopped.")
                             else:
-                                print("[Warn] Instance did not stop after multiple attempts; proceeding to next zone.")
+                                print("[Warn] Instance did not stop after 3 attempts; proceeding to next zone.")
                         except Exception:
                             pass
             except Exception:
                 pass
-            print(f"--------------------------- Zone {zone_dir.name} Complete ---------------------------")
-            print(f"===  Saved project at: {L.project_path}                                           === ")
-            print(f"===  Proceeding to next zone                                                       ===\n")
-            print(f"-------------------------------------------------------------------------------------")
+
+            print(f"\n{'=' * 80}")
+            print(f"Zone {zone_dir.name} Complete")
+            print(f"Project: {L.project_path}")
+            print(f"{'=' * 80}\n")
+
+    # IMPROVED: Comprehensive batch summary
+    batch_elapsed = time.time() - batch_start
+    print("\n" + "=" * 80)
+    print("BATCH PROCESSING COMPLETE")
+    print("=" * 80)
+    print(f"Total zones:      {len(zones)}")
+    print(f"Processed:        {zones_processed}")
+    print(f"Failed:           {zones_failed}")
+    print(f"Skipped:          {zones_skipped}")
+    print(f"Total time:       {batch_elapsed / 60:.1f} minutes")
+    if zones_processed > 0:
+        avg_time = sum(zone_timings) / len(zone_timings)
+        print(f"Average per zone: {avg_time / 60:.1f} minutes")
+    print("=" * 80)
+
 
 if __name__ == "__main__":
     # Offer batch processing of zone subfolders first
-    batch_root = input("Enter folder containing zone subfolders to batch process (press Enter to use interactive mode): ").strip().strip('"')
+    batch_root = input(
+        "Enter folder containing zone subfolders to batch process (press Enter to use interactive mode): ").strip().strip(
+        '"')
     if batch_root:
         root_path = Path(batch_root)
         if root_path.exists() and root_path.is_dir():
