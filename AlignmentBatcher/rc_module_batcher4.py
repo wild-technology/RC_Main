@@ -516,12 +516,12 @@ class InteractiveLauncher:
                 eta_display = f"{int(eta_sec)}s remaining" if eta_sec > 0 else "calculating..."
 
                 print(f"[{operation_name}] Progress: {progress_pct:.1f}% | "
-                      f"Elapsed: {elapsed_min}m {elapsed_sec}s | "
-                      f"ETA: {eta_display}")
+                  f"Elapsed: {elapsed_min}m {elapsed_sec}s | "
+                  f"ETA: {eta_display}")
 
-            last_print_time = current_time
+            last_print_time = current_time  # FIX 2: Update last_print_time!
 
-        # Check completion
+        # FIX 1: MOVED INSIDE LOOP - Check completion
         if status['is_idle'] or status['progress_pct'] >= 100.0:
             print(f"[{operation_name}] ✓ Complete (took {int(elapsed)}s)")
             # Extra grace period to ensure file writes finish
