@@ -372,54 +372,10 @@ class InteractiveLauncher:
 
     def _delegate(self, *args: str) -> None:
         assert self.rc_exe and self.instance_started
-        # Build the command that will block inside RealityScan until the delegated work finishes
+        # Build the command and rely on -waitCompleted as the synchronization barrier, per docs
         cmd = ["-delegateTo", self.instance_name] + list(args) + ["-waitCompleted", self.instance_name]
         print("Delegating:", " ".join(cmd))
-        # Launch non-blocking so we can poll -getStatus and report progress
-        proc = subprocess.Popen([str(self.rc_exe)] + cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        try:
-            last_text = None
-            last_print = 0.0
-            interval = 2.0  # seconds between status polls
-            start_time = time.time()
-            while True:
-                ret = proc.poll()
-                now = time.time()
-                if now - last_print >= interval:
-                    last_print = now
-                    status_text = self._get_status_text()
-                    if status_text:
-                        # Only print when changed to reduce noise
-                        if status_text != last_text:
-                            print(f"[Status] {status_text.strip()}")
-                            last_text = status_text
-                    else:
-                        # Fallback heartbeat if no status text is available
-                        elapsed = int(now - start_time)
-                        print(f"[Status] Working... {elapsed}s elapsed")
-                if ret is not None:
-                    break
-                time.sleep(0.25)
-            # Completed; collect outputs and check return code
-            stdout, stderr = proc.communicate(timeout=1)
-            if proc.returncode != 0:
-                # echo outputs for diagnostics
-                if stdout:
-                    print(stdout)
-                if stderr:
-                    print(stderr, file=sys.stderr)
-                raise subprocess.CalledProcessError(proc.returncode, [str(self.rc_exe)] + cmd, stdout, stderr)
-            # Print final status one more time (best-effort)
-            final_text = self._get_status_text()
-            if final_text and final_text != last_text:
-                print(f"[Status] {final_text.strip()}")
-        finally:
-            # Ensure process resources are cleaned up
-            if proc.poll() is None:
-                try:
-                    proc.terminate()
-                except Exception:
-                    pass
+        run_rc_command(self.rc_exe, cmd, self.display_output)
 
     def _delegate_no_wait(self, *args: str) -> None:
         """Delegate without waiting for completion (no -waitCompleted)."""
@@ -431,37 +387,16 @@ class InteractiveLauncher:
     def _delegate_capture(self, *args: str) -> tuple[str, str, int]:
         """
         Delegate a command and wait for completion, returning (stdout, stderr, returncode)
-        without raising on non-zero exit. Progress/status is still printed periodically.
+        without raising on non-zero exit. Follows standard -waitCompleted synchronization.
         """
         assert self.rc_exe and self.instance_started
         cmd = ["-delegateTo", self.instance_name] + list(args) + ["-waitCompleted", self.instance_name]
         print("Delegating (capture):", " ".join(cmd))
-        proc = subprocess.Popen([str(self.rc_exe)] + cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        last_text = None
-        last_print = 0.0
-        interval = 2.0
-        start_time = time.time()
-        while True:
-            ret = proc.poll()
-            now = time.time()
-            if now - last_print >= interval:
-                last_print = now
-                status_text = self._get_status_text()
-                if status_text:
-                    if status_text != last_text:
-                        print(f"[Status] {status_text.strip()}")
-                        last_text = status_text
-                else:
-                    elapsed = int(now - start_time)
-                    print(f"[Status] Working... {elapsed}s elapsed")
-            if ret is not None:
-                break
-            time.sleep(0.25)
-        try:
-            stdout, stderr = proc.communicate(timeout=1)
-        except Exception:
-            stdout, stderr = "", ""
-        return stdout or "", stderr or "", proc.returncode if proc.returncode is not None else -1
+        completed = subprocess.run([str(self.rc_exe)] + cmd, capture_output=True, text=True)
+        stdout = completed.stdout or ""
+        stderr = completed.stderr or ""
+        rc = completed.returncode if completed.returncode is not None else -1
+        return stdout, stderr, rc
 
     def _get_status_text(self) -> str:
         """
@@ -510,34 +445,58 @@ class InteractiveLauncher:
             raise last_err
         raise RuntimeError("CheckResult failed without exception details")
 
-    def _wait_for_components_stable(self, directory: Path, min_stable_seconds: float = 10.0, timeout_seconds: Optional[float] = 7200.0, poll_interval: float = 2.0) -> list[Path]:
+    def _wait_for_components_stable(self, directory: Path, min_stable_seconds: float = 10.0, timeout_seconds: Optional[float] = 900.0, poll_interval: float = 2.0, idle_grace_seconds: float = 30.0) -> list[Path]:
         """
-        Block until at least one Component*.rcalign/rsalign file exists in 'directory' and the set of
-        files (with sizes) remains unchanged for at least 'min_stable_seconds'. Returns the stable list.
-        If timeout_seconds is None, wait indefinitely. Otherwise, raise TimeoutError on timeout.
+        Wait until exported Component*.rcalign/rsalign files in 'directory' become stable.
+        Stability conditions:
+          - If one or more component files exist and no changes in the set (path,size,mtime) for
+            at least `min_stable_seconds`, return the current list.
+          - If RealityScan instance reports idle state for at least `idle_grace_seconds`, return the
+            current list even if files are fluctuating slightly (to avoid hangs caused by metadata
+            touches by external tools such as antivirus or indexing services).
+        A finite `timeout_seconds` prevents indefinite waits; None keeps waiting forever.
+        Returns the list of component Paths observed at the moment of exit (may be empty).
         """
         start = time.time()
         last_snapshot: dict[str, tuple[int, float]] = {}
         last_change_time = time.time()
+        last_idle_seen: Optional[float] = None
         last_heartbeat = time.time()
         while True:
             comps = sorted(list(directory.glob("Component*.rcalign")) + list(directory.glob("Component*.rsalign")))
-            snapshot = {str(p): (p.stat().st_size, p.stat().st_mtime) for p in comps if p.exists()}
+            # Build snapshot of file sizes and mtimes
+            try:
+                snapshot = {str(p): (p.stat().st_size, p.stat().st_mtime) for p in comps if p.exists()}
+            except Exception:
+                snapshot = {str(p): (getattr(p.stat(), 'st_size', 0), getattr(p.stat(), 'st_mtime', 0.0)) for p in comps if p.exists()}
             if snapshot != last_snapshot:
                 last_snapshot = snapshot
                 last_change_time = time.time()
                 if comps:
                     print(f"[Align] Detected {len(comps)} component file(s); waiting for writes to finish...")
-            # Heartbeat every ~60s so user sees we're still waiting
+            # Query instance status to detect idle
+            try:
+                status = (self._get_status_text() or "").lower()
+            except Exception:
+                status = ""
             now = time.time()
+            if "idle" in status or "progress:100" in status.replace(" ",""):
+                if last_idle_seen is None:
+                    last_idle_seen = now
+                # If idle sustained long enough, accept current state
+                if now - last_idle_seen >= idle_grace_seconds:
+                    return comps
+            else:
+                last_idle_seen = None
+            # Heartbeat every ~60s so user sees we're still waiting
             if now - last_heartbeat >= 60.0:
                 waited = int(now - start)
                 print(f"[Align] Waiting for component exports to stabilize... waited {waited}s so far.")
                 last_heartbeat = now
-            # Condition: at least one file and stable for min_stable_seconds
-            if comps and (time.time() - last_change_time) >= min_stable_seconds:
+            # Primary condition: at least one file and stable for min_stable_seconds
+            if comps and (now - last_change_time) >= min_stable_seconds:
                 return comps
-            if timeout_seconds is not None and (time.time() - start) > timeout_seconds:
+            if timeout_seconds is not None and (now - start) > timeout_seconds:
                 raise TimeoutError(f"Timed out waiting for components to stabilize in {directory}")
             time.sleep(poll_interval)
 
@@ -815,19 +774,11 @@ class InteractiveLauncher:
         self._delegate(*args)
 
         # After completion, continue normally
-        # Wait for exported components to appear and stabilize (handles async write/export behavior)
-        print("Waiting for component exports to finish and stabilize...")
-        try:
-            comp_files = self._wait_for_components_stable(self.temp_components_dir, min_stable_seconds=10.0, timeout_seconds=None, poll_interval=2.0)
-            comp_rca = [p for p in comp_files if p.suffix.lower() == ".rcalign"]
-            comp_rsa = [p for p in comp_files if p.suffix.lower() == ".rsalign"]
-        except TimeoutError as te:
-            # With timeout disabled, this block should not be reached, but keep fallback for safety
-            print(f"[Warn] {te}")
-            # Fall back to a best-effort scan (may be empty)
-            comp_rca = sorted(self.temp_components_dir.glob("Component*.rcalign"))
-            comp_rsa = sorted(self.temp_components_dir.glob("Component*.rsalign"))
-            comp_files = comp_rca + comp_rsa
+        # By convention, -waitCompleted ensures exports are finished; no additional stabilization needed.
+        print("Collecting exported components from temporary folder...")
+        comp_rca = sorted(self.temp_components_dir.glob("Component*.rcalign"))
+        comp_rsa = sorted(self.temp_components_dir.glob("Component*.rsalign"))
+        comp_files = comp_rca + comp_rsa
         # Summarize
         total_images = sum(1 for p in self.base_images_dir.rglob("*") if p.suffix.lower() in (".jpg", ".jpeg", ".png", ".heif"))
         xmp_count = sum(1 for p in self.base_images_dir.rglob("*.xmp")) if export_xmp else 0
