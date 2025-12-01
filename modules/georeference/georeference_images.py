@@ -400,7 +400,7 @@ class GeoreferenceImages(RCModule):
             raise ValueError(f"Image folder does not exist: {image_folder}")
 
         image_data = []
-        jpeg_extensions = {'.jpg', '.jpeg'}
+        jpeg_extensions = {'.jpg', '.jpeg', '.png'}
 
         jpeg_files = []
         for root, dirs, files in os.walk(image_folder):
@@ -414,9 +414,9 @@ class GeoreferenceImages(RCModule):
 
         total_files = len(jpeg_files)
         if total_files == 0:
-            raise ValueError(f"No JPEG images found in {image_folder}")
+            raise ValueError(f"No images found in {image_folder}")
 
-        self.logger.info(f"Found {total_files} JPEG files to process")
+        self.logger.info(f"Found {total_files} files to process")
 
         unreadable_files = 0
         ts_parse_failures = 0
