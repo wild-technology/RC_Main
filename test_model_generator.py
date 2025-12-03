@@ -1,29 +1,36 @@
 #!/usr/bin/env python3
 """
-Process .rsalign component files through RealityCapture model generation pipeline.
+Process components through RealityCapture model generation pipeline.
 
-For each .rsalign file:
-1. Import component
-2. Select component
-3. Set reconstruction region
-4. Calculate normal model
-5. Select large triangles -> filter
-6. Select largest connected part -> invert -> filter
-7. Close holes
-8. Smooth peaks
-9. Generate texture (on high-poly)
-10. Rename to preserve textured high-poly
-11. Simplify by percentage (creates new model)
-12. Close holes
-13. Simplify by percentage
-14. Close holes
-15. Rename final model
-16. Unwrap
-17. Reproject texture from high-poly to final
-18. Export model
+Execution Logic:
+- Works within an ALREADY OPEN RealityCapture project with components loaded
+- Does NOT import components or create new scenes
+- Scans alignment directory for .rsalign filenames to determine component names
+- Uses -selectComponent to select each component by name in the open project
+- Processes each component incrementally, creating models within the same project
+- Validates export success and halts on failure
 
-Uses delegation to communicate with a RUNNING RealityCapture instance.
-Does NOT launch a new instance.
+Per-component workflow:
+  1. -selectComponent <name> — Select component by name
+  2. -setReconstructionRegionAuto — Define reconstruction bounds
+  3. -calculateNormalModel — Generate mesh
+  4. -selectLargeTrianglesRel + filter — Remove oversized triangles
+  5. -selectLargestModelComponent + invert + filter — Keep largest connected mesh
+  6. -cleanModel — Fix geometry issues
+  7. -smooth — Smooth surface
+  8. -calculateTexture — Generate texture on high-poly
+  9. -renameSelectedModel — Preserve as <name>_HighPoly
+  10. -simplify (XML) — First percentage reduction
+  11. Keep largest part + -cleanModel
+  12. -simplify — Second percentage reduction
+  13. Keep largest part + -cleanModel
+  14. -renameSelectedModel — Name as <name>_LowPoly
+  15. -unwrap — UV unwrap
+  16. -reprojectTexture — Transfer texture from HighPoly to LowPoly
+  17. -selectModel + -exportSelectedModel — Export final .obj
+  18. Validate export exists — HALT if missing
+
+Uses delegation (-delegateTo *) to communicate with running RealityCapture instance.
 """
 
 import subprocess
@@ -34,17 +41,23 @@ from datetime import datetime
 from typing import Optional
 
 
+class ExportError(Exception):
+    """Raised when model export fails or exported file is not found."""
+    pass
+
+
 class ModelProcessor:
     """
-    Process .rsalign components through the model generation pipeline.
+    Process components in an open RealityCapture project through the model pipeline.
 
     Delegates all commands to an already-running RealityCapture instance.
+    Works with components already loaded in the project.
     """
 
     def __init__(
             self,
             rc_exe: Path,
-            import_dir: Path,
+            alignment_dir: Path,
             export_dir: Path,
             simplify_params: Path,
             texture_reproj_params: Optional[Path] = None,
@@ -56,15 +69,15 @@ class ModelProcessor:
 
         Args:
             rc_exe: Path to RealityScan.exe (for delegation commands only)
-            import_dir: Directory containing .rsalign files
+            alignment_dir: Directory containing .rsalign files (used to derive component names)
             export_dir: Directory where models will be exported
             simplify_params: Path to simplification params XML (percentage-based)
             texture_reproj_params: Optional path to texture reprojection params XML
             poll_interval: Seconds between status checks
-            test_mode: If True, only process the first .rsalign file
+            test_mode: If True, only process the first component
         """
         self.rc_exe = rc_exe
-        self.import_dir = import_dir
+        self.alignment_dir = alignment_dir
         self.export_dir = export_dir
         self.simplify_params = simplify_params
         self.texture_reproj_params = texture_reproj_params
@@ -75,8 +88,8 @@ class ModelProcessor:
         if not self.rc_exe.exists():
             raise FileNotFoundError(f"RealityScan executable not found: {self.rc_exe}")
 
-        if not self.import_dir.exists():
-            raise FileNotFoundError(f"Import directory not found: {self.import_dir}")
+        if not self.alignment_dir.exists():
+            raise FileNotFoundError(f"Alignment directory not found: {self.alignment_dir}")
 
         if not self.simplify_params.exists():
             raise FileNotFoundError(f"Simplification params not found: {self.simplify_params}")
@@ -196,27 +209,20 @@ class ModelProcessor:
         """
         Wait until RealityCapture reports idle status.
 
-        Uses waitCompleted first, then verifies with status polling.
-
         Args:
             operation_name: Name of operation for logging
             timeout: Maximum seconds to wait
         """
         print(f"    Waiting for {operation_name}...", end=" ", flush=True)
 
-        # Use built-in wait mechanism first
         self._wait_completed()
-
-        # Brief delay for RC to update status
         time.sleep(0.5)
 
-        # Quick check - if already idle, we're done
         status = self._get_status()
         if self._is_idle(status):
             print("done")
             return
 
-        # Poll for idle state with timeout
         start_time = time.time()
         last_progress = None
 
@@ -254,223 +260,291 @@ class ModelProcessor:
         self._wait_until_idle(operation_name)
         return True
 
-    def scan_rsalign_files(self) -> list[Path]:
+    def _keep_largest_part(self) -> None:
         """
-        Scan import directory for .rsalign files.
-
-        Returns:
-            List of .rsalign file paths, sorted alphabetically
+        Select largest model component, invert selection, filter out smaller parts.
         """
-        files = sorted(self.import_dir.glob("*.rsalign"))
-        return files
+        print("         Selecting largest component...")
+        self._run_command("select largest", "-selectLargestModelComponent")
 
-    def process_component(self, rsalign_file: Path, output_name: str) -> bool:
+        print("         Inverting selection...")
+        self._run_command("invert selection", "-invertTrianglesSelection")
+
+        print("         Filtering selection...")
+        self._run_command("filter", "-removeSelectedTriangles")
+
+    def _validate_export(self, output_file: Path, component_name: str) -> None:
         """
-        Process a single .rsalign component through the full pipeline.
-
-        Pipeline:
-        1. Import component
-        2. Select maximal component
-        3. Set reconstruction region auto
-        4. Calculate normal model
-        5. Select large triangles -> filter
-        6. Select largest connected part -> invert -> filter
-        7. Close holes
-        8. Smooth
-        9. Calculate texture (high-poly)
-        10. Rename to HighPoly
-        11. Simplify (percentage-based via params.xml) - creates new model
-        12. Close holes
-        13. Simplify again
-        14. Close holes
-        15. Rename to LowPoly
-        16. Unwrap
-        17. Reproject texture from HighPoly to LowPoly
-        18. Select LowPoly and export
+        Validate that the exported model file exists and has content.
 
         Args:
-            rsalign_file: Path to .rsalign file
-            output_name: Base name for output file
+            output_file: Path to the expected export file
+            component_name: Name of the component being processed
+
+        Raises:
+            ExportError: If the file doesn't exist or is empty
+        """
+        if not output_file.exists():
+            raise ExportError(
+                f"Export FAILED for component '{component_name}': "
+                f"Output file not found at {output_file}"
+            )
+
+        file_size = output_file.stat().st_size
+        if file_size == 0:
+            raise ExportError(
+                f"Export FAILED for component '{component_name}': "
+                f"Output file is empty (0 bytes) at {output_file}"
+            )
+
+        # Report file size
+        if file_size < 1024:
+            size_str = f"{file_size} bytes"
+        elif file_size < 1024 * 1024:
+            size_str = f"{file_size / 1024:.1f} KB"
+        else:
+            size_str = f"{file_size / (1024 * 1024):.1f} MB"
+
+        print(f"    Export validated: {output_file.name} ({size_str})")
+
+    def _get_obj_stats(self, obj_path: Path) -> dict:
+        """
+        Parse an OBJ file to get vertex and triangle counts.
+
+        Args:
+            obj_path: Path to the OBJ file
 
         Returns:
-            True if processing succeeded
+            Dictionary with 'vertices' and 'triangles' counts
         """
-        print(f"\n{'=' * 60}")
-        print(f"Processing: {rsalign_file.name}")
-        print(f"{'=' * 60}")
-
-        high_poly_name = f"{output_name}_HighPoly"
-        low_poly_name = f"{output_name}_LowPoly"
+        vertices = 0
+        faces = 0
 
         try:
-            # 1. Import component
-            print("\n  [1/18] Importing component...")
-            self._run_command("import", "-importComponent", str(rsalign_file))
-
-            # 2. Select maximal component
-            print("\n  [2/18] Selecting maximal component...")
-            self._run_command("select component", "-selectMaximalComponent")
-
-            # 3. Set reconstruction region automatically
-            print("\n  [3/18] Setting reconstruction region...")
-            self._run_command("set region", "-setReconstructionRegionAuto")
-
-            # 4. Calculate normal model
-            print("\n  [4/18] Calculating normal model...")
-            self._run_command("model calculation", "-calculateNormalModel")
-
-            # 5. Select large triangles and filter
-            print("\n  [5/18] Selecting large triangles...")
-            self._run_command("select large triangles", "-selectLargeTrianglesRel", "2.0")
-
-            print("         Filtering selection...")
-            self._run_command("filter", "-removeSelectedTriangles")
-
-            # 6. Select largest connected part, invert, filter
-            print("\n  [6/18] Selecting largest connected component...")
-            self._run_command("select largest", "-selectLargestModelComponent")
-
-            print("         Inverting selection...")
-            self._run_command("invert selection", "-invertTrianglesSelection")
-
-            print("         Filtering selection...")
-            self._run_command("filter", "-removeSelectedTriangles")
-
-            # 7. Close holes
-            print("\n  [7/18] Closing holes...")
-            self._run_command("close holes", "-closeHoles")
-
-            # 8. Smooth
-            print("\n  [8/18] Smoothing...")
-            self._run_command("smooth", "-smooth")
-
-            # 9. Calculate texture on high-poly
-            print("\n  [9/18] Calculating texture (high-poly)...")
-            self._run_command("texture", "-calculateTexture")
-
-            # 10. Rename current model to preserve it as HighPoly
-            print(f"\n  [10/18] Renaming to {high_poly_name}...")
-            self._run_command("rename high-poly", "-renameSelectedModel", high_poly_name)
-
-            # 11. First simplification (percentage-based via params.xml)
-            # This creates a NEW model (the selected model becomes the simplified one)
-            print("\n  [11/18] Simplifying (first pass, percentage-based)...")
-            self._run_command("simplify", "-simplify", str(self.simplify_params))
-
-            # 12. Close holes
-            print("\n  [12/18] Closing holes...")
-            self._run_command("close holes", "-closeHoles")
-
-            # 13. Second simplification
-            print("\n  [13/18] Simplifying (second pass, percentage-based)...")
-            self._run_command("simplify", "-simplify", str(self.simplify_params))
-
-            # 14. Close holes
-            print("\n  [14/18] Closing holes...")
-            self._run_command("close holes", "-closeHoles")
-
-            # 15. Rename to LowPoly
-            print(f"\n  [15/18] Renaming to {low_poly_name}...")
-            self._run_command("rename low-poly", "-renameSelectedModel", low_poly_name)
-
-            # 16. Unwrap the low-poly model
-            print("\n  [16/18] Unwrapping...")
-            self._run_command("unwrap", "-unwrap")
-
-            # 17. Reproject texture from HighPoly to LowPoly
-            print(f"\n  [17/18] Reprojecting texture from {high_poly_name} to {low_poly_name}...")
-            if self.texture_reproj_params and self.texture_reproj_params.exists():
-                self._run_command(
-                    "reproject texture",
-                    "-reprojectTexture", high_poly_name, low_poly_name, str(self.texture_reproj_params)
-                )
-            else:
-                self._run_command(
-                    "reproject texture",
-                    "-reprojectTexture", high_poly_name, low_poly_name
-                )
-
-            # 18. Select LowPoly and export
-            print("\n  [18/18] Exporting model...")
-            output_file = self.export_dir / f"{output_name}.obj"
-
-            # Select the low-poly model and export it
-            self._run_command("select model", "-selectModel", low_poly_name)
-            self._run_command("export", "-exportSelectedModel", str(output_file))
-
-            # Verify export
-            if output_file.exists():
-                print(f"\n  Successfully exported: {output_file.name}")
-                return True
-            else:
-                print(f"\n  Export file not found: {output_file}")
-                return False
-
+            with open(obj_path, 'r', encoding='utf-8', errors='ignore') as f:
+                for line in f:
+                    if line.startswith('v '):
+                        vertices += 1
+                    elif line.startswith('f '):
+                        faces += 1
         except Exception as e:
-            print(f"\n  Error processing {rsalign_file.name}: {e}")
-            return False
+            print(f"    Warning: Could not parse OBJ stats: {e}")
+            return {"vertices": 0, "triangles": 0}
+
+        return {"vertices": vertices, "triangles": faces}
+
+    def scan_component_names(self) -> list[str]:
+        """
+        Scan alignment directory for .rsalign files and extract component names.
+
+        The component name in RC is typically the stem of the .rsalign filename.
+
+        Returns:
+            List of component names, sorted alphabetically
+        """
+        rsalign_files = sorted(self.alignment_dir.glob("*.rsalign"))
+        component_names = [f.stem for f in rsalign_files]
+        return component_names
+
+    def process_component(self, component_name: str) -> Path:
+        """
+        Process a single component through the full pipeline.
+
+        The component must already exist in the open RealityCapture project.
+
+        Args:
+            component_name: Name of the component in RC (matches .rsalign stem)
+
+        Returns:
+            Path to the exported model file
+
+        Raises:
+            ExportError: If export fails or file is not created
+        """
+        print(f"\n{'=' * 60}")
+        print(f"Processing component: {component_name}")
+        print(f"{'=' * 60}")
+
+        high_poly_name = f"{component_name}_HighPoly"
+        low_poly_name = f"{component_name}_LowPoly"
+        output_file = self.export_dir / f"{component_name}.obj"
+
+        # 1. Select the component by name
+        print("\n  [1/20] Selecting component...")
+        self._run_command("select component", "-selectComponent", component_name)
+
+        # 2. Set reconstruction region automatically
+        print("\n  [2/20] Setting reconstruction region...")
+        self._run_command("set region", "-setReconstructionRegionAuto")
+
+        # 3. Calculate normal model
+        print("\n  [3/20] Calculating normal model...")
+        self._run_command("model calculation", "-calculateNormalModel")
+
+        # 4. Select large triangles and filter
+        print("\n  [4/20] Filtering large triangles...")
+        self._run_command("select large triangles", "-selectLargeTrianglesRel", "2.0")
+        self._run_command("filter", "-removeSelectedTriangles")
+
+        # 5. Keep largest connected part
+        print("\n  [5/20] Keeping largest connected part...")
+        self._keep_largest_part()
+
+        # 6. Clean model
+        print("\n  [6/20] Cleaning model...")
+        self._run_command("clean model", "-cleanModel")
+
+        # 7. Smooth
+        print("\n  [7/20] Smoothing...")
+        self._run_command("smooth", "-smooth")
+
+        # 8. Calculate texture on high-poly
+        print("\n  [8/20] Calculating texture (high-poly)...")
+        self._run_command("texture", "-calculateTexture")
+
+        # 9. Rename to preserve as HighPoly
+        print(f"\n  [9/20] Renaming to {high_poly_name}...")
+        self._run_command("rename high-poly", "-renameSelectedModel", high_poly_name)
+
+        # 10. First simplification (percentage-based via params.xml)
+        print("\n  [10/20] Simplifying (first pass)...")
+        self._run_command("simplify", "-simplify", str(self.simplify_params))
+
+        # 11. Keep largest part after first simplification
+        print("\n  [11/20] Keeping largest part...")
+        self._keep_largest_part()
+
+        # 12. Clean model
+        print("\n  [12/20] Cleaning model...")
+        self._run_command("clean model", "-cleanModel")
+
+        # 13. Second simplification
+        print("\n  [13/20] Simplifying (second pass)...")
+        self._run_command("simplify", "-simplify", str(self.simplify_params))
+
+        # 14. Keep largest part after second simplification
+        print("\n  [14/20] Keeping largest part...")
+        self._keep_largest_part()
+
+        # 15. Clean model
+        print("\n  [15/20] Cleaning model...")
+        self._run_command("clean model", "-cleanModel")
+
+        # 16. Rename to LowPoly
+        print(f"\n  [16/20] Renaming to {low_poly_name}...")
+        self._run_command("rename low-poly", "-renameSelectedModel", low_poly_name)
+
+        # 17. Unwrap the low-poly model
+        print("\n  [17/20] Unwrapping...")
+        self._run_command("unwrap", "-unwrap")
+
+        # 18. Reproject texture from HighPoly to LowPoly
+        print(f"\n  [18/20] Reprojecting texture from {high_poly_name} to {low_poly_name}...")
+        if self.texture_reproj_params and self.texture_reproj_params.exists():
+            self._run_command(
+                "reproject texture",
+                "-reprojectTexture", high_poly_name, low_poly_name, str(self.texture_reproj_params)
+            )
+        else:
+            self._run_command(
+                "reproject texture",
+                "-reprojectTexture", high_poly_name, low_poly_name
+            )
+
+        # 19. Select LowPoly model
+        print(f"\n  [19/20] Selecting {low_poly_name}...")
+        self._run_command("select model", "-selectModel", low_poly_name)
+
+        # 20. Export
+        print("\n  [20/20] Exporting model...")
+        self._run_command("export", "-exportSelectedModel", str(output_file))
+
+        # Validate export - raises ExportError if failed
+        self._validate_export(output_file, component_name)
+
+        # Get and display model statistics
+        stats = self._get_obj_stats(output_file)
+        print(f"    Model stats: {stats['vertices']:,} vertices, {stats['triangles']:,} triangles")
+
+        return output_file
 
     def process_all(self) -> list[Path]:
         """
-        Process all .rsalign files in the import directory.
+        Process all components found in the alignment directory.
 
-        If test_mode is True, only processes the first file.
+        Components must already be loaded in the open RealityCapture project.
+        If test_mode is True, only processes the first component.
+
+        Processing STOPS if any component fails to export.
 
         Returns:
             List of successfully exported model paths
-        """
-        rsalign_files = self.scan_rsalign_files()
 
-        if not rsalign_files:
-            print("No .rsalign files found in import directory.")
+        Raises:
+            ExportError: If any export fails (processing halts)
+        """
+        component_names = self.scan_component_names()
+
+        if not component_names:
+            print("No .rsalign files found in alignment directory.")
+            print("Cannot determine component names to process.")
             return []
 
-        print(f"Found {len(rsalign_files)} .rsalign file(s):")
-        for f in rsalign_files:
-            print(f"  - {f.name}")
+        print(f"Found {len(component_names)} component(s) to process:")
+        for name in component_names:
+            print(f"  - {name}")
         print()
 
-        # Verify RealityCapture is running by checking status
+        # Verify RealityCapture is running
         status = self._get_status()
         if not status:
             print("Error: Could not communicate with RealityCapture.")
-            print("Please ensure RealityCapture is already running.")
-            print("This script does NOT start a new instance.")
+            print("Please ensure RealityCapture is already running with the project open.")
             return []
 
         print(f"Connected to RealityCapture. Status: {status}")
+        print()
+        print("IMPORTANT: Ensure the project with these components is already open in RC.")
+        print()
 
         if self.test_mode:
-            print("\n*** TEST MODE: Only processing first file ***\n")
-            rsalign_files = rsalign_files[:1]
+            print("*** TEST MODE: Only processing first component ***\n")
+            component_names = component_names[:1]
 
         exported_models: list[Path] = []
 
-        for i, rsalign_file in enumerate(rsalign_files):
-            output_name = rsalign_file.stem
+        for i, component_name in enumerate(component_names):
+            print(f"\n[{i + 1}/{len(component_names)}] Processing component: {component_name}")
 
-            print(f"\n[{i + 1}/{len(rsalign_files)}] Processing {rsalign_file.name}...")
-
-            # Clear scene before each component for isolation
-            print("  Clearing scene for new component...")
-            self._run_command("new scene", "-newScene")
-
-            success = self.process_component(rsalign_file, output_name)
-
-            if success:
-                output_file = self.export_dir / f"{output_name}.obj"
+            try:
+                output_file = self.process_component(component_name)
                 exported_models.append(output_file)
                 self.process_log.append({
-                    "input": rsalign_file.name,
+                    "component": component_name,
                     "output": output_file.name,
                     "status": "success",
                 })
-            else:
+
+                # Save project after each successful component
+                print("\n  Saving project...")
+                self._run_command("save", "-save")
+
+            except ExportError as e:
+                # Log the failure
                 self.process_log.append({
-                    "input": rsalign_file.name,
+                    "component": component_name,
                     "output": "",
-                    "status": "failed",
+                    "status": "FAILED",
                 })
+
+                # Generate partial summary before halting
+                self.generate_summary()
+
+                # Re-raise to halt processing
+                print(f"\n{'=' * 60}")
+                print("FATAL ERROR: Export failed. Processing halted.")
+                print(f"{'=' * 60}")
+                raise
 
         return exported_models
 
@@ -479,43 +553,50 @@ class ModelProcessor:
         Generate and save a summary of processing.
         """
         if not self.process_log:
-            print("\nNo files were processed.")
+            print("\nNo components were processed.")
             return
 
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         summary_file = self.export_dir / "processing_summary.txt"
 
         successful = sum(1 for entry in self.process_log if entry['status'] == 'success')
-        failed = sum(1 for entry in self.process_log if entry['status'] == 'failed')
+        failed = sum(1 for entry in self.process_log if entry['status'] == 'FAILED')
 
         summary_lines = [
             "=" * 80,
             "RealityCapture Model Processing Summary",
             "=" * 80,
             f"Processing Date/Time: {timestamp}",
-            f"Import Directory: {self.import_dir}",
+            f"Alignment Directory: {self.alignment_dir}",
             f"Export Directory: {self.export_dir}",
             f"Simplification Params: {self.simplify_params}",
             f"Total Processed: {len(self.process_log)}",
             f"Successful: {successful}",
             f"Failed: {failed}",
             "",
+        ]
+
+        if failed > 0:
+            summary_lines.append("*** PROCESSING HALTED DUE TO EXPORT FAILURE ***")
+            summary_lines.append("")
+
+        summary_lines.extend([
             "-" * 80,
             "Processing Details:",
             "-" * 80,
-            f"{'Input File':<40} {'Output File':<30} {'Status':<10}",
+            f"{'Component Name':<40} {'Output File':<30} {'Status':<10}",
             "-" * 80,
-        ]
+        ])
 
         for entry in self.process_log:
             summary_lines.append(
-                f"{entry['input']:<40} {entry['output']:<30} {entry['status']:<10}"
+                f"{entry['component']:<40} {entry['output']:<30} {entry['status']:<10}"
             )
 
         summary_lines.extend([
             "-" * 80,
             "",
-            "Processing completed.",
+            "Processing completed." if failed == 0 else "Processing incomplete due to error.",
             "=" * 80,
         ])
 
@@ -533,9 +614,9 @@ def get_user_input() -> tuple[Path, Path, Path, Optional[Path], bool]:
     Prompt user for settings.
 
     Returns:
-        Tuple of (import_dir, export_dir, simplify_params, texture_reproj_params, test_mode)
+        Tuple of (alignment_dir, export_dir, simplify_params, texture_reproj_params, test_mode)
     """
-    default_import_dir = r"D:\NA168\Zeuss_NA168_H2080\aligned_components"
+    default_alignment_dir = r"D:\NA168\Zeuss_NA168_H2080\aligned_components"
     default_export_dir = r"D:\NA168\Zeuss_NA168_H2080\models"
     default_simplify_params = r"D:\NA168\simplificationParameters.xml"
     default_texture_reproj_params = r"D:\NA168\TextureReprojectionSettings.xml"
@@ -544,22 +625,28 @@ def get_user_input() -> tuple[Path, Path, Path, Optional[Path], bool]:
     print("RealityCapture Model Processor")
     print("=" * 80)
     print()
-    print("This script processes .rsalign components through the model pipeline.")
+    print("This script processes components already loaded in an open RC project.")
+    print("It uses .rsalign filenames in the alignment directory to identify")
+    print("which components to process by name.")
     print()
-    print("IMPORTANT: RealityCapture must already be running.")
-    print("This script delegates commands to the running instance.")
+    print("REQUIREMENTS:")
+    print("  - RealityCapture must be running")
+    print("  - A project with the components must be open")
+    print("  - Component names must match the .rsalign file stems")
+    print()
+    print("NOTE: Processing will STOP if any export fails.")
     print()
 
-    # Import directory
+    # Alignment directory (to derive component names)
     while True:
-        import_input = input(f"Import directory for .rsalign files [{default_import_dir}]: ").strip()
-        if not import_input:
-            import_input = default_import_dir
-        import_dir = Path(import_input)
-        if import_dir.exists():
+        align_input = input(f"Alignment directory (.rsalign files) [{default_alignment_dir}]: ").strip()
+        if not align_input:
+            align_input = default_alignment_dir
+        alignment_dir = Path(align_input)
+        if alignment_dir.exists():
             break
         else:
-            print(f"Error: Directory not found: {import_dir}")
+            print(f"Error: Directory not found: {alignment_dir}")
             print()
 
     # Export directory
@@ -598,11 +685,11 @@ def get_user_input() -> tuple[Path, Path, Path, Optional[Path], bool]:
         texture_reproj_params = None
 
     # Test mode
-    test_input = input("Test mode (only process first file)? [Y/n]: ").strip().lower()
+    test_input = input("Test mode (only process first component)? [Y/n]: ").strip().lower()
     test_mode = test_input != 'n'
 
     print()
-    return import_dir, export_dir, simplify_params, texture_reproj_params, test_mode
+    return alignment_dir, export_dir, simplify_params, texture_reproj_params, test_mode
 
 
 def main():
@@ -617,11 +704,11 @@ def main():
         sys.exit(1)
 
     try:
-        import_dir, export_dir, simplify_params, texture_reproj_params, test_mode = get_user_input()
+        alignment_dir, export_dir, simplify_params, texture_reproj_params, test_mode = get_user_input()
 
         processor = ModelProcessor(
             rc_exe=rc_exe,
-            import_dir=import_dir,
+            alignment_dir=alignment_dir,
             export_dir=export_dir,
             simplify_params=simplify_params,
             texture_reproj_params=texture_reproj_params,
@@ -633,14 +720,19 @@ def main():
 
         processor.generate_summary()
 
-        if not exported:
+        if exported:
+            print(f"\nSuccessfully exported {len(exported)} model(s).")
+        else:
             print("\nNo models were exported.")
 
+    except ExportError as e:
+        print(f"\nExport Error: {e}", file=sys.stderr)
+        sys.exit(2)
     except KeyboardInterrupt:
         print("\n\nProcessing cancelled by user.")
         sys.exit(1)
     except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
+        print(f"\nUnexpected Error: {e}", file=sys.stderr)
         sys.exit(1)
 
 
