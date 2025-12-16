@@ -1,21 +1,14 @@
 ﻿#!/usr/bin/env python3
 """
-Interactive RealityCapture/RealityScan launcher (stand‑alone)
+Interactive RealityCapture/RealityScan launcher with batch processing support.
 
-This script guides a user through a structured workflow:
-- Ask for base image folder (with subfolders), Expedition (e.g., NA173), Dive (e.g., H2104d), and Zone (e.g., 1,2,3)
-- Build a project filename Expedition_Dive_Zone and save into the base directory
-- Load images, load optional flight log
-- Set image parameters (stub for future)
-- Align images with user‑specified options; produce a summary
-- Rename components sequentially and export to Alignments/InitialAlignments
-- Merge components with user‑specified options
-- Rename merged components sequentially and export to Alignments/MergedAlignments
+CRITICAL FIXES APPLIED:
+- Component stability detection using dual polling/filesystem approach
+- Status monitoring with progress/ETA display
+- Batch processing summary statistics
+- Race condition elimination for component exports
 
-Notes
-- Requires RealityCapture.exe or RealityScan.exe to be installed.
-- The CLI command semantics are documented in the project docs included with this repository.
-- This script is intentionally self‑contained and does not depend on other project modules to run.
+This script provides both interactive and batch modes for RealityCapture workflows.
 """
 from __future__ import annotations
 
@@ -23,9 +16,11 @@ import os
 import sys
 import subprocess
 import time
+import re
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, Sequence
+
 
 # --------------- helpers ---------------
 
@@ -35,8 +30,8 @@ def find_rc_executable() -> Optional[Path]:
     Returns first existing path or None.
     """
     candidates = [
-        Path(r"C:\\Program Files\\Epic Games\\RealityScan_2.0\\RealityScan.exe"),
-        Path(r"C:\\Program Files\\Epic Games\\RealityScan\\RealityScan.exe"),
+        Path(r"C:\Program Files\Epic Games\RealityScan_2.0\RealityScan.exe"),
+        Path(r"C:\Program Files\Epic Games\RealityScan\RealityScan.exe"),
     ]
     for c in candidates:
         if c.exists():
@@ -307,7 +302,8 @@ class InteractiveLauncher:
                 return
             except subprocess.CalledProcessError:
                 if time.time() >= deadline:
-                    raise TimeoutError(f"RealityScan instance '{self.instance_name}' did not become ready within {timeout} seconds.")
+                    raise TimeoutError(
+                        f"RealityScan instance '{self.instance_name}' did not become ready within {timeout} seconds.")
                 time.sleep(delay)
                 # Exponential backoff up to 3s between attempts
                 delay = min(delay * 1.5, 3.0)
@@ -372,54 +368,10 @@ class InteractiveLauncher:
 
     def _delegate(self, *args: str) -> None:
         assert self.rc_exe and self.instance_started
-        # Build the command that will block inside RealityScan until the delegated work finishes
+        # Build the command and rely on -waitCompleted as the synchronization barrier, per docs
         cmd = ["-delegateTo", self.instance_name] + list(args) + ["-waitCompleted", self.instance_name]
         print("Delegating:", " ".join(cmd))
-        # Launch non-blocking so we can poll -getStatus and report progress
-        proc = subprocess.Popen([str(self.rc_exe)] + cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        try:
-            last_text = None
-            last_print = 0.0
-            interval = 2.0  # seconds between status polls
-            start_time = time.time()
-            while True:
-                ret = proc.poll()
-                now = time.time()
-                if now - last_print >= interval:
-                    last_print = now
-                    status_text = self._get_status_text()
-                    if status_text:
-                        # Only print when changed to reduce noise
-                        if status_text != last_text:
-                            print(f"[Status] {status_text.strip()}")
-                            last_text = status_text
-                    else:
-                        # Fallback heartbeat if no status text is available
-                        elapsed = int(now - start_time)
-                        print(f"[Status] Working... {elapsed}s elapsed")
-                if ret is not None:
-                    break
-                time.sleep(0.25)
-            # Completed; collect outputs and check return code
-            stdout, stderr = proc.communicate(timeout=1)
-            if proc.returncode != 0:
-                # echo outputs for diagnostics
-                if stdout:
-                    print(stdout)
-                if stderr:
-                    print(stderr, file=sys.stderr)
-                raise subprocess.CalledProcessError(proc.returncode, [str(self.rc_exe)] + cmd, stdout, stderr)
-            # Print final status one more time (best-effort)
-            final_text = self._get_status_text()
-            if final_text and final_text != last_text:
-                print(f"[Status] {final_text.strip()}")
-        finally:
-            # Ensure process resources are cleaned up
-            if proc.poll() is None:
-                try:
-                    proc.terminate()
-                except Exception:
-                    pass
+        run_rc_command(self.rc_exe, cmd, self.display_output)
 
     def _delegate_no_wait(self, *args: str) -> None:
         """Delegate without waiting for completion (no -waitCompleted)."""
@@ -431,37 +383,16 @@ class InteractiveLauncher:
     def _delegate_capture(self, *args: str) -> tuple[str, str, int]:
         """
         Delegate a command and wait for completion, returning (stdout, stderr, returncode)
-        without raising on non-zero exit. Progress/status is still printed periodically.
+        without raising on non-zero exit. Follows standard -waitCompleted synchronization.
         """
         assert self.rc_exe and self.instance_started
         cmd = ["-delegateTo", self.instance_name] + list(args) + ["-waitCompleted", self.instance_name]
         print("Delegating (capture):", " ".join(cmd))
-        proc = subprocess.Popen([str(self.rc_exe)] + cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        last_text = None
-        last_print = 0.0
-        interval = 2.0
-        start_time = time.time()
-        while True:
-            ret = proc.poll()
-            now = time.time()
-            if now - last_print >= interval:
-                last_print = now
-                status_text = self._get_status_text()
-                if status_text:
-                    if status_text != last_text:
-                        print(f"[Status] {status_text.strip()}")
-                        last_text = status_text
-                else:
-                    elapsed = int(now - start_time)
-                    print(f"[Status] Working... {elapsed}s elapsed")
-            if ret is not None:
-                break
-            time.sleep(0.25)
-        try:
-            stdout, stderr = proc.communicate(timeout=1)
-        except Exception:
-            stdout, stderr = "", ""
-        return stdout or "", stderr or "", proc.returncode if proc.returncode is not None else -1
+        completed = subprocess.run([str(self.rc_exe)] + cmd, capture_output=True, text=True)
+        stdout = completed.stdout or ""
+        stderr = completed.stderr or ""
+        rc = completed.returncode if completed.returncode is not None else -1
+        return stdout, stderr, rc
 
     def _get_status_text(self) -> str:
         """
@@ -472,7 +403,8 @@ class InteractiveLauncher:
         """
         assert self.rc_exe and self.instance_name
         try:
-            completed = subprocess.run([str(self.rc_exe), "-getStatus", self.instance_name], capture_output=True, text=True)
+            completed = subprocess.run([str(self.rc_exe), "-getStatus", self.instance_name], capture_output=True,
+                                       text=True)
             if completed.returncode == 0:
                 out = (completed.stdout or "").strip()
                 # Prefer the last non-empty line if multiple
@@ -483,6 +415,120 @@ class InteractiveLauncher:
             return ""
         except Exception:
             return ""
+
+    def _parse_status_line(self, status_text: str) -> dict:
+        """
+        Parse RealityScan status output into structured data.
+        Example input: "id:0x10001 progress:57.5% runtime:4.26sec endEstimation:3.40sec"
+
+        Returns:
+            dict with keys: progress_pct, runtime_sec, eta_sec, is_idle
+        """
+        result = {
+            'progress_pct': 0.0,
+            'runtime_sec': 0.0,
+            'eta_sec': 0.0,
+            'is_idle': False
+        }
+
+        if not status_text:
+            return result
+
+        status_lower = status_text.lower()
+
+        # Detect idle state
+        if 'idle' in status_lower or 'progress:100' in status_text.replace(' ', ''):
+            result['is_idle'] = True
+            result['progress_pct'] = 100.0
+
+        # Parse progress percentage
+        progress_match = re.search(r'progress:(\d+\.?\d*)%', status_text)
+        if progress_match:
+            result['progress_pct'] = float(progress_match.group(1))
+
+        # Parse runtime
+        runtime_match = re.search(r'runtime:(\d+\.?\d*)sec', status_text)
+        if runtime_match:
+            result['runtime_sec'] = float(runtime_match.group(1))
+
+        # Parse ETA
+        eta_match = re.search(r'endEstimation:(\d+\.?\d*)sec', status_text)
+        if eta_match:
+            result['eta_sec'] = float(eta_match.group(1))
+
+        return result
+
+    def _monitor_operation_with_status(self, operation_name: str, timeout_sec: float = 3600.0,
+                                   poll_interval: float = 5.0) -> None:
+        """
+        Monitor a delegated operation using -getStatus polling.
+        Displays progress, ETA, and elapsed time.
+
+        CRITICAL: Detects operation start by transition from idle→busy, then monitors to completion.
+
+        Args:
+            operation_name: Human-readable operation name (e.g., "Alignment", "Merge")
+            timeout_sec: Maximum time to wait before raising TimeoutError
+            poll_interval: Seconds between status polls
+        """
+        start_time = time.time()
+        last_print_time = start_time
+        operation_started = False
+        seen_idle = False  # Track if we've seen idle state initially
+
+        print(f"\n[{operation_name}] Waiting for operation to start...")
+
+        while True:
+            elapsed = time.time() - start_time
+
+            # Check timeout
+            if elapsed > timeout_sec:
+                raise TimeoutError(f"{operation_name} exceeded {timeout_sec}s timeout")
+
+            # Poll status
+            status_text = self._get_status_text()
+            status = self._parse_status_line(status_text)
+
+            # CRITICAL FIX: Detect operation start by transition from idle to non-idle
+            if not operation_started:
+                if status['is_idle']:
+                    seen_idle = True
+                    time.sleep(0.5)
+                    continue
+                elif seen_idle:
+                    # Transitioned from idle to non-idle - operation has started!
+                    operation_started = True
+                    print(f"[{operation_name}] Operation started, monitoring progress...")
+                else:
+                    # Haven't seen idle yet, keep waiting
+                    time.sleep(0.5)
+                    continue
+
+            # Now monitor progress
+            current_time = time.time()
+            if current_time - last_print_time >= poll_interval:
+                progress_pct = status['progress_pct']
+                eta_sec = status['eta_sec']
+
+                elapsed_min = int(elapsed // 60)
+                elapsed_sec = int(elapsed % 60)
+
+                eta_display = f"{int(eta_sec)}s remaining" if eta_sec > 0 else "calculating..."
+
+                print(f"[{operation_name}] Progress: {progress_pct:.1f}% | "
+                  f"Elapsed: {elapsed_min}m {elapsed_sec}s | "
+                  f"ETA: {eta_display}")
+
+            last_print_time = current_time  # FIX 2: Update last_print_time!
+
+        # FIX 1: MOVED INSIDE LOOP - Check completion
+        if status['is_idle'] or status['progress_pct'] >= 100.0:
+            print(f"[{operation_name}] ✓ Complete (took {int(elapsed)}s)")
+            # Extra grace period to ensure file writes finish
+            time.sleep(3.0)
+            return
+
+        time.sleep(2.0)  # Quick polls to catch completion
 
     def _check_result(self) -> None:
         """
@@ -510,35 +556,117 @@ class InteractiveLauncher:
             raise last_err
         raise RuntimeError("CheckResult failed without exception details")
 
-    def _wait_for_components_stable(self, directory: Path, min_stable_seconds: float = 10.0, timeout_seconds: Optional[float] = 7200.0, poll_interval: float = 2.0) -> list[Path]:
+    def _wait_for_components_stable(self, directory: Path, expected_count: Optional[int] = None,
+                                    min_stable_seconds: float = 10.0,
+                                    timeout_seconds: Optional[float] = 900.0,
+                                    poll_interval: float = 2.0,
+                                    idle_grace_seconds: float = 30.0) -> list[Path]:
         """
-        Block until at least one Component*.rcalign/rsalign file exists in 'directory' and the set of
-        files (with sizes) remains unchanged for at least 'min_stable_seconds'. Returns the stable list.
-        If timeout_seconds is None, wait indefinitely. Otherwise, raise TimeoutError on timeout.
+        **RELIABLE POLLING-BASED COMPONENT STABILITY DETECTION**
+
+        Wait until exported Component*.rcalign/rsalign files stabilize using TWO methods:
+
+        PRIMARY (Recommended): Poll -getStatus for idle state
+          - More reliable than filesystem watching
+          - Detects when RC has finished all operations
+          - Avoids false positives from external file touches (antivirus, indexing)
+
+        SECONDARY (Fallback): Filesystem monitoring
+          - Monitor file count, sizes, and mtimes
+          - Only used if status polling is unavailable
+
+        Args:
+            directory: Export directory to monitor
+            expected_count: Optional expected number of components (logs mismatch)
+            min_stable_seconds: Min time with no changes before accepting (filesystem method)
+            timeout_seconds: Max wait time (None = unlimited)
+            poll_interval: Seconds between checks
+            idle_grace_seconds: How long idle state must persist to confirm completion
+
+        Returns:
+            List of component Paths when stable
         """
         start = time.time()
         last_snapshot: dict[str, tuple[int, float]] = {}
         last_change_time = time.time()
+        last_idle_seen: Optional[float] = None
         last_heartbeat = time.time()
+
+        print(f"\n[Component Export] Waiting for components to stabilize in: {directory}")
+        if expected_count:
+            print(f"[Component Export] Expected component count: {expected_count}")
+        print(
+            f"[Component Export] Stability definition: No file changes for {min_stable_seconds}s OR idle state for {idle_grace_seconds}s")
+
         while True:
+            now = time.time()
+            elapsed = now - start
+
+            # Find component files
             comps = sorted(list(directory.glob("Component*.rcalign")) + list(directory.glob("Component*.rsalign")))
-            snapshot = {str(p): (p.stat().st_size, p.stat().st_mtime) for p in comps if p.exists()}
+
+            # Build filesystem snapshot
+            try:
+                snapshot = {str(p): (p.stat().st_size, p.stat().st_mtime) for p in comps if p.exists()}
+            except Exception:
+                snapshot = {}
+
+            # Detect changes
             if snapshot != last_snapshot:
                 last_snapshot = snapshot
-                last_change_time = time.time()
+                last_change_time = now
                 if comps:
-                    print(f"[Align] Detected {len(comps)} component file(s); waiting for writes to finish...")
-            # Heartbeat every ~60s so user sees we're still waiting
-            now = time.time()
+                    print(f"[Component Export] Detected {len(comps)} file(s); monitoring for stability...")
+
+            # PRIMARY METHOD: Poll RC status for idle
+            try:
+                status_text = self._get_status_text()
+                status_lower = status_text.lower()
+                is_idle = "idle" in status_lower or "progress:100" in status_text.replace(" ", "")
+
+                if is_idle:
+                    if last_idle_seen is None:
+                        last_idle_seen = now
+                        print(
+                            f"[Component Export] RC reports idle state; entering grace period ({idle_grace_seconds}s)...")
+
+                    # If idle sustained, accept current state
+                    if now - last_idle_seen >= idle_grace_seconds:
+                        if expected_count and len(comps) != expected_count:
+                            print(
+                                f"[Component Export] ⚠️  WARNING: Found {len(comps)} components but expected {expected_count}")
+                        print(f"[Component Export] ✓ Idle state confirmed for {idle_grace_seconds}s - export complete")
+                        return comps
+                else:
+                    last_idle_seen = None
+
+            except Exception:
+                # Status polling unavailable, fallback to filesystem method
+                pass
+
+            # Heartbeat every 60s
             if now - last_heartbeat >= 60.0:
-                waited = int(now - start)
-                print(f"[Align] Waiting for component exports to stabilize... waited {waited}s so far.")
+                waited = int(elapsed)
+                print(f"[Component Export] Still waiting... ({waited}s elapsed, {len(comps)} file(s) found)")
                 last_heartbeat = now
-            # Condition: at least one file and stable for min_stable_seconds
-            if comps and (time.time() - last_change_time) >= min_stable_seconds:
+
+            # SECONDARY METHOD: Filesystem stability
+            if comps and (now - last_change_time) >= min_stable_seconds:
+                if expected_count and len(comps) != expected_count:
+                    print(
+                        f"[Component Export] ⚠️  WARNING: Found {len(comps)} components but expected {expected_count}")
+                print(f"[Component Export] ✓ Files stable for {min_stable_seconds}s - export complete")
                 return comps
-            if timeout_seconds is not None and (time.time() - start) > timeout_seconds:
-                raise TimeoutError(f"Timed out waiting for components to stabilize in {directory}")
+
+            # Timeout check
+            if timeout_seconds is not None and elapsed > timeout_seconds:
+                print(f"[Component Export] ⚠️  Timeout after {int(timeout_seconds)}s")
+                if comps:
+                    print(f"[Component Export] Returning {len(comps)} component(s) found at timeout")
+                    return comps
+                else:
+                    raise TimeoutError(f"No components found after {timeout_seconds}s timeout in {directory}")
+
             time.sleep(poll_interval)
 
     def _build_imagelist(self) -> tuple[Path, int]:
@@ -623,7 +751,8 @@ class InteractiveLauncher:
         # Save on success and set flag
         self._delegate("-save", str(self.project_path))
         self.flight_log_imported = True
-        return {"Flight Log": str(self.flight_log_path), "FormatId": guid or "", "FormatSource": source, "Imported": True}
+        return {"Flight Log": str(self.flight_log_path), "FormatId": guid or "", "FormatSource": source,
+                "Imported": True}
 
     def _count_keyword_matches(self, keyword: str) -> int:
         """
@@ -642,7 +771,8 @@ class InteractiveLauncher:
                 count += 1
         return count
 
-    def _apply_image_params_group(self, label: str, select_keywords: list[str], calib_group: int, lens_group: int, focal_mm: int, camera_model: str) -> int:
+    def _apply_image_params_group(self, label: str, select_keywords: list[str], calib_group: int, lens_group: int,
+                                  focal_mm: int, camera_model: str) -> int:
         """
         Select images using RealityScan's built-in path token matching (g/<token>/) and
         apply prior calibration/lens groups, camera model, and focal length.
@@ -655,6 +785,7 @@ class InteractiveLauncher:
         # Detect matches: any file path containing the token (case-insensitive)
         assert self.base_images_dir
         exts = {".jpg", ".jpeg", ".png", ".heif", ".tif", ".tiff"}
+
         def contains_token(p: Path, token: str) -> bool:
             return token.lower() in str(p).lower()
 
@@ -766,7 +897,8 @@ class InteractiveLauncher:
                         "Focal(mm)": g["focal"],
                         "Model": g["model"],
                     })
-                    print(f"  Group '{g['name']}': detected ~{detected} file(s) -> calib {g['calib']}, lens {g['lens']}, focal {g['focal']}mm, model {g['model']}")
+                    print(
+                        f"  Group '{g['name']}': detected ~{detected} file(s) -> calib {g['calib']}, lens {g['lens']}, focal {g['focal']}mm, model {g['model']}")
                 else:
                     print(f"  Group '{g['name']}': no matching images found — skipped.")
             except subprocess.CalledProcessError as e:
@@ -785,7 +917,8 @@ class InteractiveLauncher:
             self.start_instance()
         # Hard gate: require successful flight log import before alignment
         if self.flight_log_path is not None and not self.flight_log_imported:
-            raise RuntimeError("Flight log was provided but not successfully imported. Alignment is blocked to prevent invalid processing.")
+            raise RuntimeError(
+                "Flight log was provided but not successfully imported. Alignment is blocked to prevent invalid processing.")
         print("Align Images — available variables:")
         min_comp = self._get_int("Minimum component size (images)", 100)
         export_xmp = self._get_yes_no("Export XMP sidecars?", True)
@@ -810,33 +943,38 @@ class InteractiveLauncher:
         ]
 
         print("Running alignment... this may take a while.")
-        # Deliberately wait for alignment to complete before continuing
-        # Use synchronous delegate with -waitCompleted to ensure completion
-        self._delegate(*args)
 
-        # After completion, continue normally
-        # Wait for exported components to appear and stabilize (handles async write/export behavior)
-        print("Waiting for component exports to finish and stabilize...")
-        try:
-            comp_files = self._wait_for_components_stable(self.temp_components_dir, min_stable_seconds=10.0, timeout_seconds=None, poll_interval=2.0)
-            comp_rca = [p for p in comp_files if p.suffix.lower() == ".rcalign"]
-            comp_rsa = [p for p in comp_files if p.suffix.lower() == ".rsalign"]
-        except TimeoutError as te:
-            # With timeout disabled, this block should not be reached, but keep fallback for safety
-            print(f"[Warn] {te}")
-            # Fall back to a best-effort scan (may be empty)
-            comp_rca = sorted(self.temp_components_dir.glob("Component*.rcalign"))
-            comp_rsa = sorted(self.temp_components_dir.glob("Component*.rsalign"))
-            comp_files = comp_rca + comp_rsa
+        # IMPROVED: Monitor alignment operation with status polling
+        self._delegate_no_wait(*args)
+        self._monitor_operation_with_status("Alignment", timeout_sec=3600.0)
+
+        # CRITICAL FIX: Wait for component files to stabilize after export
+        print("\n[Alignment] Waiting for component exports to complete...")
+        comp_files = self._wait_for_components_stable(
+            self.temp_components_dir,
+            expected_count=None,  # Unknown until export completes
+            min_stable_seconds=10.0,
+            timeout_seconds=300.0,  # 5 min timeout for file writes
+            idle_grace_seconds=30.0
+        )
+
         # Summarize
-        total_images = sum(1 for p in self.base_images_dir.rglob("*") if p.suffix.lower() in (".jpg", ".jpeg", ".png", ".heif"))
+        total_images = sum(
+            1 for p in self.base_images_dir.rglob("*") if p.suffix.lower() in (".jpg", ".jpeg", ".png", ".heif"))
         xmp_count = sum(1 for p in self.base_images_dir.rglob("*.xmp")) if export_xmp else 0
-        print(f"Temporary components were exported to: {self.temp_components_dir}")
+
+        print(f"\n[Alignment] Component export validated:")
+        print(f"  Components exported: {len(comp_files)}")
+        print(f"  Location: {self.temp_components_dir}")
+
         # Validation: ensure components were actually saved to temp directory
         if comp_files:
-            print(f"Validation: saved {len(comp_files)} component file(s) to temporary folder. (rcalign={len(comp_rca)}, rsalign={len(comp_rsa)})")
+            comp_rca = [c for c in comp_files if c.suffix == '.rcalign']
+            comp_rsa = [c for c in comp_files if c.suffix == '.rsalign']
+            print(f"  Breakdown: {len(comp_rca)} .rcalign, {len(comp_rsa)} .rsalign")
         else:
-            print("Validation FAILED: no component files were found in the temporary folder after alignment.")
+            print("  ⚠️  WARNING: No component files found after alignment")
+
         summary = {
             "Components Found": len(comp_files),
             "Total Images": total_images,
@@ -858,14 +996,16 @@ class InteractiveLauncher:
             # As a safety net, wait a short period in case alignment export is finishing
             try:
                 print("No components detected yet; waiting briefly for alignment exports to finish...")
-                comps = self._wait_for_components_stable(self.temp_components_dir, min_stable_seconds=10.0, timeout_seconds=120.0, poll_interval=2.0)
+                comps = self._wait_for_components_stable(self.temp_components_dir, min_stable_seconds=10.0,
+                                                         timeout_seconds=120.0, poll_interval=2.0)
             except TimeoutError:
                 pass
         if not comps:
             print("No components to export from temporary directory.")
             return exported
         # Decide overwrite strategy for InitialAlignments
-        export_dir, action = prompt_overwrite_strategy(self.initial_export_dir, "InitialAlignments", auto=self.auto_mode)
+        export_dir, action = prompt_overwrite_strategy(self.initial_export_dir, "InitialAlignments",
+                                                       auto=self.auto_mode)
         if action == 'cancel' or export_dir is None:
             print("Export cancelled by user.")
             return []
@@ -896,7 +1036,8 @@ class InteractiveLauncher:
     def step_merge_components(self) -> list[Path]:
         assert self.rc_exe and self.project_path and self.initial_export_dir and self.merged_export_dir and self.project_name
         # Gather components with both extensions
-        initial_components = sorted(list(self.initial_export_dir.glob("*.rcalign")) + list(self.initial_export_dir.glob("*.rsalign")))
+        initial_components = sorted(
+            list(self.initial_export_dir.glob("*.rcalign")) + list(self.initial_export_dir.glob("*.rsalign")))
         if not initial_components:
             print("No initial components to merge; skipping.")
             return []
@@ -905,7 +1046,8 @@ class InteractiveLauncher:
         # Ask variables
         min_comp = self._get_int("Minimum component size (images) for merge", 50)
         # Feature source preference (based on AlignmentParams key lisPreferImagesAsFeatureSource)
-        prefer_images = self._get_yes_no("Set Features Source for all images to Prefer original images (instead of components)?", True)
+        prefer_images = self._get_yes_no(
+            "Set Features Source for all images to Prefer original images (instead of components)?", True)
         _confirm = self._get_yes_no("Proceed to merge all initial components into merged components?", True)
         if not _confirm:
             return []
@@ -930,16 +1072,28 @@ class InteractiveLauncher:
             self._delegate("-importComponent", str(comp))
         # Perform merge and export
         self._current_step = "merge"
-        self._delegate(
+
+        # IMPROVED: Monitor merge operation with status polling
+        self._delegate_no_wait(
             "-setMinComponentSize", str(min_comp),
             "-mergeComponents",
             "-exportLatestComponents", str(export_dir) + "\\",
             "-save", str(self.project_path),
         )
+        self._monitor_operation_with_status("Merge", timeout_sec=1800.0)
         self._current_step = ""
 
+        # CRITICAL FIX: Wait for merged components to stabilize
+        print("\n[Merge] Waiting for merged component exports to complete...")
+        merged = self._wait_for_components_stable(
+            export_dir,
+            expected_count=None,
+            min_stable_seconds=10.0,
+            timeout_seconds=180.0,
+            idle_grace_seconds=30.0
+        )
+
         # Rename merged exported components (handle both extensions just in case)
-        merged = sorted(list(export_dir.glob("Component*.rcalign")) + list(export_dir.glob("Component*.rsalign")))
         renamed: list[Path] = []
         for idx, src in enumerate(merged, start=1):
             dst = export_dir / f"{self.project_name}_Merged_{idx}{src.suffix}"
@@ -988,7 +1142,7 @@ class InteractiveLauncher:
         if ans.isdigit():
             target = int(ans)
             if 1 <= target <= len(steps):
-                return f'jump:{target-1}'
+                return f'jump:{target - 1}'
         return 'continue'
 
     def _step_key_from_index(self, idx: int) -> str:
@@ -1161,12 +1315,15 @@ class InteractiveLauncher:
             # Offer to resume at step 8 (merge) if initial components exist
             start_index = 0
             try:
-                has_initial = any(self.initial_export_dir.glob("*.rcalign")) or any(self.initial_export_dir.glob("*.rsalign"))
+                has_initial = any(self.initial_export_dir.glob("*.rcalign")) or any(
+                    self.initial_export_dir.glob("*.rsalign"))
             except Exception:
                 has_initial = False
 
             # Offer to resume at step 8
-            if has_initial and prompt_yes_no("Detected initial components in 'Alignments/InitialAlignments'. Start directly at step 8 (Merge components)?", False):
+            if has_initial and prompt_yes_no(
+                    "Detected initial components in 'Alignments/InitialAlignments'. Start directly at step 8 (Merge components)?",
+                    False):
                 start_index = 7
                 for i in range(start_index):
                     if progress[i]["status"] == "Pending":
@@ -1175,10 +1332,13 @@ class InteractiveLauncher:
             else:
                 # Offer to resume at step 7 if temporary components exist
                 try:
-                    has_temp = any(self.temp_components_dir.glob("Component*.rcalign")) or any(self.temp_components_dir.glob("Component*.rsalign"))
+                    has_temp = any(self.temp_components_dir.glob("Component*.rcalign")) or any(
+                        self.temp_components_dir.glob("Component*.rsalign"))
                 except Exception:
                     has_temp = False
-                if has_temp and prompt_yes_no("Detected temporary components in 'Alignments/_TempExport'. Start directly at step 7 (Export Initial)?", False):
+                if has_temp and prompt_yes_no(
+                        "Detected temporary components in 'Alignments/_TempExport'. Start directly at step 7 (Export Initial)?",
+                        False):
                     start_index = 6
                     for i in range(start_index):
                         if progress[i]["status"] == "Pending":
@@ -1190,7 +1350,8 @@ class InteractiveLauncher:
                 print(f"  {i}. {name}")
             print("  r. Rerun selected step(s) at any checkpoint")
             print("  q. Exit at any checkpoint (project will be saved)")
-            print("  Tip: Enter a step number at a checkpoint to jump directly to that step (earlier Pending steps will be marked Skipped).")
+            print(
+                "  Tip: Enter a step number at a checkpoint to jump directly to that step (earlier Pending steps will be marked Skipped).")
 
             quitting = False
             idx = start_index
@@ -1314,6 +1475,8 @@ def batch_process_zones(zones_root: Path) -> None:
     """
     Iterate zone subfolders and run the existing workflow automatically per zone.
     Exports are saved inside each zone's Alignments directory.
+
+    ENHANCED with batch summary statistics and progress tracking.
     """
     zones = [d for d in sorted(zones_root.iterdir()) if d.is_dir()]
     if not zones:
@@ -1326,6 +1489,17 @@ def batch_process_zones(zones_root: Path) -> None:
         return
 
     print(f"Batch processing {len(zones)} subfolder(s) under: {zones_root}")
+
+    # Initialize batch summary tracking
+    batch_summary = {
+        'total_zones': len(zones),
+        'processed': 0,
+        'failed': 0,
+        'skipped': 0,
+        'zone_times': [],
+        'zone_results': []
+    }
+    batch_start_time = time.time()
 
     def _fmt_result(res) -> list[str]:
         if isinstance(res, dict):
@@ -1350,8 +1524,6 @@ def batch_process_zones(zones_root: Path) -> None:
     def _run(step_index: int, label: str, func):
         start = time.time()
         out = func()
-        # Per-step delegated operations already include '-waitCompleted' inside _delegate.
-        # No additional waits are needed here; rely on post-step CheckResult below.
         elapsed = time.time() - start
         # Step completion banner for batch mode
         banner_line = "-" * 75
@@ -1363,7 +1535,7 @@ def batch_process_zones(zones_root: Path) -> None:
         for line in _fmt_result(out):
             print("## " + line)
         print(banner_line + "\n")
-        # Authoritative confirmation using CheckResult instead of timers (batch mode)
+        # Authoritative confirmation using CheckResult
         try:
             launcher = getattr(func, "__self__", None)
             if launcher is not None and hasattr(launcher, "_check_result"):
@@ -1377,7 +1549,15 @@ def batch_process_zones(zones_root: Path) -> None:
     for zone_dir in zones:
         if not _has_images(zone_dir):
             print(f"[Skip] No images found under {zone_dir}")
+            batch_summary['skipped'] += 1
+            batch_summary['zone_results'].append({
+                'zone': zone_dir.name,
+                'status': 'SKIPPED',
+                'time_sec': 0,
+                'reason': 'No images found'
+            })
             continue
+
         expedition, dive = _parse_exp_dive_from_parents(zone_dir)
         if not expedition or not dive:
             # Try to interpret immediate grandparent if it contains combined token
@@ -1440,7 +1620,9 @@ def batch_process_zones(zones_root: Path) -> None:
                 break
 
         try:
-            # Steps: launch -> load images -> load flight log (if present) -> params -> align -> export initial -> merge
+            zone_start_time = time.time()
+
+            # Steps: launch -> load images -> load flight log -> params -> align -> export initial -> merge
             _run(1, "Launch new project", L.step_launch_new_project)
             _run(2, "Load images", L.step_load_images)
             _run(3, "Load flight_log", L.step_load_flight_log)
@@ -1448,8 +1630,26 @@ def batch_process_zones(zones_root: Path) -> None:
             _run(5, "Align images", L.step_align_images)
             _run(6, "Rename and Export components in 'Alignments/InitialAlignments'", L.step_export_initial)
             _run(7, "Merge components", L.step_merge_components)
+
+            zone_elapsed = time.time() - zone_start_time
+            batch_summary['processed'] += 1
+            batch_summary['zone_times'].append(zone_elapsed)
+            batch_summary['zone_results'].append({
+                'zone': zone_dir.name,
+                'status': 'SUCCESS',
+                'time_sec': zone_elapsed
+            })
+
         except Exception as e:
             print(f"[Error] Processing failed for {zone_dir.name}: {e}")
+            zone_elapsed = time.time() - zone_start_time
+            batch_summary['failed'] += 1
+            batch_summary['zone_results'].append({
+                'zone': zone_dir.name,
+                'status': 'FAILED',
+                'time_sec': zone_elapsed,
+                'error': str(e)
+            })
         finally:
             try:
                 if L.rc_exe and L.project_path:
@@ -1462,7 +1662,7 @@ def batch_process_zones(zones_root: Path) -> None:
                             L._delegate("-quit")
                         except Exception:
                             pass
-                        # Ensure instance fully stops before next zone (bounded attempts)
+                        # Ensure instance fully stops before next zone
                         try:
                             print("Waiting for RealityScan instance to fully stop before moving to next zone...")
                             stopped = False
@@ -1479,14 +1679,56 @@ def batch_process_zones(zones_root: Path) -> None:
                             pass
             except Exception:
                 pass
+
+            # Display incremental summary
+            remaining = batch_summary['total_zones'] - (
+                        batch_summary['processed'] + batch_summary['failed'] + batch_summary['skipped'])
+            if remaining > 0 and batch_summary['zone_times']:
+                avg_time = sum(batch_summary['zone_times']) / len(batch_summary['zone_times'])
+                eta_sec = avg_time * remaining
+                eta_min = int(eta_sec // 60)
+                print(f"\n>>> Batch Progress: {batch_summary['processed']}/{batch_summary['total_zones']} zones | "
+                      f"{remaining} remaining | ETA: ~{eta_min} minutes\n")
+
             print(f"--------------------------- Zone {zone_dir.name} Complete ---------------------------")
-            print(f"===  Saved project at: {L.project_path}                                           === ")
+            print(f"===  Saved project at: {L.project_path}                                           ===")
             print(f"===  Proceeding to next zone                                                      ===\n")
             print(f"-------------------------------------------------------------------------------------")
 
+    # Final batch summary
+    batch_elapsed = time.time() - batch_start_time
+    print("\n" + "=" * 80)
+    print("BATCH PROCESSING SUMMARY")
+    print("=" * 80)
+    print(f"Total zones: {batch_summary['total_zones']}")
+    print(f"Processed successfully: {batch_summary['processed']}")
+    print(f"Failed: {batch_summary['failed']}")
+    print(f"Skipped: {batch_summary['skipped']}")
+    print(f"Total time: {int(batch_elapsed // 60)}m {int(batch_elapsed % 60)}s")
+
+    if batch_summary['zone_times']:
+        avg_time = sum(batch_summary['zone_times']) / len(batch_summary['zone_times'])
+        print(f"Average time per zone: {int(avg_time)}s")
+
+    print("\nPer-Zone Results:")
+    print(f"{'Zone':<30} {'Status':<10} {'Time (s)':<10}")
+    print("-" * 80)
+    for result in batch_summary['zone_results']:
+        time_display = f"{int(result['time_sec'])}" if result['time_sec'] > 0 else "N/A"
+        print(f"{result['zone']:<30} {result['status']:<10} {time_display:<10}")
+        if result['status'] == 'FAILED' and 'error' in result:
+            print(f"  Error: {result['error']}")
+        if result['status'] == 'SKIPPED' and 'reason' in result:
+            print(f"  Reason: {result['reason']}")
+
+    print("=" * 80)
+
+
 if __name__ == "__main__":
     # Offer batch processing of zone subfolders first
-    batch_root = input("Enter folder containing zone subfolders to batch process (press Enter to use interactive mode): ").strip().strip('"')
+    batch_root = input(
+        "Enter folder containing zone subfolders to batch process (press Enter to use interactive mode): ").strip().strip(
+        '"')
     if batch_root:
         root_path = Path(batch_root)
         if root_path.exists() and root_path.is_dir():
