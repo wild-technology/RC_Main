@@ -772,6 +772,7 @@ class GeoreferenceImages(RCModule):
 
             output_data = {}
 
+
             data_rows = self.__read_csv_data(flight_log)
             image_data = self.__read_image_filenames(input_dir, input_type)
             matches_made = self.__estimate_location(image_data, data_rows, input_type)

@@ -19,6 +19,7 @@
     </format>
 
 
+
     <format id="{B438A617-2434-5A24-C1B7-58980F28345A}" descID="2345" desc="Name,X (East), Y (North), Altitude, XAccuracy, YAccuracy, AltitudeAccuracy, YawAccuracy, PitchAccuracy, RollAccuracy, FocalLength" reader="RealityScan.Import.CSVFlightLog">
         <parser allowedSeparators=",; &tab;" comment="#" showIgnoreFirstline="true" qualifiers="&quot;optional">
             <Image index="0" format="name.ext"/>
