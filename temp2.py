@@ -26,13 +26,17 @@ def enhance_for_photogrammetry(image):
     Returns:
         Enhanced BGR image as numpy array (uint8)
     """
+    # Store original for highlight protection at the end
+    original = image.copy()
+
     # Convert to LAB (must be 8-bit for OpenCV)
     lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
     l_channel, a_channel, b_channel = cv2.split(lab)
 
-    # Create highlight protection mask
-    highlight_mask = (l_channel > 220).astype(np.float32)
-    highlight_mask = cv2.GaussianBlur(highlight_mask, (15, 15), 0)
+    # Create highlight protection mask - identify bright areas to preserve
+    # Use threshold of 200 to catch highlights earlier
+    highlight_mask = (l_channel > 200).astype(np.float32)
+    highlight_mask = cv2.GaussianBlur(highlight_mask, (21, 21), 0)
 
     # Create adaptive processing mask based on local variance
     local_variance = compute_local_variance(l_channel)
@@ -55,11 +59,11 @@ def enhance_for_photogrammetry(image):
     l_original_float = l_channel.astype(np.float32)
     l_blended_float = l_enhanced_float * 0.85 + l_original_float * 0.15
 
-    # Protect highlights - revert to original in bright areas
+    # CRITICAL: Protect highlights - revert to original in bright areas
+    # This prevents any brightening of already bright pixels
     l_final_float = l_blended_float * (1 - highlight_mask) + l_original_float * highlight_mask
 
     # Add subtle dithering to prevent banding in smooth gradients
-    # This is critical for preventing posterization
     dither_strength = 0.8
     dither = np.random.normal(0, dither_strength, l_final_float.shape)
     l_final_float = l_final_float + dither
@@ -73,46 +77,65 @@ def enhance_for_photogrammetry(image):
     # Convert back to BGR
     enhanced = cv2.cvtColor(lab_enhanced, cv2.COLOR_LAB2BGR)
 
-    # Very gentle global contrast with highlight rolloff
-    enhanced = apply_highlight_safe_contrast(enhanced)
+    # Very gentle global contrast with highlight protection
+    enhanced = apply_highlight_safe_contrast(enhanced, highlight_mask)
 
     # Subtle white balance
     enhanced = apply_white_balance(enhanced)
 
-    # Enhance micro-texture in sediment areas
-    enhanced = enhance_sediment_texture(enhanced, variance_norm)
+    # Enhance micro-texture in sediment areas (not in highlights)
+    enhanced = enhance_sediment_texture(enhanced, variance_norm, highlight_mask)
 
-    return enhanced
+    # FINAL PROTECTION: Blend back original pixels in highlight regions
+    # This is a safety net to ensure no highlight clipping occurred
+    enhanced_float = enhanced.astype(np.float32)
+    original_float = original.astype(np.float32)
+    final_float = enhanced_float * (1 - highlight_mask[:, :, np.newaxis]) + \
+                  original_float * highlight_mask[:, :, np.newaxis]
+
+    result = np.clip(final_float, 0, 255).astype(np.uint8)
+
+    return result
 
 
-def apply_highlight_safe_contrast(image):
+def apply_highlight_safe_contrast(image, highlight_mask):
     """
-    Apply contrast adjustment with soft clipping to preserve highlights.
-    Uses S-curve to avoid hard clipping.
+    Apply contrast adjustment with soft clipping and highlight protection.
 
     Args:
         image: Input BGR image
+        highlight_mask: 2D mask of highlight regions (0-1)
 
     Returns:
-        Contrast-adjusted image
+        Contrast-adjusted image with protected highlights
     """
+    # Store original for highlight protection
+    original = image.copy()
+
     # Convert to float for precise computation
     img_float = image.astype(np.float32) / 255.0
 
-    # Gentle power curve with highlight rolloff
-    gamma = 0.95
+    # Very gentle power curve (reduced from 0.95 to 0.97 to be more conservative)
+    gamma = 0.97
     img_adjusted = np.power(img_float, gamma)
 
-    # Apply highlight compression (soft knee)
-    highlight_threshold = 0.8
-    highlight_mask = img_adjusted > highlight_threshold
-    compressed = highlight_threshold + (img_adjusted - highlight_threshold) * 0.7
-    img_adjusted = np.where(highlight_mask, compressed, img_adjusted)
+    # Apply highlight compression (soft knee) at lower threshold
+    highlight_threshold = 0.75  # Start compression earlier
+    highlight_compress_mask = img_adjusted > highlight_threshold
+    # More gentle compression (0.5 instead of 0.7)
+    compressed = highlight_threshold + (img_adjusted - highlight_threshold) * 0.5
+    img_adjusted = np.where(highlight_compress_mask, compressed, img_adjusted)
 
     # Convert back to uint8
     result = np.clip(img_adjusted * 255, 0, 255).astype(np.uint8)
 
-    return result
+    # Protect highlights - blend back original
+    result_float = result.astype(np.float32)
+    original_float = original.astype(np.float32)
+    final_float = result_float * (1 - highlight_mask[:, :, np.newaxis]) + \
+                  original_float * highlight_mask[:, :, np.newaxis]
+
+    return final_float.astype(np.uint8)
 
 
 def compute_local_variance(gray_channel, kernel_size=15):
@@ -134,27 +157,28 @@ def compute_local_variance(gray_channel, kernel_size=15):
     return variance
 
 
-def enhance_sediment_texture(image, variance_map):
+def enhance_sediment_texture(image, variance_map, highlight_mask):
     """
     Enhance micro-texture in low-contrast sediment areas.
+    Avoids processing highlight regions.
 
     Args:
         image: Input BGR image
         variance_map: Map of local variance (0-1, normalized)
+        highlight_mask: 2D mask of highlight regions (0-1)
 
     Returns:
         Texture-enhanced image
     """
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY).astype(np.float32)
-
-    # Compute gradients
-    grad_x = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
-    grad_y = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
-    grad_mag = np.sqrt(grad_x ** 2 + grad_y ** 2)
+    # Store original
+    original = image.copy()
 
     # Create sediment mask (inverse of variance)
     sediment_mask = 1.0 - variance_map
     sediment_mask = cv2.GaussianBlur(sediment_mask, (15, 15), 0)
+
+    # Exclude highlights from texture enhancement
+    sediment_mask = sediment_mask * (1.0 - highlight_mask)
 
     # Reduced boost to prevent artifacts
     boost = 1.0 + (sediment_mask * 0.20)
@@ -177,13 +201,31 @@ def apply_white_balance(image):
     Returns:
         White-balanced BGR image as numpy array
     """
-    result = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
-    avg_a = np.average(result[:, :, 1])
-    avg_b = np.average(result[:, :, 2])
+    # Work in float to avoid overflow
+    result = image.astype(np.float32)
 
-    result[:, :, 1] = result[:, :, 1] - ((avg_a - 128) * (result[:, :, 0] / 255.0) * 0.3)
-    result[:, :, 2] = result[:, :, 2] - ((avg_b - 128) * (result[:, :, 0] / 255.0) * 0.3)
-    result = cv2.cvtColor(result, cv2.COLOR_LAB2BGR)
+    # Convert to LAB
+    lab = cv2.cvtColor(result.astype(np.uint8), cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+
+    avg_a = np.average(a)
+    avg_b = np.average(b)
+
+    # Very gentle correction to avoid color shifts
+    a = a.astype(np.float32)
+    b = b.astype(np.float32)
+    l_float = l.astype(np.float32)
+
+    a = a - ((avg_a - 128) * (l_float / 255.0) * 0.25)
+    b = b - ((avg_b - 128) * (l_float / 255.0) * 0.25)
+
+    # Clip and convert back
+    a = np.clip(a, 0, 255).astype(np.uint8)
+    b = np.clip(b, 0, 255).astype(np.uint8)
+
+    lab_adjusted = cv2.merge([l, a, b])
+    result = cv2.cvtColor(lab_adjusted, cv2.COLOR_LAB2BGR)
+
     return result
 
 
@@ -367,14 +409,14 @@ def main():
 
     print(f"\nInput: {input_dir}")
     print(f"Output: {output_dir}")
-    print("\nEnhanced processing with anti-banding:")
-    print("  - Float32 intermediate processing to prevent banding")
-    print("  - Highlight protection mask (preserves values >220)")
-    print("  - Soft-knee contrast curve (no hard clipping)")
+    print("\nEnhanced processing with strong highlight protection:")
+    print("  - Highlight detection threshold at L=200")
+    print("  - Multi-stage highlight protection (LAB, contrast, texture, final)")
+    print("  - Original pixels preserved in bright areas")
+    print("  - Soft-knee contrast curve starting at 0.75")
+    print("  - Reduced gamma (0.97) for gentler brightening")
     print("  - Subtle dithering on smooth gradients")
-    print("  - Reduced CLAHE on low-detail areas (1.8 vs 2.0)")
-    print("  - Reduced sediment texture boost (20% vs 25%)")
-    print("  - Adaptive processing based on local variance")
+    print("  - Adaptive CLAHE based on local variance")
     print("  - 90% JPEG quality")
 
     print("\nPreview mode: 10 random samples will be processed first")
