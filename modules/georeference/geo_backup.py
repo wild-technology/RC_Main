@@ -400,7 +400,7 @@ class GeoreferenceImages(RCModule):
             raise ValueError(f"Image folder does not exist: {image_folder}")
 
         image_data = []
-        jpeg_extensions = {'.jpg', '.jpeg', '.png'}
+        jpeg_extensions = {'.jpg', '.jpeg'}
 
         jpeg_files = []
         for root, dirs, files in os.walk(image_folder):
@@ -414,9 +414,9 @@ class GeoreferenceImages(RCModule):
 
         total_files = len(jpeg_files)
         if total_files == 0:
-            raise ValueError(f"No images found in {image_folder}")
+            raise ValueError(f"No JPEG images found in {image_folder}")
 
-        self.logger.info(f"Found {total_files} files to process")
+        self.logger.info(f"Found {total_files} JPEG files to process")
 
         unreadable_files = 0
         ts_parse_failures = 0
@@ -612,29 +612,6 @@ class GeoreferenceImages(RCModule):
             self.logger.warning(f"Unknown camera type for {filename}, using default accuracy 10°")
             return 10.0, 10.0, 10.0
 
-    def _get_camera_focal_length_mm(self, filename: str) -> float | None:
-        """
-        Return camera focal length in millimeters based on camera type.
-        Mapping provided:
-        - Zeuss: 24 mm
-        - Upper: 13 mm
-        - Mid:   14 mm
-        - Lower: 15 mm
-        Returns None if camera type is unknown.
-        """
-        camera_type = self._get_camera_type(filename)
-        if camera_type == 'zeuss':
-            return 24.0
-        elif camera_type == 'camupper':
-            return 13.0
-        elif camera_type == 'cammid':
-            return 14.0
-        elif camera_type == 'camlower':
-            return 15.0
-        else:
-            self.logger.warning(f"Unknown camera type for {filename}, focal length will be omitted")
-            return None
-
     def __generate_flight_log(self, image_data, image_folder):
         """Generate a flight log file with position and orientation accuracy."""
         if not image_data:
@@ -670,7 +647,7 @@ class GeoreferenceImages(RCModule):
         try:
             with open(flight_log_filename, "w", encoding='utf-8') as f:
                 f.write(
-                    "filename;X (East);Y (North);Alt;X Accuracy;Y Accuracy;Alt Accuracy;Yaw;Pitch;Roll;Yaw Accuracy;Pitch Accuracy;Roll Accuracy;FocalLength\n"
+                    "filename;X (East);Y (North);Alt;X Accuracy;Y Accuracy;Alt Accuracy;Yaw;Pitch;Roll;Yaw Accuracy;Pitch Accuracy;Roll Accuracy\n"
                 )
 
                 lines_written = 0
@@ -696,8 +673,6 @@ class GeoreferenceImages(RCModule):
                         def fmt(val):
                             return f"{val:.6f}" if val is not None else ""
 
-                        focal_len_mm = self._get_camera_focal_length_mm(filename)
-
                         line = ";".join([
                             filename,
                             fmt(image.get("UTM_X")),
@@ -711,8 +686,7 @@ class GeoreferenceImages(RCModule):
                             fmt(rc_roll),
                             fmt(yaw_acc),
                             fmt(pitch_acc),
-                            fmt(roll_acc),
-                            fmt(focal_len_mm)
+                            fmt(roll_acc)
                         ])
                         f.write(line + "\n")
                         lines_written += 1
@@ -771,7 +745,6 @@ class GeoreferenceImages(RCModule):
                 raise ValueError("Input type is empty")
 
             output_data = {}
-
 
             data_rows = self.__read_csv_data(flight_log)
             image_data = self.__read_image_filenames(input_dir, input_type)
