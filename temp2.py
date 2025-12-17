@@ -11,17 +11,18 @@ Workflow:
 3. Disable alignment for all images
 4. For each batch (subdirectory):
    - Enable alignment for batch images only
-   - Run alignment
+   - Run alignment (with proper monitoring)
    - Disable batch images
 5. Final save
 
-Uses proper polling commands to detect completion instead of idle timers.
+Uses proper polling to detect operation start, monitor progress, and confirm completion.
 """
 
 import os
 import sys
 import subprocess
 import time
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -42,13 +43,15 @@ class BatchAlignmentProcessor:
         self.poll_interval = 2.0
 
     def find_rc_executable(self) -> Path:
-        """Find RealityCapture executable."""
+        """Find RealityCapture executable (checks multiple versions)."""
         candidates = [
+            Path(r"C:\Program Files\Epic Games\RealityScan_2.1\RealityScan.exe"),
             Path(r"C:\Program Files\Epic Games\RealityScan_2.0\RealityScan.exe"),
             Path(r"C:\Program Files\Epic Games\RealityScan\RealityScan.exe"),
         ]
         for c in candidates:
             if c.exists():
+                print(f"Found RealityScan: {c}")
                 return c
 
         # Prompt user
@@ -95,7 +98,7 @@ class BatchAlignmentProcessor:
     def _delegate(self, *args: str) -> subprocess.CompletedProcess:
         """
         Execute RealityCapture command via delegation.
-        Does NOT wait for completion - use _wait_completed() or _wait_until_idle() for that.
+        Does NOT wait for completion.
         """
         cmd = [str(self.rc_exe), "-delegateTo", self.instance_name] + list(args)
         return subprocess.run(cmd, capture_output=True, text=True, check=False)
@@ -119,8 +122,6 @@ class BatchAlignmentProcessor:
         """
         Wait for current operation to complete using CLI's built-in -waitCompleted command.
 
-        This is the authoritative way to wait for RC operations per the documentation.
-
         Returns:
             CompletedProcess object
         """
@@ -129,112 +130,135 @@ class BatchAlignmentProcessor:
 
     def _parse_status(self, status: Optional[str]) -> dict:
         """
-        Parse status string into structured data.
+        Parse status string into structured data with progress tracking.
 
-        Example: "id:0xffffffff progress:0.0% runtime:10.5sec endEstimation:5.2sec"
+        Example: "id:0x10001 progress:57.5% runtime:4.26sec endEstimation:3.40sec"
 
         Returns:
-            Dictionary with parsed key-value pairs
+            Dictionary with keys: progress_pct, runtime_sec, eta_sec, is_idle
         """
-        result = {}
+        result = {
+            'progress_pct': 0.0,
+            'runtime_sec': 0.0,
+            'eta_sec': 0.0,
+            'is_idle': False
+        }
+
         if not status:
             return result
 
-        parts = status.split()
-        for part in parts:
-            if ':' in part:
-                key, value = part.split(':', 1)
-                result[key] = value
+        status_lower = status.lower()
+
+        # Detect idle state
+        if 'idle' in status_lower or 'progress:100' in status.replace(' ', ''):
+            result['is_idle'] = True
+            result['progress_pct'] = 100.0
+
+        # Parse progress percentage
+        progress_match = re.search(r'progress:(\d+\.?\d*)%', status)
+        if progress_match:
+            result['progress_pct'] = float(progress_match.group(1))
+
+        # Parse runtime
+        runtime_match = re.search(r'runtime:(\d+\.?\d*)sec', status)
+        if runtime_match:
+            result['runtime_sec'] = float(runtime_match.group(1))
+
+        # Parse ETA
+        eta_match = re.search(r'endEstimation:(\d+\.?\d*)sec', status)
+        if eta_match:
+            result['eta_sec'] = float(eta_match.group(1))
+
+        # Check for idle ID pattern
+        if 'id:0xffffffff' in status and result['progress_pct'] == 0.0:
+            result['is_idle'] = True
 
         return result
 
-    def _is_idle(self, status: Optional[str] = None) -> bool:
-        """
-        Check if RealityCapture is idle based on status indicators.
-
-        Args:
-            status: Optional pre-fetched status string
-
-        Returns:
-            True if idle, False if busy
-        """
-        if status is None:
-            status = self._get_status()
-        if not status:
+    def _is_valid_image(self, img_path: Path) -> bool:
+        """Validate that image file exists and is accessible."""
+        try:
+            return img_path.exists() and img_path.is_file()
+        except Exception:
             return False
 
-        parsed = self._parse_status(status)
-        status_lower = status.lower()
-
-        # Check for explicit "idle" keyword
-        if "idle" in status_lower:
-            return True
-
-        # Check for 100% progress
-        progress = parsed.get('progress', '')
-        if progress in ('100.0%', '100%'):
-            return True
-
-        # Check for idle state: id:0xffffffff with 0% progress
-        op_id = parsed.get('id', '')
-        if op_id == '0xffffffff' and progress in ('0.0%', '0%'):
-            return True
-
-        return False
-
-    def _wait_until_idle(self, operation_name: str = "operation", timeout: float = 3600.0) -> None:
+    def _monitor_operation(self, operation_name: str, timeout_sec: float = 3600.0,
+                           poll_interval: float = 5.0) -> None:
         """
-        Wait until RealityCapture reports idle status.
+        Monitor a delegated operation using -getStatus polling.
+        Displays progress, ETA, and elapsed time.
 
-        Uses two-stage approach:
-        1. CLI's built-in -waitCompleted command (authoritative)
-        2. Status polling as verification
+        CRITICAL: Detects operation start by transition from idle→busy, then monitors to completion.
 
         Args:
-            operation_name: Name of operation for logging
-            timeout: Maximum seconds to wait during polling phase
+            operation_name: Human-readable operation name
+            timeout_sec: Maximum time to wait before raising TimeoutError
+            poll_interval: Seconds between status polls for progress display
         """
-        print(f"  Waiting for {operation_name}...", end=" ", flush=True)
-
-        # Stage 1: Use CLI's built-in wait mechanism
-        self._wait_completed()
-        time.sleep(0.5)  # Brief grace period
-
-        # Stage 2: Verify idle state through status polling
-        status = self._get_status()
-        if self._is_idle(status):
-            print("done")
-            return
-
-        # Continue polling if not immediately idle
         start_time = time.time()
-        last_progress = None
+        last_print_time = start_time
+        operation_started = False
+        seen_idle = False
 
-        while time.time() - start_time < timeout:
-            status = self._get_status()
-            parsed = self._parse_status(status)
-            progress = parsed.get('progress', '')
+        print(f"\n[{operation_name}] Waiting for operation to start...")
 
-            # Display progress updates
-            if progress and progress != last_progress:
-                print(f"{progress}", end=" ", flush=True)
-                last_progress = progress
+        while True:
+            elapsed = time.time() - start_time
 
-            # Check if idle
-            if self._is_idle(status):
-                elapsed = time.time() - start_time
-                print(f"done ({elapsed:.1f}s)")
+            # Check timeout
+            if elapsed > timeout_sec:
+                raise TimeoutError(f"{operation_name} exceeded {timeout_sec}s timeout")
+
+            # Poll status
+            status_text = self._get_status()
+            status = self._parse_status(status_text)
+
+            # CRITICAL: Detect operation start by transition from idle to non-idle
+            if not operation_started:
+                if status['is_idle']:
+                    seen_idle = True
+                    time.sleep(0.5)
+                    continue
+                elif seen_idle:
+                    # Transitioned from idle to non-idle - operation has started!
+                    operation_started = True
+                    print(f"[{operation_name}] Operation started, monitoring progress...")
+                else:
+                    # Haven't seen idle yet, keep waiting
+                    time.sleep(0.5)
+                    continue
+
+            # Now monitor progress with periodic updates
+            current_time = time.time()
+            if current_time - last_print_time >= poll_interval:
+                progress_pct = status['progress_pct']
+                eta_sec = status['eta_sec']
+
+                elapsed_min = int(elapsed // 60)
+                elapsed_sec = int(elapsed % 60)
+
+                eta_display = f"{int(eta_sec)}s remaining" if eta_sec > 0 else "calculating..."
+
+                print(f"[{operation_name}] Progress: {progress_pct:.1f}% | "
+                      f"Elapsed: {elapsed_min}m {elapsed_sec}s | "
+                      f"ETA: {eta_display}")
+
+                last_print_time = current_time
+
+            # Check completion
+            if status['is_idle'] or status['progress_pct'] >= 100.0:
+                elapsed_total = int(elapsed)
+                print(f"[{operation_name}] ✓ Complete (took {elapsed_total}s)")
+                # Grace period to ensure all file writes complete
+                time.sleep(3.0)
                 return
 
-            time.sleep(self.poll_interval)
+            time.sleep(2.0)  # Quick polls to catch completion
 
-        # Timeout reached
-        print(f"timeout after {timeout}s")
-        raise TimeoutError(f"Operation '{operation_name}' timed out after {timeout} seconds")
-
-    def _run_command(self, operation_name: str, *args: str) -> None:
+    def _run_command_quick(self, operation_name: str, *args: str) -> None:
         """
-        Run a command and wait for completion using proper polling.
+        Run a quick command and wait for completion using -waitCompleted.
+        Use this for fast operations that don't need progress monitoring.
 
         Args:
             operation_name: Name for logging
@@ -242,36 +266,59 @@ class BatchAlignmentProcessor:
         """
         print(f"  CMD: {' '.join(args)}")
         self._delegate(*args)
-        self._wait_until_idle(operation_name)
+        self._wait_completed()
+        time.sleep(0.5)
+        print(f"  ✓ {operation_name} complete")
 
     def load_all_images(self) -> None:
-        """Load all images from all batches into RC project."""
+        """
+        Load all images from all batches into RC project.
+        Creates a temporary imagelist file with only validated image paths.
+        """
         print("\n=== Loading All Images ===")
 
-        # Create temporary imagelist file
-        imagelist = self.images_root / "_temp_imagelist.txt"
+        # Create temporary imagelist file in system temp directory (NOT in images folder)
+        import tempfile
+        temp_dir = Path(tempfile.gettempdir())
+        imagelist = temp_dir / f"realityscan_batch_imagelist_{os.getpid()}.txt"
+
+        # Collect all validated images
         all_images = []
         for images in self.batches.values():
             all_images.extend(images)
 
+        # Verify all paths before writing
+        validated_images = [img for img in all_images if self._is_valid_image(img)]
+
+        if len(validated_images) != len(all_images):
+            skipped = len(all_images) - len(validated_images)
+            print(f"  Warning: Skipped {skipped} invalid file(s)")
+
+        # Write imagelist with only validated images
+        print(f"  Creating imagelist: {imagelist}")
         with open(imagelist, "w", encoding="utf-8") as f:
-            for img in all_images:
+            for img in validated_images:
                 f.write(f"{img}\n")
 
-        print(f"Loading {len(all_images)} images...")
-        self._run_command("load images", "-add", str(imagelist))
+        print(f"Loading {len(validated_images)} validated images...")
+        self._run_command_quick("load images", "-add", str(imagelist))
 
-        # Cleanup
-        imagelist.unlink()
+        # Cleanup temporary file
+        try:
+            imagelist.unlink()
+            print(f"  Cleaned up temporary imagelist")
+        except Exception as e:
+            print(f"  Warning: Could not delete temporary imagelist: {e}")
+
         print("✓ All images loaded")
 
     def disable_all_images(self) -> None:
         """Disable alignment for all images in project."""
         print("\n=== Disabling All Images ===")
-        self._run_command(
+        self._run_command_quick(
             "disable all",
             "-selectAllImages",
-            "-enableImage", "false"
+            "-enableAlignment", "false"
         )
         print("✓ All images disabled for alignment")
 
@@ -279,25 +326,34 @@ class BatchAlignmentProcessor:
         """Enable alignment for images in specified batch."""
         print(f"\n=== Enabling Batch: {batch_name} ===")
 
-        # Use path-based selection pattern
+        # Use path-based selection pattern g/<token>/
         pattern = f"g/{batch_name}/"
 
-        self._run_command(
-            "enable batch",
-            "-deselectAllImages",
-            "-selectImage", pattern,
-            "-enableImage", "true"
-        )
+        print(f"  CMD: -deselectAllImages -selectImage {pattern} -enableAlignment true")
+        self._delegate("-deselectAllImages")
+        self._wait_completed()
+        self._delegate("-selectImage", pattern)
+        self._wait_completed()
+        self._delegate("-enableAlignment", "true")
+        self._wait_completed()
+        time.sleep(0.5)
 
         batch_size = len(self.batches.get(batch_name, []))
         print(f"✓ Enabled {batch_size} images from batch '{batch_name}'")
 
     def align_current_batch(self, batch_name: str) -> None:
-        """Run alignment for currently enabled images."""
+        """
+        Run alignment for currently enabled images.
+        Uses proper monitoring to track progress until completion.
+        """
         print(f"\n=== Aligning Batch: {batch_name} ===")
 
-        # Run alignment with proper completion monitoring
-        self._run_command("alignment", "-align")
+        # Delegate alignment command without waiting
+        print("  CMD: -align")
+        self._delegate("-align")
+
+        # Monitor the alignment operation until completion
+        self._monitor_operation("Alignment", timeout_sec=7200.0, poll_interval=5.0)
 
         print(f"✓ Batch '{batch_name}' aligned")
 
@@ -307,12 +363,15 @@ class BatchAlignmentProcessor:
 
         pattern = f"g/{batch_name}/"
 
-        self._run_command(
-            "disable batch",
-            "-deselectAllImages",
-            "-selectImage", pattern,
-            "-enableImage", "false"
-        )
+        print(f"  CMD: -deselectAllImages -selectImage {pattern} -enableAlignment false")
+        self._delegate("-deselectAllImages")
+        self._wait_completed()
+        self._delegate("-selectImage", pattern)
+        self._wait_completed()
+        self._delegate("-enableAlignment", "false")
+        self._wait_completed()
+        time.sleep(0.5)
+
         print(f"✓ Batch '{batch_name}' disabled")
 
     def save_project(self, project_path: Optional[Path] = None) -> None:
@@ -321,7 +380,7 @@ class BatchAlignmentProcessor:
             project_path = self.images_root / "batch_alignment.rcproj"
 
         print(f"\n=== Saving Project ===")
-        self._run_command("save", "-save", str(project_path))
+        self._run_command_quick("save", "-save", str(project_path))
         print(f"✓ Project saved: {project_path}")
 
     def run(self) -> None:
@@ -374,7 +433,7 @@ class BatchAlignmentProcessor:
                 # Enable batch
                 self.enable_batch(batch_name)
 
-                # Run alignment
+                # Run alignment WITH PROPER MONITORING
                 self.align_current_batch(batch_name)
 
                 # Disable batch (prepare for next)
@@ -414,7 +473,7 @@ def main():
         return
 
     # Get RC instance name (optional)
-    instance = input("RealityCapture instance name [RC1]: ").strip() or "RC1"
+    instance = input("RealityCapture instance name [*]: ").strip() or "*"
 
     # Run processor
     processor = BatchAlignmentProcessor(root_path, instance)
