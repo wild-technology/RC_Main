@@ -1,432 +1,424 @@
 #!/usr/bin/env python3
 """
-Batch process underwater images for photogrammetry.
-Enhanced version with highlight protection and anti-banding measures.
-Maintains folder structure and copies text files.
-Includes preview mode with 10 random sample images.
+Batch Sequential Alignment Script for RealityCapture
+
+Scans image subdirectories, loads all images into an open RC instance,
+then sequentially enables/aligns each batch (directory) one at a time.
+
+Workflow:
+1. Scan subdirectories and build image index
+2. Load all images into open RC instance
+3. Disable alignment for all images
+4. For each batch (subdirectory):
+   - Enable alignment for batch images only
+   - Run alignment
+   - Disable batch images
+5. Final save
+
+Uses proper polling commands to detect completion instead of idle timers.
 """
 
-import cv2
-import numpy as np
-from pathlib import Path
-from tqdm import tqdm
-import shutil
-import random
+import os
+import sys
 import subprocess
-import platform
-
-
-def enhance_for_photogrammetry(image):
-    """
-    Adaptive enhancement with highlight protection and anti-banding.
-
-    Args:
-        image: Input BGR image as numpy array (uint8)
-
-    Returns:
-        Enhanced BGR image as numpy array (uint8)
-    """
-    # Store original for highlight protection at the end
-    original = image.copy()
-
-    # Convert to LAB (must be 8-bit for OpenCV)
-    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
-    l_channel, a_channel, b_channel = cv2.split(lab)
-
-    # Create highlight protection mask - identify bright areas to preserve
-    # Use threshold of 200 to catch highlights earlier
-    highlight_mask = (l_channel > 200).astype(np.float32)
-    highlight_mask = cv2.GaussianBlur(highlight_mask, (21, 21), 0)
-
-    # Create adaptive processing mask based on local variance
-    local_variance = compute_local_variance(l_channel)
-    variance_norm = cv2.normalize(local_variance, None, 0, 1, cv2.NORM_MINMAX, dtype=cv2.CV_32F)
-
-    # Process high-detail regions - minimal processing
-    clahe_conservative = cv2.createCLAHE(clipLimit=1.0, tileGridSize=(64, 64))
-    l_high_detail = clahe_conservative.apply(l_channel)
-
-    # Process low-detail regions - emphasize subtle texture
-    clahe_detail = cv2.createCLAHE(clipLimit=1.8, tileGridSize=(8, 8))
-    l_low_detail = clahe_detail.apply(l_channel)
-
-    # Blend based on local variance using float32 for precision
-    l_high_float = l_high_detail.astype(np.float32)
-    l_low_float = l_low_detail.astype(np.float32)
-    l_enhanced_float = l_high_float * variance_norm + l_low_float * (1 - variance_norm)
-
-    # Blend with original to prevent harsh transitions
-    l_original_float = l_channel.astype(np.float32)
-    l_blended_float = l_enhanced_float * 0.85 + l_original_float * 0.15
-
-    # CRITICAL: Protect highlights - revert to original in bright areas
-    # This prevents any brightening of already bright pixels
-    l_final_float = l_blended_float * (1 - highlight_mask) + l_original_float * highlight_mask
-
-    # Add subtle dithering to prevent banding in smooth gradients
-    dither_strength = 0.8
-    dither = np.random.normal(0, dither_strength, l_final_float.shape)
-    l_final_float = l_final_float + dither
-
-    # Clip and convert back to uint8
-    l_final = np.clip(l_final_float, 0, 255).astype(np.uint8)
-
-    # Merge back to LAB
-    lab_enhanced = cv2.merge([l_final, a_channel, b_channel])
-
-    # Convert back to BGR
-    enhanced = cv2.cvtColor(lab_enhanced, cv2.COLOR_LAB2BGR)
-
-    # Very gentle global contrast with highlight protection
-    enhanced = apply_highlight_safe_contrast(enhanced, highlight_mask)
-
-    # Subtle white balance
-    enhanced = apply_white_balance(enhanced)
-
-    # Enhance micro-texture in sediment areas (not in highlights)
-    enhanced = enhance_sediment_texture(enhanced, variance_norm, highlight_mask)
-
-    # FINAL PROTECTION: Blend back original pixels in highlight regions
-    # This is a safety net to ensure no highlight clipping occurred
-    enhanced_float = enhanced.astype(np.float32)
-    original_float = original.astype(np.float32)
-    final_float = enhanced_float * (1 - highlight_mask[:, :, np.newaxis]) + \
-                  original_float * highlight_mask[:, :, np.newaxis]
-
-    result = np.clip(final_float, 0, 255).astype(np.uint8)
-
-    return result
-
-
-def apply_highlight_safe_contrast(image, highlight_mask):
-    """
-    Apply contrast adjustment with soft clipping and highlight protection.
-
-    Args:
-        image: Input BGR image
-        highlight_mask: 2D mask of highlight regions (0-1)
-
-    Returns:
-        Contrast-adjusted image with protected highlights
-    """
-    # Store original for highlight protection
-    original = image.copy()
-
-    # Convert to float for precise computation
-    img_float = image.astype(np.float32) / 255.0
-
-    # Very gentle power curve (reduced from 0.95 to 0.97 to be more conservative)
-    gamma = 0.97
-    img_adjusted = np.power(img_float, gamma)
-
-    # Apply highlight compression (soft knee) at lower threshold
-    highlight_threshold = 0.75  # Start compression earlier
-    highlight_compress_mask = img_adjusted > highlight_threshold
-    # More gentle compression (0.5 instead of 0.7)
-    compressed = highlight_threshold + (img_adjusted - highlight_threshold) * 0.5
-    img_adjusted = np.where(highlight_compress_mask, compressed, img_adjusted)
-
-    # Convert back to uint8
-    result = np.clip(img_adjusted * 255, 0, 255).astype(np.uint8)
-
-    # Protect highlights - blend back original
-    result_float = result.astype(np.float32)
-    original_float = original.astype(np.float32)
-    final_float = result_float * (1 - highlight_mask[:, :, np.newaxis]) + \
-                  original_float * highlight_mask[:, :, np.newaxis]
-
-    return final_float.astype(np.uint8)
-
-
-def compute_local_variance(gray_channel, kernel_size=15):
-    """
-    Compute local variance to identify high-detail vs low-detail regions.
-
-    Args:
-        gray_channel: Grayscale image channel
-        kernel_size: Size of local neighborhood
-
-    Returns:
-        Local variance map
-    """
-    img_float = gray_channel.astype(np.float32)
-    mean = cv2.blur(img_float, (kernel_size, kernel_size))
-    mean_of_squares = cv2.blur(img_float ** 2, (kernel_size, kernel_size))
-    variance = mean_of_squares - (mean ** 2)
-    variance = np.maximum(variance, 0)
-    return variance
-
-
-def enhance_sediment_texture(image, variance_map, highlight_mask):
-    """
-    Enhance micro-texture in low-contrast sediment areas.
-    Avoids processing highlight regions.
-
-    Args:
-        image: Input BGR image
-        variance_map: Map of local variance (0-1, normalized)
-        highlight_mask: 2D mask of highlight regions (0-1)
-
-    Returns:
-        Texture-enhanced image
-    """
-    # Store original
-    original = image.copy()
-
-    # Create sediment mask (inverse of variance)
-    sediment_mask = 1.0 - variance_map
-    sediment_mask = cv2.GaussianBlur(sediment_mask, (15, 15), 0)
-
-    # Exclude highlights from texture enhancement
-    sediment_mask = sediment_mask * (1.0 - highlight_mask)
-
-    # Reduced boost to prevent artifacts
-    boost = 1.0 + (sediment_mask * 0.20)
-
-    # Apply boost
-    image_float = image.astype(np.float32)
-    image_boosted = image_float * boost[:, :, np.newaxis]
-    image_boosted = np.clip(image_boosted, 0, 255).astype(np.uint8)
-
-    return image_boosted
-
-
-def apply_white_balance(image):
-    """
-    Gray world white balance for color consistency.
-
-    Args:
-        image: Input BGR image as numpy array
-
-    Returns:
-        White-balanced BGR image as numpy array
-    """
-    # Work in float to avoid overflow
-    result = image.astype(np.float32)
-
-    # Convert to LAB
-    lab = cv2.cvtColor(result.astype(np.uint8), cv2.COLOR_BGR2LAB)
-    l, a, b = cv2.split(lab)
-
-    avg_a = np.average(a)
-    avg_b = np.average(b)
-
-    # Very gentle correction to avoid color shifts
-    a = a.astype(np.float32)
-    b = b.astype(np.float32)
-    l_float = l.astype(np.float32)
-
-    a = a - ((avg_a - 128) * (l_float / 255.0) * 0.25)
-    b = b - ((avg_b - 128) * (l_float / 255.0) * 0.25)
-
-    # Clip and convert back
-    a = np.clip(a, 0, 255).astype(np.uint8)
-    b = np.clip(b, 0, 255).astype(np.uint8)
-
-    lab_adjusted = cv2.merge([l, a, b])
-    result = cv2.cvtColor(lab_adjusted, cv2.COLOR_LAB2BGR)
-
-    return result
-
-
-def open_folder(folder_path):
-    """
-    Open folder in system file explorer.
-
-    Args:
-        folder_path: Path to folder to open
-    """
-    system = platform.system()
-    try:
-        if system == "Windows":
-            subprocess.run(["explorer", str(folder_path)])
-        elif system == "Darwin":
-            subprocess.run(["open", str(folder_path)])
-        else:
-            subprocess.run(["xdg-open", str(folder_path)])
-    except Exception as e:
-        print(f"Could not open folder automatically: {e}")
-        print(f"Please manually open: {folder_path}")
-
-
-def process_preview_samples(input_dir, preview_dir, num_samples=10):
-    """
-    Process random sample images for preview comparison.
-
-    Args:
-        input_dir: Path to input directory
-        preview_dir: Path to preview directory
-        num_samples: Number of random samples to process
-
-    Returns:
-        List of processed sample file paths
-    """
-    input_path = Path(input_dir)
-    preview_path = Path(preview_dir)
-
-    # Find all JPEG files recursively
-    image_files = list(input_path.rglob('*.jpg')) + list(input_path.rglob('*.jpeg')) + \
-                  list(input_path.rglob('*.JPG')) + list(input_path.rglob('*.JPEG'))
-
-    if not image_files:
-        print(f"No JPEG images found in {input_dir}")
-        return []
-
-    # Select random samples
-    num_samples = min(num_samples, len(image_files))
-    sample_files = random.sample(image_files, num_samples)
-
-    print(f"\nProcessing {num_samples} random samples for preview...")
-
-    # Create preview directory structure
-    original_dir = preview_path / "1_original"
-    processed_dir = preview_path / "2_processed"
-    original_dir.mkdir(parents=True, exist_ok=True)
-    processed_dir.mkdir(parents=True, exist_ok=True)
-
-    processed_samples = []
-
-    for img_file in tqdm(sample_files, desc="Creating preview samples"):
-        # Read image
-        image = cv2.imread(str(img_file))
-
-        if image is None:
-            print(f"\nWarning: Could not read {img_file.name}, skipping")
-            continue
-
-        # Copy original
-        original_output = original_dir / img_file.name
-        shutil.copy2(img_file, original_output)
-
-        # Process and save
-        enhanced = enhance_for_photogrammetry(image)
-        processed_output = processed_dir / img_file.name
-        cv2.imwrite(str(processed_output), enhanced, [cv2.IMWRITE_JPEG_QUALITY, 90])
-
-        processed_samples.append(img_file)
-
-    return processed_samples
-
-
-def process_images(input_dir, output_dir, skip_preview=False):
-    """
-    Process all JPEG images in input directory and save to output directory.
-    Maintains folder structure and copies text files.
-
-    Args:
-        input_dir: Path to directory containing input images
-        output_dir: Path to directory for saving processed images
-        skip_preview: If True, skip preview mode and process all images
-    """
-    input_path = Path(input_dir)
-    output_path = Path(output_dir)
-
-    # Preview mode
-    if not skip_preview:
-        preview_dir = output_path.parent / f"{output_path.name}_PREVIEW"
-
-        if preview_dir.exists():
-            shutil.rmtree(preview_dir)
-
-        processed_samples = process_preview_samples(input_dir, preview_dir, num_samples=10)
-
-        if not processed_samples:
-            print("No samples could be processed for preview.")
+import time
+from pathlib import Path
+from typing import Optional
+
+
+class BatchAlignmentProcessor:
+    def __init__(self, images_root: Path, instance_name: str = "RC1"):
+        self.images_root = images_root
+        self.instance_name = instance_name
+        self.rc_exe: Optional[Path] = None
+
+        # Image index: {batch_name: [image_paths]}
+        self.batches: dict[str, list[Path]] = {}
+
+        # Supported image extensions
+        self.image_exts = {".jpg", ".jpeg", ".png", ".heif", ".tif", ".tiff"}
+
+        # Polling configuration
+        self.poll_interval = 2.0
+
+    def find_rc_executable(self) -> Path:
+        """Find RealityCapture executable."""
+        candidates = [
+            Path(r"C:\Program Files\Epic Games\RealityScan_2.0\RealityScan.exe"),
+            Path(r"C:\Program Files\Epic Games\RealityScan\RealityScan.exe"),
+        ]
+        for c in candidates:
+            if c.exists():
+                return c
+
+        # Prompt user
+        custom = input("Path to RealityScan executable: ").strip().strip('"')
+        if not custom:
+            raise RuntimeError("RealityScan executable not found")
+        rc = Path(custom)
+        if not rc.exists():
+            raise RuntimeError(f"Executable not found: {rc}")
+        return rc
+
+    def scan_directories(self) -> None:
+        """
+        Scan subdirectories under images_root and build batch index.
+        Each immediate subdirectory becomes a batch.
+        """
+        print(f"\nScanning for image batches in: {self.images_root}")
+
+        # Get immediate subdirectories
+        subdirs = sorted([d for d in self.images_root.iterdir() if d.is_dir()])
+
+        if not subdirs:
+            raise RuntimeError(f"No subdirectories found in {self.images_root}")
+
+        # Build index
+        for subdir in subdirs:
+            batch_name = subdir.name
+            images = []
+
+            # Recursively find images in this batch directory
+            for img_path in subdir.rglob("*"):
+                if img_path.suffix.lower() in self.image_exts:
+                    images.append(img_path)
+
+            if images:
+                self.batches[batch_name] = sorted(images)
+                print(f"  Batch '{batch_name}': {len(images)} images")
+            else:
+                print(f"  Batch '{batch_name}': no images found (skipped)")
+
+        total_images = sum(len(imgs) for imgs in self.batches.values())
+        print(f"\nTotal: {len(self.batches)} batches, {total_images} images")
+
+    def _delegate(self, *args: str) -> subprocess.CompletedProcess:
+        """
+        Execute RealityCapture command via delegation.
+        Does NOT wait for completion - use _wait_completed() or _wait_until_idle() for that.
+        """
+        cmd = [str(self.rc_exe), "-delegateTo", self.instance_name] + list(args)
+        return subprocess.run(cmd, capture_output=True, text=True, check=False)
+
+    def _get_status(self) -> Optional[str]:
+        """
+        Query RC instance status using -getStatus command.
+
+        Returns:
+            Status string or None if query failed
+        """
+        cmd = [str(self.rc_exe), "-getStatus", self.instance_name]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+
+        if result.returncode == 0 and result.stdout:
+            lines = [ln.strip() for ln in result.stdout.splitlines() if ln.strip()]
+            return lines[-1] if lines else None
+        return None
+
+    def _wait_completed(self) -> subprocess.CompletedProcess:
+        """
+        Wait for current operation to complete using CLI's built-in -waitCompleted command.
+
+        This is the authoritative way to wait for RC operations per the documentation.
+
+        Returns:
+            CompletedProcess object
+        """
+        cmd = [str(self.rc_exe), "-waitCompleted", self.instance_name]
+        return subprocess.run(cmd, capture_output=True, text=True, check=False)
+
+    def _parse_status(self, status: Optional[str]) -> dict:
+        """
+        Parse status string into structured data.
+
+        Example: "id:0xffffffff progress:0.0% runtime:10.5sec endEstimation:5.2sec"
+
+        Returns:
+            Dictionary with parsed key-value pairs
+        """
+        result = {}
+        if not status:
+            return result
+
+        parts = status.split()
+        for part in parts:
+            if ':' in part:
+                key, value = part.split(':', 1)
+                result[key] = value
+
+        return result
+
+    def _is_idle(self, status: Optional[str] = None) -> bool:
+        """
+        Check if RealityCapture is idle based on status indicators.
+
+        Args:
+            status: Optional pre-fetched status string
+
+        Returns:
+            True if idle, False if busy
+        """
+        if status is None:
+            status = self._get_status()
+        if not status:
+            return False
+
+        parsed = self._parse_status(status)
+        status_lower = status.lower()
+
+        # Check for explicit "idle" keyword
+        if "idle" in status_lower:
+            return True
+
+        # Check for 100% progress
+        progress = parsed.get('progress', '')
+        if progress in ('100.0%', '100%'):
+            return True
+
+        # Check for idle state: id:0xffffffff with 0% progress
+        op_id = parsed.get('id', '')
+        if op_id == '0xffffffff' and progress in ('0.0%', '0%'):
+            return True
+
+        return False
+
+    def _wait_until_idle(self, operation_name: str = "operation", timeout: float = 3600.0) -> None:
+        """
+        Wait until RealityCapture reports idle status.
+
+        Uses two-stage approach:
+        1. CLI's built-in -waitCompleted command (authoritative)
+        2. Status polling as verification
+
+        Args:
+            operation_name: Name of operation for logging
+            timeout: Maximum seconds to wait during polling phase
+        """
+        print(f"  Waiting for {operation_name}...", end=" ", flush=True)
+
+        # Stage 1: Use CLI's built-in wait mechanism
+        self._wait_completed()
+        time.sleep(0.5)  # Brief grace period
+
+        # Stage 2: Verify idle state through status polling
+        status = self._get_status()
+        if self._is_idle(status):
+            print("done")
             return
 
-        print(f"\nPreview samples saved to: {preview_dir}")
-        print("  - 1_original: Original images")
-        print("  - 2_processed: Enhanced images")
-        print("\nOpening preview folder...")
+        # Continue polling if not immediately idle
+        start_time = time.time()
+        last_progress = None
 
-        open_folder(preview_dir)
+        while time.time() - start_time < timeout:
+            status = self._get_status()
+            parsed = self._parse_status(status)
+            progress = parsed.get('progress', '')
 
-        print("\nPlease review the preview samples.")
-        proceed = input("Proceed with full batch processing? (y/n): ").strip().lower()
+            # Display progress updates
+            if progress and progress != last_progress:
+                print(f"{progress}", end=" ", flush=True)
+                last_progress = progress
 
-        if proceed != 'y':
-            print("Processing cancelled.")
+            # Check if idle
+            if self._is_idle(status):
+                elapsed = time.time() - start_time
+                print(f"done ({elapsed:.1f}s)")
+                return
+
+            time.sleep(self.poll_interval)
+
+        # Timeout reached
+        print(f"timeout after {timeout}s")
+        raise TimeoutError(f"Operation '{operation_name}' timed out after {timeout} seconds")
+
+    def _run_command(self, operation_name: str, *args: str) -> None:
+        """
+        Run a command and wait for completion using proper polling.
+
+        Args:
+            operation_name: Name for logging
+            *args: Command arguments to delegate
+        """
+        print(f"  CMD: {' '.join(args)}")
+        self._delegate(*args)
+        self._wait_until_idle(operation_name)
+
+    def load_all_images(self) -> None:
+        """Load all images from all batches into RC project."""
+        print("\n=== Loading All Images ===")
+
+        # Create temporary imagelist file
+        imagelist = self.images_root / "_temp_imagelist.txt"
+        all_images = []
+        for images in self.batches.values():
+            all_images.extend(images)
+
+        with open(imagelist, "w", encoding="utf-8") as f:
+            for img in all_images:
+                f.write(f"{img}\n")
+
+        print(f"Loading {len(all_images)} images...")
+        self._run_command("load images", "-add", str(imagelist))
+
+        # Cleanup
+        imagelist.unlink()
+        print("✓ All images loaded")
+
+    def disable_all_images(self) -> None:
+        """Disable alignment for all images in project."""
+        print("\n=== Disabling All Images ===")
+        self._run_command(
+            "disable all",
+            "-selectAllImages",
+            "-enableImage", "false"
+        )
+        print("✓ All images disabled for alignment")
+
+    def enable_batch(self, batch_name: str) -> None:
+        """Enable alignment for images in specified batch."""
+        print(f"\n=== Enabling Batch: {batch_name} ===")
+
+        # Use path-based selection pattern
+        pattern = f"g/{batch_name}/"
+
+        self._run_command(
+            "enable batch",
+            "-deselectAllImages",
+            "-selectImage", pattern,
+            "-enableImage", "true"
+        )
+
+        batch_size = len(self.batches.get(batch_name, []))
+        print(f"✓ Enabled {batch_size} images from batch '{batch_name}'")
+
+    def align_current_batch(self, batch_name: str) -> None:
+        """Run alignment for currently enabled images."""
+        print(f"\n=== Aligning Batch: {batch_name} ===")
+
+        # Run alignment with proper completion monitoring
+        self._run_command("alignment", "-align")
+
+        print(f"✓ Batch '{batch_name}' aligned")
+
+    def disable_batch(self, batch_name: str) -> None:
+        """Disable alignment for images in specified batch."""
+        print(f"\n=== Disabling Batch: {batch_name} ===")
+
+        pattern = f"g/{batch_name}/"
+
+        self._run_command(
+            "disable batch",
+            "-deselectAllImages",
+            "-selectImage", pattern,
+            "-enableImage", "false"
+        )
+        print(f"✓ Batch '{batch_name}' disabled")
+
+    def save_project(self, project_path: Optional[Path] = None) -> None:
+        """Save the RC project."""
+        if project_path is None:
+            project_path = self.images_root / "batch_alignment.rcproj"
+
+        print(f"\n=== Saving Project ===")
+        self._run_command("save", "-save", str(project_path))
+        print(f"✓ Project saved: {project_path}")
+
+    def run(self) -> None:
+        """Execute complete batch alignment workflow."""
+        print("=" * 80)
+        print("BATCH SEQUENTIAL ALIGNMENT WORKFLOW")
+        print("=" * 80)
+
+        # Setup
+        self.rc_exe = self.find_rc_executable()
+        self.scan_directories()
+
+        if not self.batches:
+            print("\nNo image batches found. Exiting.")
             return
 
-    # Create output directory
-    output_path.mkdir(parents=True, exist_ok=True)
+        # Verify RC is running
+        status = self._get_status()
+        if not status:
+            print("\nError: Could not communicate with RealityCapture.")
+            print(f"Please ensure RealityCapture instance '{self.instance_name}' is running.")
+            return
 
-    # Find all files
-    image_files = list(input_path.rglob('*.jpg')) + list(input_path.rglob('*.jpeg')) + \
-                  list(input_path.rglob('*.JPG')) + list(input_path.rglob('*.JPEG'))
+        print(f"\nConnected to RealityCapture instance '{self.instance_name}'")
+        print(f"Status: {status}")
 
-    text_extensions = ['*.txt', '*.md', '*.log', '*.csv', '*.json', '*.xml', '*.yaml', '*.yml']
-    text_files = []
-    for ext in text_extensions:
-        text_files.extend(input_path.rglob(ext))
+        # Confirm workflow
+        print(f"\nThis will process {len(self.batches)} batches sequentially:")
+        for i, batch_name in enumerate(self.batches.keys(), 1):
+            print(f"  {i}. {batch_name} ({len(self.batches[batch_name])} images)")
 
-    if not image_files and not text_files:
-        print(f"No JPEG images or text files found in {input_dir}")
-        return
+        confirm = input("\nProceed? [Y/n]: ").strip().lower()
+        if confirm and confirm not in ('y', 'yes'):
+            print("Cancelled.")
+            return
 
-    print(f"\nProcessing {len(image_files)} images and {len(text_files)} text files...")
+        try:
+            # Load all images
+            self.load_all_images()
 
-    # Process each image
-    for img_file in tqdm(image_files, desc="Processing images"):
-        rel_path = img_file.relative_to(input_path)
-        output_file = output_path / rel_path
-        output_file.parent.mkdir(parents=True, exist_ok=True)
+            # Disable all images initially
+            self.disable_all_images()
 
-        image = cv2.imread(str(img_file))
+            # Process each batch sequentially
+            for i, batch_name in enumerate(self.batches.keys(), 1):
+                print("\n" + "=" * 80)
+                print(f"PROCESSING BATCH {i}/{len(self.batches)}: {batch_name}")
+                print("=" * 80)
 
-        if image is None:
-            print(f"\nWarning: Could not read {rel_path}, skipping")
-            continue
+                # Enable batch
+                self.enable_batch(batch_name)
 
-        enhanced = enhance_for_photogrammetry(image)
-        cv2.imwrite(str(output_file), enhanced, [cv2.IMWRITE_JPEG_QUALITY, 90])
+                # Run alignment
+                self.align_current_batch(batch_name)
 
-    # Copy text files
-    if text_files:
-        print("\nCopying text files...")
-        for text_file in tqdm(text_files, desc="Copying text files"):
-            rel_path = text_file.relative_to(input_path)
-            output_file = output_path / rel_path
-            output_file.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(text_file, output_file)
+                # Disable batch (prepare for next)
+                self.disable_batch(batch_name)
 
-    print(f"\nProcessing complete. Files saved to {output_dir}")
-    print(f"  - {len(image_files)} images processed")
-    print(f"  - {len(text_files)} text files copied")
+                # Save after each batch
+                self.save_project()
+
+            print("\n" + "=" * 80)
+            print("BATCH PROCESSING COMPLETE")
+            print("=" * 80)
+            print(f"Processed {len(self.batches)} batches successfully")
+
+        except Exception as e:
+            print(f"\n[ERROR] Processing failed: {e}")
+            # Try to save project before exit
+            try:
+                self.save_project()
+            except Exception:
+                pass
+            raise
 
 
 def main():
-    """Main function to handle user input and process images."""
-    print("Adaptive Underwater Image Enhancement for Photogrammetry")
-    print("=" * 60)
+    print("Batch Sequential Alignment for RealityCapture")
+    print("=" * 80)
 
-    input_dir = input("Enter the path to the directory with original images: ").strip()
-    if not Path(input_dir).exists():
-        print(f"Error: Input directory '{input_dir}' does not exist")
+    # Get images root directory
+    images_root = input("Enter root directory containing image batch subdirectories: ").strip().strip('"')
+    if not images_root:
+        print("No directory provided. Exiting.")
         return
 
-    output_dir = input("Enter the path to save processed images: ").strip()
+    root_path = Path(images_root)
+    if not root_path.exists() or not root_path.is_dir():
+        print(f"Invalid directory: {images_root}")
+        return
 
-    print(f"\nInput: {input_dir}")
-    print(f"Output: {output_dir}")
-    print("\nEnhanced processing with strong highlight protection:")
-    print("  - Highlight detection threshold at L=200")
-    print("  - Multi-stage highlight protection (LAB, contrast, texture, final)")
-    print("  - Original pixels preserved in bright areas")
-    print("  - Soft-knee contrast curve starting at 0.75")
-    print("  - Reduced gamma (0.97) for gentler brightening")
-    print("  - Subtle dithering on smooth gradients")
-    print("  - Adaptive CLAHE based on local variance")
-    print("  - 90% JPEG quality")
+    # Get RC instance name (optional)
+    instance = input("RealityCapture instance name [RC1]: ").strip() or "RC1"
 
-    print("\nPreview mode: 10 random samples will be processed first")
-
-    confirm = input("\nProceed with preview? (y/n): ").strip().lower()
-
-    if confirm == 'y':
-        process_images(input_dir, output_dir, skip_preview=False)
-    else:
-        print("Processing cancelled.")
+    # Run processor
+    processor = BatchAlignmentProcessor(root_path, instance)
+    processor.run()
 
 
 if __name__ == "__main__":
