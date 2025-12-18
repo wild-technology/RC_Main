@@ -12,23 +12,16 @@ Execution Logic:
 
 Per-component workflow:
   1. -selectComponent <name> — Select component by name
-  2. -setReconstructionRegionAuto — Define reconstruction bounds
-  3. -calculateNormalModel — Generate mesh
-  4. -selectLargeTrianglesRel + filter — Remove oversized triangles
-  5. -selectLargestModelComponent + invert + filter — Keep largest connected mesh
-  6. -cleanModel — Fix geometry issues
-  7. -smooth — Smooth surface
-  8. -calculateTexture — Generate texture on high-poly
-  9. -renameSelectedModel — Preserve as <name>_HighPoly
-  10. -simplify (XML) — First percentage reduction
-  11. Keep largest part + -cleanModel
-  12. -simplify — Second percentage reduction
-  13. Keep largest part + -cleanModel
-  14. -renameSelectedModel — Name as <name>_LowPoly
-  15. -unwrap — UV unwrap
-  16. -reprojectTexture — Transfer texture from HighPoly to LowPoly
-  17. -selectModel + -exportSelectedModel — Export final .obj
-  18. Validate export exists — HALT if missing
+  2. -calculateNormalModel — Generate mesh (no region restriction)
+  3. -selectLargeTrianglesRel + filter — Remove oversized triangles
+  4. -selectLargestModelComponent + invert + filter — Keep largest connected mesh
+  5. -cleanModel — Fix geometry issues
+  6. -smooth — Smooth surface
+  7. -calculateTexture — Generate texture
+  8. -renameSelectedModel — Name as <name>_Model
+  9. -save — Save project
+  10. -selectModel + -exportModel — Export as FBX for Unreal Engine
+  11. Validate export exists — HALT if missing
 
 Uses delegation (-delegateTo *) to communicate with running RealityCapture instance.
 """
@@ -59,8 +52,7 @@ class ModelProcessor:
             rc_exe: Path,
             alignment_dir: Path,
             export_dir: Path,
-            simplify_params: Path,
-            texture_reproj_params: Optional[Path] = None,
+            project_prefix: str,
             poll_interval: float = 2.0,
             test_mode: bool = True,
     ):
@@ -71,16 +63,14 @@ class ModelProcessor:
             rc_exe: Path to RealityScan.exe (for delegation commands only)
             alignment_dir: Directory containing .rsalign files (used to derive component names)
             export_dir: Directory where models will be exported
-            simplify_params: Path to simplification params XML (percentage-based)
-            texture_reproj_params: Optional path to texture reprojection params XML
+            project_prefix: Prefix for FBX export filenames (e.g., "NA165_H2060")
             poll_interval: Seconds between status checks
             test_mode: If True, only process the first component
         """
         self.rc_exe = rc_exe
         self.alignment_dir = alignment_dir
         self.export_dir = export_dir
-        self.simplify_params = simplify_params
-        self.texture_reproj_params = texture_reproj_params
+        self.project_prefix = project_prefix
         self.poll_interval = poll_interval
         self.test_mode = test_mode
         self.process_log: list[dict[str, str]] = []
@@ -90,9 +80,6 @@ class ModelProcessor:
 
         if not self.alignment_dir.exists():
             raise FileNotFoundError(f"Alignment directory not found: {self.alignment_dir}")
-
-        if not self.simplify_params.exists():
-            raise FileNotFoundError(f"Simplification params not found: {self.simplify_params}")
 
         self.export_dir.mkdir(parents=True, exist_ok=True)
 
@@ -297,7 +284,6 @@ class ModelProcessor:
                 f"Output file is empty (0 bytes) at {output_file}"
             )
 
-        # Report file size
         if file_size < 1024:
             size_str = f"{file_size} bytes"
         elif file_size < 1024 * 1024:
@@ -307,31 +293,25 @@ class ModelProcessor:
 
         print(f"    Export validated: {output_file.name} ({size_str})")
 
-    def _get_obj_stats(self, obj_path: Path) -> dict:
+    def _extract_component_number(self, component_name: str) -> str:
         """
-        Parse an OBJ file to get vertex and triangle counts.
+        Extract the component number from the component name.
+
+        Expects component names like "Component (01)", "Component (02)", etc.
+        Returns zero-padded 2-digit number.
 
         Args:
-            obj_path: Path to the OBJ file
+            component_name: Name of the component
 
         Returns:
-            Dictionary with 'vertices' and 'triangles' counts
+            Zero-padded component number (e.g., "01", "02")
         """
-        vertices = 0
-        faces = 0
-
-        try:
-            with open(obj_path, 'r', encoding='utf-8', errors='ignore') as f:
-                for line in f:
-                    if line.startswith('v '):
-                        vertices += 1
-                    elif line.startswith('f '):
-                        faces += 1
-        except Exception as e:
-            print(f"    Warning: Could not parse OBJ stats: {e}")
-            return {"vertices": 0, "triangles": 0}
-
-        return {"vertices": vertices, "triangles": faces}
+        import re
+        match = re.search(r'\((\d+)\)', component_name)
+        if match:
+            num = int(match.group(1))
+            return f"{num:02d}"
+        return "00"
 
     def scan_component_names(self) -> list[str]:
         """
@@ -365,106 +345,53 @@ class ModelProcessor:
         print(f"Processing component: {component_name}")
         print(f"{'=' * 60}")
 
-        high_poly_name = f"{component_name}_HighPoly"
-        low_poly_name = f"{component_name}_LowPoly"
-        output_file = self.export_dir / f"{component_name}.obj"
+        model_name = f"{component_name}_Model"
+        component_num = self._extract_component_number(component_name)
+        output_file = self.export_dir / f"{self.project_prefix}_{component_num}.fbx"
 
         # 1. Select the component by name
-        print("\n  [1/20] Selecting component...")
+        print("\n  [1/10] Selecting component...")
         self._run_command("select component", "-selectComponent", component_name)
 
-        # 2. Set reconstruction region automatically
-        print("\n  [2/20] Setting reconstruction region...")
-        self._run_command("set region", "-setReconstructionRegionAuto")
-
-        # 3. Calculate normal model
-        print("\n  [3/20] Calculating normal model...")
+        # 2. Calculate normal model (no region restriction)
+        print("\n  [2/10] Calculating normal model...")
         self._run_command("model calculation", "-calculateNormalModel")
 
-        # 4. Select large triangles and filter
-        print("\n  [4/20] Filtering large triangles...")
+        # 3. Select large triangles and filter
+        print("\n  [3/10] Filtering large triangles...")
         self._run_command("select large triangles", "-selectLargeTrianglesRel", "2.0")
         self._run_command("filter", "-removeSelectedTriangles")
 
-        # 5. Keep largest connected part
-        print("\n  [5/20] Keeping largest connected part...")
+        # 4. Keep largest connected part
+        print("\n  [4/10] Keeping largest connected part...")
         self._keep_largest_part()
 
-        # 6. Clean model
-        print("\n  [6/20] Cleaning model...")
+        # 5. Clean model
+        print("\n  [5/10] Cleaning model...")
         self._run_command("clean model", "-cleanModel")
 
-        # 7. Smooth
-        print("\n  [7/20] Smoothing...")
+        # 6. Smooth
+        print("\n  [6/10] Smoothing...")
         self._run_command("smooth", "-smooth")
 
-        # 8. Calculate texture on high-poly
-        print("\n  [8/20] Calculating texture (high-poly)...")
+        # 7. Calculate texture
+        print("\n  [7/10] Calculating texture...")
         self._run_command("texture", "-calculateTexture")
 
-        # 9. Rename to preserve as HighPoly
-        print(f"\n  [9/20] Renaming to {high_poly_name}...")
-        self._run_command("rename high-poly", "-renameSelectedModel", high_poly_name)
+        # 8. Rename model
+        print(f"\n  [8/10] Renaming to {model_name}...")
+        self._run_command("rename model", "-renameSelectedModel", model_name)
 
-        # 10. First simplification (percentage-based via params.xml)
-        print("\n  [10/20] Simplifying (first pass)...")
-        self._run_command("simplify", "-simplify", str(self.simplify_params))
+        # 9. Save project
+        print("\n  [9/10] Saving project...")
+        self._run_command("save", "-save")
 
-        # 11. Keep largest part after first simplification
-        print("\n  [11/20] Keeping largest part...")
-        self._keep_largest_part()
+        # 10. Export as FBX for Unreal Engine
+        print(f"\n  [10/10] Exporting FBX for Unreal Engine as {output_file.name}...")
+        self._run_command("export", "-selectModel", model_name)
+        self._run_command("export", "-exportModel", "fbx", "unrealEngine", str(output_file))
 
-        # 12. Clean model
-        print("\n  [12/20] Cleaning model...")
-        self._run_command("clean model", "-cleanModel")
-
-        # 13. Second simplification
-        print("\n  [13/20] Simplifying (second pass)...")
-        self._run_command("simplify", "-simplify", str(self.simplify_params))
-
-        # 14. Keep largest part after second simplification
-        print("\n  [14/20] Keeping largest part...")
-        self._keep_largest_part()
-
-        # 15. Clean model
-        print("\n  [15/20] Cleaning model...")
-        self._run_command("clean model", "-cleanModel")
-
-        # 16. Rename to LowPoly
-        print(f"\n  [16/20] Renaming to {low_poly_name}...")
-        self._run_command("rename low-poly", "-renameSelectedModel", low_poly_name)
-
-        # 17. Unwrap the low-poly model
-        print("\n  [17/20] Unwrapping...")
-        self._run_command("unwrap", "-unwrap")
-
-        # 18. Reproject texture from HighPoly to LowPoly
-        print(f"\n  [18/20] Reprojecting texture from {high_poly_name} to {low_poly_name}...")
-        if self.texture_reproj_params and self.texture_reproj_params.exists():
-            self._run_command(
-                "reproject texture",
-                "-reprojectTexture", high_poly_name, low_poly_name, str(self.texture_reproj_params)
-            )
-        else:
-            self._run_command(
-                "reproject texture",
-                "-reprojectTexture", high_poly_name, low_poly_name
-            )
-
-        # 19. Select LowPoly model
-        print(f"\n  [19/20] Selecting {low_poly_name}...")
-        self._run_command("select model", "-selectModel", low_poly_name)
-
-        # 20. Export
-        print("\n  [20/20] Exporting model...")
-        self._run_command("export", "-exportSelectedModel", str(output_file))
-
-        # Validate export - raises ExportError if failed
         self._validate_export(output_file, component_name)
-
-        # Get and display model statistics
-        stats = self._get_obj_stats(output_file)
-        print(f"    Model stats: {stats['vertices']:,} vertices, {stats['triangles']:,} triangles")
 
         return output_file
 
@@ -495,7 +422,6 @@ class ModelProcessor:
             print(f"  - {name}")
         print()
 
-        # Verify RealityCapture is running
         status = self._get_status()
         if not status:
             print("Error: Could not communicate with RealityCapture.")
@@ -519,28 +445,23 @@ class ModelProcessor:
             try:
                 output_file = self.process_component(component_name)
                 exported_models.append(output_file)
+                component_num = self._extract_component_number(component_name)
                 self.process_log.append({
                     "component": component_name,
-                    "output": output_file.name,
+                    "output": f"{self.project_prefix}_{component_num}.fbx",
                     "status": "success",
                 })
 
-                # Save project after each successful component
-                print("\n  Saving project...")
-                self._run_command("save", "-save")
-
             except ExportError as e:
-                # Log the failure
+                component_num = self._extract_component_number(component_name)
                 self.process_log.append({
                     "component": component_name,
-                    "output": "",
+                    "output": f"{self.project_prefix}_{component_num}.fbx",
                     "status": "FAILED",
                 })
 
-                # Generate partial summary before halting
                 self.generate_summary()
 
-                # Re-raise to halt processing
                 print(f"\n{'=' * 60}")
                 print("FATAL ERROR: Export failed. Processing halted.")
                 print(f"{'=' * 60}")
@@ -569,7 +490,8 @@ class ModelProcessor:
             f"Processing Date/Time: {timestamp}",
             f"Alignment Directory: {self.alignment_dir}",
             f"Export Directory: {self.export_dir}",
-            f"Simplification Params: {self.simplify_params}",
+            f"Project Prefix: {self.project_prefix}",
+            f"Export Format: FBX for Unreal Engine",
             f"Total Processed: {len(self.process_log)}",
             f"Successful: {successful}",
             f"Failed: {failed}",
@@ -609,20 +531,19 @@ class ModelProcessor:
         print(f"\nSummary saved to: {summary_file}")
 
 
-def get_user_input() -> tuple[Path, Path, Path, Optional[Path], bool]:
+def get_user_input() -> tuple[Path, Path, str, bool]:
     """
     Prompt user for settings.
 
     Returns:
-        Tuple of (alignment_dir, export_dir, simplify_params, texture_reproj_params, test_mode)
+        Tuple of (alignment_dir, export_dir, project_prefix, test_mode)
     """
     default_alignment_dir = r"D:\NA168\Zeuss_NA168_H2080\aligned_components"
-    default_export_dir = r"D:\NA168\Zeuss_NA168_H2080\models"
-    default_simplify_params = r"D:\NA168\simplificationParameters.xml"
-    default_texture_reproj_params = r"D:\NA168\TextureReprojectionSettings.xml"
+    default_export_dir = r"C:\Users\jonat\OneDrive\Desktop\NA165_H2060\models"
+    default_project_prefix = "NA165_H2060"
 
     print("=" * 80)
-    print("RealityCapture Model Processor")
+    print("RealityCapture Model Processor - FBX Export for Unreal Engine")
     print("=" * 80)
     print()
     print("This script processes components already loaded in an open RC project.")
@@ -637,7 +558,6 @@ def get_user_input() -> tuple[Path, Path, Path, Optional[Path], bool]:
     print("NOTE: Processing will STOP if any export fails.")
     print()
 
-    # Alignment directory (to derive component names)
     while True:
         align_input = input(f"Alignment directory (.rsalign files) [{default_alignment_dir}]: ").strip()
         if not align_input:
@@ -649,9 +569,8 @@ def get_user_input() -> tuple[Path, Path, Path, Optional[Path], bool]:
             print(f"Error: Directory not found: {alignment_dir}")
             print()
 
-    # Export directory
     while True:
-        export_input = input(f"Export directory for models [{default_export_dir}]: ").strip()
+        export_input = input(f"Export directory for FBX models [{default_export_dir}]: ").strip()
         if not export_input:
             export_input = default_export_dir
         export_dir = Path(export_input)
@@ -662,34 +581,16 @@ def get_user_input() -> tuple[Path, Path, Path, Optional[Path], bool]:
             print(f"Error: Could not create directory: {e}")
             print()
 
-    # Simplification parameters XML
-    while True:
-        simplify_input = input(f"Simplification params XML [{default_simplify_params}]: ").strip()
-        if not simplify_input:
-            simplify_input = default_simplify_params
-        simplify_params = Path(simplify_input)
-        if simplify_params.exists():
-            break
-        else:
-            print(f"Error: File not found: {simplify_params}")
-            print()
+    prefix_input = input(f"Project prefix for FBX filenames [{default_project_prefix}]: ").strip()
+    if not prefix_input:
+        prefix_input = default_project_prefix
+    project_prefix = prefix_input
 
-    # Texture reprojection parameters XML (optional)
-    texture_reproj_input = input(
-        f"Texture reprojection params XML (optional) [{default_texture_reproj_params}]: ").strip()
-    if not texture_reproj_input:
-        texture_reproj_input = default_texture_reproj_params
-    texture_reproj_params = Path(texture_reproj_input)
-    if not texture_reproj_params.exists():
-        print(f"Note: Texture reprojection params not found, will use defaults.")
-        texture_reproj_params = None
-
-    # Test mode
     test_input = input("Test mode (only process first component)? [Y/n]: ").strip().lower()
     test_mode = test_input != 'n'
 
     print()
-    return alignment_dir, export_dir, simplify_params, texture_reproj_params, test_mode
+    return alignment_dir, export_dir, project_prefix, test_mode
 
 
 def main():
@@ -704,14 +605,13 @@ def main():
         sys.exit(1)
 
     try:
-        alignment_dir, export_dir, simplify_params, texture_reproj_params, test_mode = get_user_input()
+        alignment_dir, export_dir, project_prefix, test_mode = get_user_input()
 
         processor = ModelProcessor(
             rc_exe=rc_exe,
             alignment_dir=alignment_dir,
             export_dir=export_dir,
-            simplify_params=simplify_params,
-            texture_reproj_params=texture_reproj_params,
+            project_prefix=project_prefix,
             poll_interval=2.0,
             test_mode=test_mode,
         )
@@ -721,7 +621,7 @@ def main():
         processor.generate_summary()
 
         if exported:
-            print(f"\nSuccessfully exported {len(exported)} model(s).")
+            print(f"\nSuccessfully exported {len(exported)} FBX model(s).")
         else:
             print("\nNo models were exported.")
 
