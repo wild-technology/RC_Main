@@ -25,13 +25,13 @@ class CameraParameterSetter:
         # Distortion model mapping to numeric codes for editInputSelection
         # Corrected based on actual RealityCapture behavior
         self.distortion_codes = {
-            "Division": 0,
-            "Brown3": 1,
-            "Brown4": 2,
-            "Brown3WithTangential2": 3,
-            "Brown4WithTangential2": 4,
-            "KplusBrown3WithTangential2": 5,
-            "KplusBrown4WithTangential2": 6,
+            "Division": 1,
+            "Brown3": 2,
+            "Brown4": 3,
+            "Brown3WithTangential2": 4,
+            "Brown4WithTangential2": 5,
+            "KplusBrown3WithTangential2": 6,
+            "KplusBrown4WithTangential2": 7,
         }
 
         # Camera group definitions
