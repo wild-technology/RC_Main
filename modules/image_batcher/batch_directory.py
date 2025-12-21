@@ -476,9 +476,18 @@ class BatchDirectory(RCModule):
 
 	def __add_overlap_to_zones(self, gdf_processed, num_zones, overlap_percent, density_weight):
 		"""
-		Add overlap to base zones by selecting nearest points from other zones.
+		Add bidirectional overlap to base zones by selecting nearest points from neighboring zones.
 
-		For each zone, adds overlap_percent of its base size from neighboring zones.
+		Each zone independently borrows overlap_percent from ALL other zones combined, resulting in
+		natural bidirectional overlap. When zone boundaries are close, both zones will naturally
+		borrow from each other since their nearest neighbors will be in the adjacent zone.
+
+		Example with 10% overlap and 10,000 base per zone:
+		- Zone 1: 10,000 base + ~1,000 from neighbors (mostly zone 2) = ~11,000 total
+		- Zone 2: 10,000 base + ~1,000 from neighbors (zone 1 + zone 3) = ~12,000 total
+		- Zone 3: 10,000 base + ~1,000 from neighbors (zone 2 + zone 4) = ~12,000 total
+		- Last zone: 10,000 base + ~1,000 from neighbors (mostly previous zone) = ~11,000 total
+
 		Selection prioritizes:
 		- Distance to zone boundary (70% weight)
 		- Inverse density to avoid high-density areas (30% weight)
