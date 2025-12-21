@@ -17,16 +17,20 @@ Per-component workflow:
   4. -selectLargestModelComponent + invert + filter — Keep largest connected mesh
   5. -cleanModel — Fix geometry issues
   6. -smooth — Smooth surface
-  7. -calculateTexture + rename — Generate texture, save as <n>_Textured
-  8. -simplify 80% — First simplification pass
-  9. -closeHoles — Close holes
-  10. -simplify 80% — Second simplification pass
-  11. -closeHoles — Close holes
-  12. -renameSelectedModel — Rename to <n>_Model
-  13. -reprojectTexture — Reproject texture from _Textured to _Model
-  14. -save — Save project
-  15. -exportModel — Export as FBX
-  16. Validate export exists — HALT if missing
+  7. -calculateTexture — Generate texture on high-poly
+  8. -renameSelectedModel — Rename to <n>_HighPoly
+  9. -simplify — First simplification (uses RC settings or params.xml)
+  10. -closeHoles — Close holes
+  11. -simplify — Second simplification
+  12. -closeHoles — Close holes
+  13. -renameSelectedModel — Rename to <n>_LowPoly
+  14. -unwrap — Unwrap low-poly model (required for texture reprojection)
+  15. -reprojectTexture — Reproject texture from _HighPoly to _LowPoly
+  16. -save — Save project
+  17. -exportModel — Export _LowPoly as FBX
+  18. -selectModel — Select _HighPoly model
+  19. -export3dTiles — Export _HighPoly as Cesium 3D Tiles (.json)
+  20. Validate exports exist — HALT if missing
 
 Uses delegation (-delegateTo *) to communicate with running RealityCapture instance.
 """
@@ -55,6 +59,7 @@ class ModelProcessor:
             alignment_dir: Path,
             export_dir: Path,
             project_prefix: str,
+            simplify_params: Optional[Path] = None,
             poll_interval: float = 2.0,
             test_mode: bool = True,
     ):
@@ -62,6 +67,7 @@ class ModelProcessor:
         self.alignment_dir = alignment_dir
         self.export_dir = export_dir
         self.project_prefix = project_prefix
+        self.simplify_params = simplify_params
         self.poll_interval = poll_interval
         self.test_mode = test_mode
         self.process_log: list[dict[str, str]] = []
@@ -215,7 +221,7 @@ class ModelProcessor:
         component_names = [f.stem for f in rsalign_files]
         return component_names
 
-    def process_component(self, component_name: str) -> Path:
+    def process_component(self, component_name: str, simplify_params: Optional[Path] = None) -> Path:
         """
         Process a single component through the full pipeline.
 
@@ -226,92 +232,133 @@ class ModelProcessor:
         4. Select largest connected part -> invert -> filter
         5. Clean model
         6. Smooth
-        7. Calculate texture (and rename to preserve as texture source)
-        8. Simplify 80%
-        9. Close holes
-        10. Simplify 80%
-        11. Close holes
-        12. Rename simplified model
-        13. Reproject texture from original to simplified
-        14. Save project
-        15. Export FBX
+        7. Calculate texture on high-poly
+        8. Rename to _HighPoly (textured source model - preserved)
+        9. Simplify (pass 1) - creates new model
+        10. Close holes
+        11. Simplify (pass 2)
+        12. Close holes
+        13. Rename to _LowPoly
+        14. Unwrap _LowPoly (required for texture reprojection)
+        15. Reproject texture from _HighPoly to _LowPoly
+        16. Save project
+        17. Export _LowPoly as FBX
+        18. Select _HighPoly model
+        19. Export _HighPoly as Cesium 3D Tiles (.json)
         """
         print(f"\n{'=' * 60}")
         print(f"Processing component: {component_name}")
         print(f"{'=' * 60}")
 
         # Model names
-        textured_model_name = f"{component_name}_Textured"  # High-poly with texture
-        final_model_name = f"{component_name}_Model"  # Final simplified model
+        high_poly_name = f"{component_name}_HighPoly"  # Textured high-poly source
+        low_poly_name = f"{component_name}_LowPoly"  # Final simplified model
         component_num = self._extract_component_number(component_name)
         output_file = self.export_dir / f"{self.project_prefix}_{component_num}.fbx"
 
         # 1. Select the component by name
-        print("\n  [1/15] Selecting component...")
+        print("\n  [1/19] Selecting component...")
         self._run_command("select component", "-selectComponent", component_name)
 
         # 2. Calculate normal model
-        print("\n  [2/15] Calculating normal model...")
+        print("\n  [2/19] Calculating normal model...")
         self._run_command("model calculation", "-calculateNormalModel")
 
         # 3. Select large triangles and filter
-        print("\n  [3/15] Filtering large triangles...")
+        print("\n  [3/19] Filtering large triangles...")
         self._run_command("select large triangles", "-selectLargeTrianglesRel", "2.0")
         self._run_command("filter", "-removeSelectedTriangles")
 
         # 4. Keep largest connected part
-        print("\n  [4/15] Keeping largest connected part...")
+        print("\n  [4/19] Keeping largest connected part...")
         self._run_command("select largest", "-selectLargestModelComponent")
         self._run_command("invert selection", "-invertTrianglesSelection")
         self._run_command("filter", "-removeSelectedTriangles")
 
         # 5. Clean model
-        print("\n  [5/15] Cleaning model...")
+        print("\n  [5/19] Cleaning model...")
         self._run_command("clean model", "-cleanModel")
 
         # 6. Smooth
-        print("\n  [6/15] Smoothing...")
+        print("\n  [6/19] Smoothing...")
         self._run_command("smooth", "-smooth")
 
-        # 7. Calculate texture and rename to preserve as texture source
-        print("\n  [7/15] Calculating texture...")
+        # 7. Calculate texture on high-poly model
+        print("\n  [7/19] Calculating texture...")
         self._run_command("texture", "-calculateTexture")
-        print(f"         Renaming textured model to {textured_model_name}...")
-        self._run_command("rename textured", "-renameSelectedModel", textured_model_name)
 
-        # 8. Simplify by 80% (keep 20%)
-        print("\n  [8/15] Simplifying (80% reduction, pass 1)...")
-        self._run_command("simplify", "-simplify", "20%")
+        # 8. Rename to preserve as high-poly textured source
+        print(f"\n  [8/19] Renaming to {high_poly_name}...")
+        self._run_command("rename", "-renameSelectedModel", high_poly_name)
 
-        # 9. Close holes
-        print("\n  [9/15] Closing holes...")
+        # 9. Simplify (pass 1) - simplify creates a new model from the selected one
+        print("\n  [9/19] Simplifying (pass 1)...")
+        if simplify_params and simplify_params.exists():
+            self._run_command("simplify", "-simplify", str(simplify_params))
+        else:
+            # Use current settings in RC (no parameter = use app settings)
+            self._run_command("simplify", "-simplify")
+
+        # 10. Close holes
+        print("\n  [10/19] Closing holes...")
         self._run_command("close holes", "-closeHoles")
 
-        # 10. Simplify by 80% again
-        print("\n  [10/15] Simplifying (80% reduction, pass 2)...")
-        self._run_command("simplify", "-simplify", "20%")
+        # 11. Simplify (pass 2)
+        print("\n  [11/19] Simplifying (pass 2)...")
+        if simplify_params and simplify_params.exists():
+            self._run_command("simplify", "-simplify", str(simplify_params))
+        else:
+            self._run_command("simplify", "-simplify")
 
-        # 11. Close holes
-        print("\n  [11/15] Closing holes...")
+        # 12. Close holes
+        print("\n  [12/19] Closing holes...")
         self._run_command("close holes", "-closeHoles")
 
-        # 12. Rename simplified model
-        print(f"\n  [12/15] Renaming simplified model to {final_model_name}...")
-        self._run_command("rename model", "-renameSelectedModel", final_model_name)
+        # 13. Rename simplified model to low-poly
+        print(f"\n  [13/19] Renaming to {low_poly_name}...")
+        self._run_command("rename", "-renameSelectedModel", low_poly_name)
 
-        # 13. Reproject texture from high-poly textured model to simplified model
-        print(f"\n  [13/15] Reprojecting texture from {textured_model_name} to {final_model_name}...")
-        self._run_command("reproject texture", "-reprojectTexture", textured_model_name, final_model_name)
+        # 14. Unwrap the low-poly model (required before texture reprojection)
+        print(f"\n  [14/19] Unwrapping {low_poly_name}...")
+        self._run_command("unwrap", "-unwrap")
 
-        # 14. Save project
-        print("\n  [14/15] Saving project...")
+        # 15. Reproject texture from high-poly to low-poly
+        print(f"\n  [15/19] Reprojecting texture...")
+        print(f"           Source (textured): {high_poly_name}")
+        print(f"           Target (simplified): {low_poly_name}")
+        self._run_command("reproject texture", "-reprojectTexture", high_poly_name, low_poly_name)
+
+        # 16. Save project
+        print("\n  [16/19] Saving project...")
         self._run_command("save", "-save")
 
-        # 15. Export as FBX
-        print(f"\n  [15/15] Exporting FBX as {output_file.name}...")
-        self._run_command("export", "-exportModel", final_model_name, str(output_file))
+        # 17. Export low-poly as FBX
+        print(f"\n  [17/19] Exporting low-poly FBX as {output_file.name}...")
+        self._run_command("export", "-exportModel", low_poly_name, str(output_file))
 
         self._validate_export(output_file, component_name)
+
+        # 18. Select high-poly model for Cesium export
+        cesium_file = self.export_dir / f"{self.project_prefix}_{component_num}.json"
+        print(f"\n  [18/19] Selecting {high_poly_name} for Cesium export...")
+        self._run_command("select model", "-selectModel", high_poly_name)
+
+        # 19. Export high-poly as Cesium 3D Tiles
+        print(f"\n  [19/19] Exporting high-poly Cesium 3D Tiles as {cesium_file.name}...")
+        self._run_command("export cesium", "-export3dTiles", str(cesium_file))
+
+        # Validate Cesium export
+        if cesium_file.exists() and cesium_file.stat().st_size > 0:
+            size = cesium_file.stat().st_size
+            if size < 1024:
+                size_str = f"{size} bytes"
+            elif size < 1024 * 1024:
+                size_str = f"{size / 1024:.1f} KB"
+            else:
+                size_str = f"{size / (1024 * 1024):.1f} MB"
+            print(f"    Cesium export validated: {cesium_file.name} ({size_str})")
+        else:
+            print(f"    Warning: Cesium export may have failed - {cesium_file.name}")
 
         return output_file
 
@@ -350,7 +397,7 @@ class ModelProcessor:
             print(f"\n[{i + 1}/{len(component_names)}] Processing component: {component_name}")
 
             try:
-                output_file = self.process_component(component_name)
+                output_file = self.process_component(component_name, self.simplify_params)
                 exported_models.append(output_file)
                 component_num = self._extract_component_number(component_name)
                 self.process_log.append({
@@ -439,9 +486,9 @@ class ModelProcessor:
 def get_user_input() -> tuple[Path, Path, str, bool]:
     """Prompt user for settings."""
     # Defaults
-    default_alignment_dir = r"C:\Users\jonat\OneDrive\Desktop\NA165_H2060\Topaz\alignments"
-    default_export_dir = r"C:\Users\jonat\OneDrive\Desktop\NA165_H2060\Topaz\models"
-    default_project_prefix = "NA165_H2080_"
+    default_alignment_dir = r"D:\NA168\Zeuss_NA168_H2080\aligned_components"
+    default_export_dir = r"D:\NA168\Zeuss_NA168_H2080\models"
+    default_project_prefix = "NA168_H2080"
 
     print("=" * 80)
     print("RealityCapture Model Processor - FBX Export")
@@ -449,8 +496,12 @@ def get_user_input() -> tuple[Path, Path, str, bool]:
     print()
     print("Pipeline: Select -> Normal Model -> Filter Large Triangles ->")
     print("          Keep Largest Part -> Clean Model -> Smooth -> Texture ->")
-    print("          Simplify 80% -> Close Holes -> Simplify 80% -> Close Holes ->")
-    print("          Rename -> Reproject Texture -> Save -> Export FBX")
+    print("          Rename _HighPoly -> Simplify -> Close Holes -> Simplify ->")
+    print("          Close Holes -> Rename _LowPoly -> Reproject Texture ->")
+    print("          Save -> Export FBX")
+    print()
+    print("NOTE: Simplification uses RC's current settings or a params.xml file.")
+    print("      Set simplification to 70% (keep 30%) in RC before running.")
     print()
     print("REQUIREMENTS:")
     print("  - RealityCapture must be running")
