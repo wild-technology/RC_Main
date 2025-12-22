@@ -42,7 +42,7 @@ Per-component workflow (steps vary based on user options):
 
   If export_cesium enabled:
     24. -selectModel — Select HighPoly (if simplified)
-    25. -export3dTiles — Export as Cesium 3D Tiles
+    25. -export3dTiles — Export as Cesium 3D Tiles (RC prepends "tileset_" to filename)
 
 Uses delegation (-delegateTo *) to communicate with running RealityCapture instance.
 """
@@ -348,21 +348,22 @@ class ModelProcessor:
         print(f"{'=' * 60}")
 
         # Determine model names based on simplification setting
+        high_poly_name = f"{component_name}_HighPoly"
         if self.enable_simplify:
-            high_poly_name = f"{component_name}_HighPoly"
             low_poly_name = f"{component_name}_LowPoly"
             fbx_model_name = low_poly_name
             cesium_model_name = high_poly_name
         else:
-            # No simplification: single model, use component name
-            high_poly_name = None
+            # No simplification: single high-poly model for both exports
             low_poly_name = None
-            fbx_model_name = f"{component_name}_Model"
-            cesium_model_name = fbx_model_name
+            fbx_model_name = high_poly_name
+            cesium_model_name = high_poly_name
 
         export_base_name = self._get_unique_export_name(component_name)
         fbx_file = self.export_dir / f"{export_base_name}.fbx" if self.export_fbx else None
-        cesium_file = self.export_dir / f"{export_base_name}.json" if self.export_cesium else None
+        # RC prepends "tileset_" to Cesium 3D Tiles exports
+        cesium_file_param = self.export_dir / f"{export_base_name}.json" if self.export_cesium else None
+        cesium_file_actual = self.export_dir / f"tileset_{export_base_name}.json" if self.export_cesium else None
 
         step = 0
 
@@ -524,10 +525,10 @@ class ModelProcessor:
                     "-reprojectTexture", high_poly_name, low_poly_name
                 )
         else:
-            # No simplification: rename model for consistency
+            # No simplification: rename model to _HighPoly for consistency
             step += 1
-            print(f"\n  [{step}] Renaming to {fbx_model_name}...")
-            self._run_command("rename", "-renameSelectedModel", fbx_model_name)
+            print(f"\n  [{step}] Renaming to {high_poly_name}...")
+            self._run_command("rename", "-renameSelectedModel", high_poly_name)
 
         # --- SAVE PROJECT ---
 
@@ -565,21 +566,22 @@ class ModelProcessor:
                 self._run_command("select model", "-selectModel", cesium_model_name)
 
             step += 1
-            print(f"\n  [{step}] Exporting Cesium 3D Tiles as {cesium_file.name}...")
+            # Note: RC prepends "tileset_" to the output filename
+            print(f"\n  [{step}] Exporting Cesium 3D Tiles as {cesium_file_actual.name}...")
             if self.cesium_export_params and self.cesium_export_params.exists():
                 print(f"      (using params: {self.cesium_export_params.name})")
                 self._run_command(
                     "export Cesium",
-                    "-export3dTiles", str(cesium_file),
+                    "-export3dTiles", str(cesium_file_param),
                     str(self.cesium_export_params)
                 )
             else:
                 self._run_command(
                     "export Cesium",
-                    "-export3dTiles", str(cesium_file)
+                    "-export3dTiles", str(cesium_file_param)
                 )
-            self._validate_export(cesium_file, component_name, "Cesium 3D Tiles")
-            result["cesium"] = cesium_file
+            self._validate_export(cesium_file_actual, component_name, "Cesium 3D Tiles")
+            result["cesium"] = cesium_file_actual
 
         return result
 
