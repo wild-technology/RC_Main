@@ -353,7 +353,7 @@ class BatchAlignmentProcessor:
         self._delegate("-align")
 
         # Monitor the alignment operation until completion
-        self._monitor_operation("Alignment", timeout_sec=7200.0, poll_interval=5.0)
+        self._monitor_operation("Alignment", timeout_sec=17200.0, poll_interval=5.0)
 
         print(f"✓ Batch '{batch_name}' aligned")
 

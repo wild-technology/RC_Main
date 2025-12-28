@@ -192,7 +192,7 @@ class ModelProcessor:
 
         return False
 
-    def _wait_until_idle(self, operation_name: str = "operation", timeout: float = 3600.0) -> None:
+    def _wait_until_idle(self, operation_name: str = "operation", timeout: float = 33600.0) -> None:
         """
         Wait until RealityCapture reports idle status.
 
@@ -597,7 +597,7 @@ def main():
     """
     Main entry point.
     """
-    rc_exe = Path(r"C:\Program Files\Epic Games\RealityScan_2.0\RealityScan.exe")
+    rc_exe = Path(r"C:\Program Files\Epic Games\RealityScan_2.1\RealityScan.exe")
 
     if not rc_exe.exists():
         print(f"Error: RealityScan executable not found: {rc_exe}")
