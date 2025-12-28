@@ -326,8 +326,11 @@ class BatchAlignmentProcessor:
         """Enable alignment for images in specified batch."""
         print(f"\n=== Enabling Batch: {batch_name} ===")
 
-        # Use path-based selection pattern g/<token>/
-        pattern = f"g/{batch_name}/"
+        # Use regex pattern with path separators to match exact directory name
+        # This prevents "Zone 1" from matching "Zone 10", "Zone 11", etc.
+        # Pattern matches: /batch_name/ or \batch_name\ (directory boundaries)
+        escaped_name = re.escape(batch_name)
+        pattern = f"g/[/\\\\]{escaped_name}[/\\\\]/"
 
         print(f"  CMD: -deselectAllImages -selectImage {pattern} -enableAlignment true")
         self._delegate("-deselectAllImages")
@@ -361,7 +364,9 @@ class BatchAlignmentProcessor:
         """Disable alignment for images in specified batch."""
         print(f"\n=== Disabling Batch: {batch_name} ===")
 
-        pattern = f"g/{batch_name}/"
+        # Use regex pattern with path separators to match exact directory name
+        escaped_name = re.escape(batch_name)
+        pattern = f"g/[/\\\\]{escaped_name}[/\\\\]/"
 
         print(f"  CMD: -deselectAllImages -selectImage {pattern} -enableAlignment false")
         self._delegate("-deselectAllImages")
