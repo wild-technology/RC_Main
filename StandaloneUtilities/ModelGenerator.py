@@ -141,7 +141,7 @@ class ModelProcessor:
 
         return False
 
-    def _wait_until_idle(self, operation_name: str = "operation", timeout: float = 3600.0) -> None:
+    def _wait_until_idle(self, operation_name: str = "operation", timeout: float = 360000.0) -> None:
         """Wait until RealityCapture reports idle status."""
         print(f"    Waiting for {operation_name}...", end=" ", flush=True)
 
