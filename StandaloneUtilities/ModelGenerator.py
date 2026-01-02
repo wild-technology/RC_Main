@@ -306,29 +306,103 @@ class ModelProcessor:
 
         return True
 
-    def _validate_export(self, output_file: Path, component_name: str) -> None:
-        """Validate that the exported model file exists and has content."""
-        if not output_file.exists():
-            raise ExportError(
-                f"Export FAILED for component '{component_name}': "
-                f"Output file not found at {output_file}"
-            )
+    def _validate_export(self, output_file: Path, component_name: str, max_retries: int = 10,
+                         retry_delay: float = 2.0) -> None:
+        """
+        Validate that the exported model file exists and has content.
+        Includes retry logic for network drive sync delays.
+        """
+        for attempt in range(max_retries):
+            if output_file.exists():
+                file_size = output_file.stat().st_size
+                if file_size == 0:
+                    if attempt < max_retries - 1:
+                        time.sleep(retry_delay)
+                        continue
+                    raise ExportError(
+                        f"Export FAILED for component '{component_name}': "
+                        f"Output file is empty (0 bytes) at {output_file}"
+                    )
 
-        file_size = output_file.stat().st_size
-        if file_size == 0:
-            raise ExportError(
-                f"Export FAILED for component '{component_name}': "
-                f"Output file is empty (0 bytes) at {output_file}"
-            )
+                if file_size < 1024:
+                    size_str = f"{file_size} bytes"
+                elif file_size < 1024 * 1024:
+                    size_str = f"{file_size / 1024:.1f} KB"
+                else:
+                    size_str = f"{file_size / (1024 * 1024):.1f} MB"
 
-        if file_size < 1024:
-            size_str = f"{file_size} bytes"
-        elif file_size < 1024 * 1024:
-            size_str = f"{file_size / 1024:.1f} KB"
-        else:
-            size_str = f"{file_size / (1024 * 1024):.1f} MB"
+                print(f"    Export validated: {output_file.name} ({size_str})")
+                return
 
-        print(f"    Export validated: {output_file.name} ({size_str})")
+            if attempt < max_retries - 1:
+                if attempt == 0:
+                    print(f"    Waiting for file sync...", end=" ", flush=True)
+                else:
+                    print(f"{attempt + 1}", end=" ", flush=True)
+                time.sleep(retry_delay)
+
+        print("failed")
+        raise ExportError(
+            f"Export FAILED for component '{component_name}': "
+            f"Output file not found at {output_file} after {max_retries} retries"
+        )
+
+    def _validate_and_rename_cesium_export(
+            self, expected_output: Path, component_num: str, max_retries: int = 10, retry_delay: float = 2.0
+    ) -> Optional[Path]:
+        """
+        Validate and rename Cesium export if needed.
+        Cesium exports create both a .json file and a folder with the same base name.
+        Both need to be renamed if RC adds the 'tileset_' prefix.
+        Includes retry logic for network drive sync delays.
+        """
+        cesium_with_prefix = expected_output.parent / f"tileset_{expected_output.name}"
+        folder_with_prefix = expected_output.parent / f"tileset_{expected_output.stem}"
+        expected_folder = expected_output.parent / expected_output.stem
+
+        for attempt in range(max_retries):
+            actual_cesium_file = None
+            needs_rename = False
+
+            if expected_output.exists() and expected_output.stat().st_size > 0:
+                actual_cesium_file = expected_output
+            elif cesium_with_prefix.exists() and cesium_with_prefix.stat().st_size > 0:
+                actual_cesium_file = cesium_with_prefix
+                needs_rename = True
+
+            if actual_cesium_file:
+                size = actual_cesium_file.stat().st_size
+                if size < 1024:
+                    size_str = f"{size} bytes"
+                elif size < 1024 * 1024:
+                    size_str = f"{size / 1024:.1f} KB"
+                else:
+                    size_str = f"{size / (1024 * 1024):.1f} MB"
+
+                if needs_rename:
+                    print(f"           Renaming: {actual_cesium_file.name} -> {expected_output.name}")
+                    actual_cesium_file.rename(expected_output)
+                    actual_cesium_file = expected_output
+
+                    if folder_with_prefix.exists() and folder_with_prefix.is_dir():
+                        print(f"           Renaming folder: {folder_with_prefix.name}/ -> {expected_folder.name}/")
+                        folder_with_prefix.rename(expected_folder)
+
+                print(f"           Cesium export validated: {actual_cesium_file.name} ({size_str})")
+                return actual_cesium_file
+
+            if attempt < max_retries - 1:
+                if attempt == 0:
+                    print(f"           Waiting for file sync...", end=" ", flush=True)
+                else:
+                    print(f"{attempt + 1}", end=" ", flush=True)
+                time.sleep(retry_delay)
+
+        print("failed")
+        print(f"           Warning: Cesium export failed after {max_retries} retries")
+        print(f"           Checked: {expected_output.name}")
+        print(f"           Checked: {cesium_with_prefix.name}")
+        return None
 
     def _extract_component_number(self, component_name: str) -> str:
         """Extract the component number from the component name."""
@@ -933,7 +1007,7 @@ def get_user_input(checkpoint: Optional[CheckpointData] = None) -> tuple[Path, P
         Tuple of (alignment_dir, output_dir, project_prefix, test_mode, export_only, resume_from_checkpoint)
     """
     # Defaults
-    default_alignment_dir = r"D:\NA168\Zeuss_NA168_H2080\aligned_components"
+    default_alignment_dir = r"D:\NA168\Zeuss_NA168_H2080\finishthesealignments"
     default_output_dir = r"D:\NA168\Zeuss_NA168_H2080\models"
     default_project_prefix = "NA168_H2080"
 
