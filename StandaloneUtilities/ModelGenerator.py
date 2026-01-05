@@ -57,7 +57,6 @@ from datetime import datetime
 from typing import Optional
 
 
-# Checkpoint filename constant
 CHECKPOINT_FILENAME = "processing_checkpoint.json"
 
 
@@ -80,6 +79,10 @@ class CheckpointData:
             completed_components: list[str],
             failed_component: Optional[str] = None,
             timestamp: Optional[str] = None,
+            export_lowpoly_fbx: bool = True,
+            export_highpoly_fbx: bool = True,
+            export_cesium: bool = True,
+            export_alignment: bool = True,
     ):
         self.alignment_dir = alignment_dir
         self.output_base_dir = output_base_dir
@@ -88,6 +91,10 @@ class CheckpointData:
         self.completed_components = completed_components
         self.failed_component = failed_component
         self.timestamp = timestamp or datetime.now().isoformat()
+        self.export_lowpoly_fbx = export_lowpoly_fbx
+        self.export_highpoly_fbx = export_highpoly_fbx
+        self.export_cesium = export_cesium
+        self.export_alignment = export_alignment
 
     def to_dict(self) -> dict:
         """Serialize checkpoint data to dictionary."""
@@ -99,6 +106,10 @@ class CheckpointData:
             "completed_components": self.completed_components,
             "failed_component": self.failed_component,
             "timestamp": self.timestamp,
+            "export_lowpoly_fbx": self.export_lowpoly_fbx,
+            "export_highpoly_fbx": self.export_highpoly_fbx,
+            "export_cesium": self.export_cesium,
+            "export_alignment": self.export_alignment,
         }
 
     @classmethod
@@ -112,6 +123,10 @@ class CheckpointData:
             completed_components=data.get("completed_components", []),
             failed_component=data.get("failed_component"),
             timestamp=data.get("timestamp"),
+            export_lowpoly_fbx=data.get("export_lowpoly_fbx", True),
+            export_highpoly_fbx=data.get("export_highpoly_fbx", True),
+            export_cesium=data.get("export_cesium", True),
+            export_alignment=data.get("export_alignment", True),
         )
 
 
@@ -131,6 +146,10 @@ class ModelProcessor:
             test_mode: bool = True,
             export_only: bool = False,
             resume_from_checkpoint: bool = False,
+            export_lowpoly_fbx: bool = True,
+            export_highpoly_fbx: bool = True,
+            export_cesium: bool = True,
+            export_alignment: bool = True,
     ):
         self.rc_exe = rc_exe
         self.alignment_dir = alignment_dir
@@ -141,22 +160,28 @@ class ModelProcessor:
         self.test_mode = test_mode
         self.export_only = export_only
         self.resume_from_checkpoint = resume_from_checkpoint
+        self.export_lowpoly_fbx = export_lowpoly_fbx
+        self.export_highpoly_fbx = export_highpoly_fbx
+        self.export_cesium = export_cesium
+        self.export_alignment = export_alignment
         self.process_log: list[dict[str, str]] = []
 
-        # Checkpoint tracking
         self.checkpoint_file = output_base_dir / CHECKPOINT_FILENAME
         self.completed_components: list[str] = []
 
-        # Create subdirectories for exports
         self.fbx_lowpoly_dir = output_base_dir / "fbx_lowpoly"
         self.fbx_highpoly_dir = output_base_dir / "fbx_highpoly"
         self.cesium_dir = output_base_dir / "cesium"
         self.alignments_dir = output_base_dir / "alignments"
 
-        self.fbx_lowpoly_dir.mkdir(parents=True, exist_ok=True)
-        self.fbx_highpoly_dir.mkdir(parents=True, exist_ok=True)
-        self.cesium_dir.mkdir(parents=True, exist_ok=True)
-        self.alignments_dir.mkdir(parents=True, exist_ok=True)
+        if self.export_lowpoly_fbx:
+            self.fbx_lowpoly_dir.mkdir(parents=True, exist_ok=True)
+        if self.export_highpoly_fbx:
+            self.fbx_highpoly_dir.mkdir(parents=True, exist_ok=True)
+        if self.export_cesium:
+            self.cesium_dir.mkdir(parents=True, exist_ok=True)
+        if self.export_alignment:
+            self.alignments_dir.mkdir(parents=True, exist_ok=True)
 
         if not self.rc_exe.exists():
             raise FileNotFoundError(f"RealityScan executable not found: {self.rc_exe}")
@@ -164,7 +189,6 @@ class ModelProcessor:
         if not self.alignment_dir.exists():
             raise FileNotFoundError(f"Alignment directory not found: {self.alignment_dir}")
 
-        # Load checkpoint if resuming
         if self.resume_from_checkpoint:
             self._load_checkpoint()
 
@@ -177,6 +201,10 @@ class ModelProcessor:
             export_only=self.export_only,
             completed_components=self.completed_components.copy(),
             failed_component=failed_component,
+            export_lowpoly_fbx=self.export_lowpoly_fbx,
+            export_highpoly_fbx=self.export_highpoly_fbx,
+            export_cesium=self.export_cesium,
+            export_alignment=self.export_alignment,
         )
 
         try:
@@ -196,6 +224,10 @@ class ModelProcessor:
                 data = json.load(f)
             checkpoint = CheckpointData.from_dict(data)
             self.completed_components = checkpoint.completed_components
+            self.export_lowpoly_fbx = checkpoint.export_lowpoly_fbx
+            self.export_highpoly_fbx = checkpoint.export_highpoly_fbx
+            self.export_cesium = checkpoint.export_cesium
+            self.export_alignment = checkpoint.export_alignment
 
             print(f"Loaded checkpoint from {checkpoint.timestamp}")
             print(f"  Previously completed: {len(self.completed_components)} component(s)")
@@ -306,41 +338,113 @@ class ModelProcessor:
 
         return True
 
-    def _validate_export(self, output_file: Path, component_name: str) -> None:
-        """Validate that the exported model file exists and has content."""
-        if not output_file.exists():
-            raise ExportError(
-                f"Export FAILED for component '{component_name}': "
-                f"Output file not found at {output_file}"
-            )
+    def _validate_export(self, output_file: Path, component_name: str, max_retries: int = 10,
+                         retry_delay: float = 2.0) -> None:
+        """
+        Validate that the exported model file exists and has content.
+        Includes retry logic for network drive sync delays.
+        """
+        for attempt in range(max_retries):
+            if output_file.exists():
+                file_size = output_file.stat().st_size
+                if file_size == 0:
+                    if attempt < max_retries - 1:
+                        time.sleep(retry_delay)
+                        continue
+                    raise ExportError(
+                        f"Export FAILED for component '{component_name}': "
+                        f"Output file is empty (0 bytes) at {output_file}"
+                    )
 
-        file_size = output_file.stat().st_size
-        if file_size == 0:
-            raise ExportError(
-                f"Export FAILED for component '{component_name}': "
-                f"Output file is empty (0 bytes) at {output_file}"
-            )
+                if file_size < 1024:
+                    size_str = f"{file_size} bytes"
+                elif file_size < 1024 * 1024:
+                    size_str = f"{file_size / 1024:.1f} KB"
+                else:
+                    size_str = f"{file_size / (1024 * 1024):.1f} MB"
 
-        if file_size < 1024:
-            size_str = f"{file_size} bytes"
-        elif file_size < 1024 * 1024:
-            size_str = f"{file_size / 1024:.1f} KB"
-        else:
-            size_str = f"{file_size / (1024 * 1024):.1f} MB"
+                print(f"    Export validated: {output_file.name} ({size_str})")
+                return
 
-        print(f"    Export validated: {output_file.name} ({size_str})")
+            if attempt < max_retries - 1:
+                if attempt == 0:
+                    print(f"    Waiting for file sync...", end=" ", flush=True)
+                else:
+                    print(f"{attempt + 1}", end=" ", flush=True)
+                time.sleep(retry_delay)
+
+        print("failed")
+        raise ExportError(
+            f"Export FAILED for component '{component_name}': "
+            f"Output file not found at {output_file} after {max_retries} retries"
+        )
+
+    def _validate_and_rename_cesium_export(
+            self, expected_output: Path, component_num: str, max_retries: int = 10, retry_delay: float = 2.0
+    ) -> Optional[Path]:
+        """
+        Validate and rename Cesium export if needed.
+        Cesium exports create both a .json file and a folder with the same base name.
+        Both need to be renamed if RC adds the 'tileset_' prefix.
+        Includes retry logic for network drive sync delays.
+        """
+        cesium_with_prefix = expected_output.parent / f"tileset_{expected_output.name}"
+        folder_with_prefix = expected_output.parent / f"tileset_{expected_output.stem}"
+        expected_folder = expected_output.parent / expected_output.stem
+
+        for attempt in range(max_retries):
+            actual_cesium_file = None
+            needs_rename = False
+
+            if expected_output.exists() and expected_output.stat().st_size > 0:
+                actual_cesium_file = expected_output
+            elif cesium_with_prefix.exists() and cesium_with_prefix.stat().st_size > 0:
+                actual_cesium_file = cesium_with_prefix
+                needs_rename = True
+
+            if actual_cesium_file:
+                size = actual_cesium_file.stat().st_size
+                if size < 1024:
+                    size_str = f"{size} bytes"
+                elif size < 1024 * 1024:
+                    size_str = f"{size / 1024:.1f} KB"
+                else:
+                    size_str = f"{size / (1024 * 1024):.1f} MB"
+
+                if needs_rename:
+                    print(f"           Renaming: {actual_cesium_file.name} -> {expected_output.name}")
+                    actual_cesium_file.rename(expected_output)
+                    actual_cesium_file = expected_output
+
+                    if folder_with_prefix.exists() and folder_with_prefix.is_dir():
+                        print(f"           Renaming folder: {folder_with_prefix.name}/ -> {expected_folder.name}/")
+                        folder_with_prefix.rename(expected_folder)
+
+                print(f"           Cesium export validated: {actual_cesium_file.name} ({size_str})")
+                return actual_cesium_file
+
+            if attempt < max_retries - 1:
+                if attempt == 0:
+                    print(f"           Waiting for file sync...", end=" ", flush=True)
+                else:
+                    print(f"{attempt + 1}", end=" ", flush=True)
+                time.sleep(retry_delay)
+
+        print("failed")
+        print(f"           Warning: Cesium export failed after {max_retries} retries")
+        print(f"           Checked: {expected_output.name}")
+        print(f"           Checked: {cesium_with_prefix.name}")
+        return None
 
     def _extract_component_number(self, component_name: str) -> str:
         """Extract the component number from the component name."""
         import re
 
-        # Try format: "Component (01)"
         match = re.search(r'\((\d+)\)', component_name)
         if match:
             num = int(match.group(1))
             return f"{num:02d}"
 
-        # Try format: "Name_123" (number at end after underscore)
         match = re.search(r'_(\d+)$', component_name)
         if match:
             num = int(match.group(1))
@@ -368,51 +472,6 @@ class ModelProcessor:
         else:
             print(f"    Warning: Source alignment file not found: {source_file}")
 
-    def _validate_and_rename_cesium_export(self, expected_output: Path, component_num: str) -> Optional[Path]:
-        """
-        Validate and rename Cesium export if needed.
-        Cesium exports create both a .json file and a folder with the same base name.
-        Both need to be renamed if RC adds the 'tileset_' prefix.
-        """
-        cesium_with_prefix = expected_output.parent / f"tileset_{expected_output.name}"
-        folder_with_prefix = expected_output.parent / f"tileset_{expected_output.stem}"
-        expected_folder = expected_output.parent / expected_output.stem
-
-        actual_cesium_file = None
-        needs_rename = False
-
-        if expected_output.exists() and expected_output.stat().st_size > 0:
-            actual_cesium_file = expected_output
-        elif cesium_with_prefix.exists() and cesium_with_prefix.stat().st_size > 0:
-            actual_cesium_file = cesium_with_prefix
-            needs_rename = True
-
-        if actual_cesium_file:
-            size = actual_cesium_file.stat().st_size
-            if size < 1024:
-                size_str = f"{size} bytes"
-            elif size < 1024 * 1024:
-                size_str = f"{size / 1024:.1f} KB"
-            else:
-                size_str = f"{size / (1024 * 1024):.1f} MB"
-
-            if needs_rename:
-                print(f"           Renaming: {actual_cesium_file.name} -> {expected_output.name}")
-                actual_cesium_file.rename(expected_output)
-                actual_cesium_file = expected_output
-
-                if folder_with_prefix.exists() and folder_with_prefix.is_dir():
-                    print(f"           Renaming folder: {folder_with_prefix.name}/ -> {expected_folder.name}/")
-                    folder_with_prefix.rename(expected_folder)
-
-            print(f"           Cesium export validated: {actual_cesium_file.name} ({size_str})")
-            return actual_cesium_file
-        else:
-            print(f"           Warning: Cesium export failed")
-            print(f"           Checked: {expected_output.name}")
-            print(f"           Checked: {cesium_with_prefix.name}")
-            return None
-
     def process_component(self, component_name: str, simplify_params: Optional[Path] = None) -> Path:
         """
         Process a single component through the full pipeline.
@@ -426,8 +485,8 @@ class ModelProcessor:
         6. Select largest component -> invert -> filter (keep only largest part)
         7. Clean model
         8. Smooth
-        9. Calculate texture on high-poly
-        10. Close holes (80000 max edges)
+        9. Calculate texture on high-poly model
+        10. Close holes (max 80000 edges)
         11. Re-calculate texture (to properly texture closed holes)
         12. Rename to _HighPoly (textured source model - preserved)
         13. Simplify (pass 1) - creates new model
@@ -452,9 +511,10 @@ class ModelProcessor:
         low_poly_name = f"{component_name}_LowPoly"
         component_num = self._extract_component_number(component_name)
 
-        fbx_lowpoly_output = self.fbx_lowpoly_dir / f"{self.project_prefix}_{component_num}_LowPoly.fbx"
-        fbx_highpoly_output = self.fbx_highpoly_dir / f"{self.project_prefix}_{component_num}_HighPoly.fbx"
-        cesium_output = self.cesium_dir / f"{self.project_prefix}_{component_num}_HighPoly.json"
+        # Derive export paths from model names to ensure consistency
+        fbx_lowpoly_output = self.fbx_lowpoly_dir / f"{low_poly_name}.fbx"
+        fbx_highpoly_output = self.fbx_highpoly_dir / f"{high_poly_name}.fbx"
+        cesium_output = self.cesium_dir / f"{high_poly_name}.json"
 
         # 1. Select the component by name
         print("\n  [1/26] Selecting component...")
@@ -621,7 +681,8 @@ class ModelProcessor:
             if skipped > 0:
                 print(f"Resuming: Skipping {skipped} already-completed component(s)")
                 print(f"  Completed: {', '.join(self.completed_components[:5])}" +
-                      (f"... (+{len(self.completed_components) - 5} more)" if len(self.completed_components) > 5 else ""))
+                      (f"... (+{len(self.completed_components) - 5} more)" if len(
+                          self.completed_components) > 5 else ""))
                 print()
             component_names = remaining
 
@@ -632,8 +693,10 @@ class ModelProcessor:
 
             high_poly_name = f"{component_name}_HighPoly"
             component_num = self._extract_component_number(component_name)
-            cesium_output = self.cesium_dir / f"{self.project_prefix}_{component_num}_HighPoly.json"
-            fbx_highpoly_output = self.fbx_highpoly_dir / f"{self.project_prefix}_{component_num}_HighPoly.fbx"
+
+            # Derive export paths from model names to ensure consistency
+            cesium_output = self.cesium_dir / f"{high_poly_name}.json"
+            fbx_highpoly_output = self.fbx_highpoly_dir / f"{high_poly_name}.fbx"
 
             try:
                 print(f"  [1/5] Selecting {high_poly_name}...")
@@ -673,7 +736,7 @@ class ModelProcessor:
                 self._save_checkpoint(failed_component=component_name)
                 self.process_log.append({
                     "component": component_name,
-                    "output": f"cesium/{self.project_prefix}_{component_num}_HighPoly.json",
+                    "output": f"cesium/{high_poly_name}.json",
                     "status": "FAILED",
                 })
                 self.generate_summary()
@@ -713,7 +776,6 @@ class ModelProcessor:
             print("*** TEST MODE: Only processing first component ***\n")
             component_names = component_names[:1]
 
-        # Filter out already-completed components if resuming
         if self.resume_from_checkpoint and self.completed_components:
             remaining = [c for c in component_names if c not in self.completed_components]
             skipped = len(component_names) - len(remaining)
@@ -723,9 +785,9 @@ class ModelProcessor:
                       (f"... (+{len(self.completed_components) - 5} more)" if len(self.completed_components) > 5 else ""))
                 print()
 
-                # Add skipped components to process log as already done
+                all_component_names = set(self.scan_component_names())
                 for comp in self.completed_components:
-                    if comp in [c for c in self.scan_component_names()]:
+                    if comp in all_component_names:
                         comp_num = self._extract_component_number(comp)
                         self.process_log.append({
                             "component": comp,
@@ -748,18 +810,22 @@ class ModelProcessor:
             print(f"\n[{current_index}/{total_components}] Processing component: {component_name}")
 
             try:
-                output_file = self.process_component(component_name, self.simplify_params)
-                exported_models.append(output_file)
+                output_files = self.process_component(component_name, self.simplify_params)
+                exported_models.extend(output_files)
                 component_num = self._extract_component_number(component_name)
 
-                # Mark component as completed and save checkpoint
                 self.completed_components.append(component_name)
                 self._save_checkpoint()
 
+                output_list = []
+                if self.export_lowpoly_fbx:
+                    output_list.append(f"fbx_lowpoly/{self.project_prefix}_{component_num}_LowPoly.fbx")
+                if self.export_highpoly_fbx:
+                    output_list.append(f"fbx_highpoly/{self.project_prefix}_{component_num}_HighPoly.fbx")
+
                 self.process_log.append({
                     "component": component_name,
-                    "output": f"fbx_lowpoly/{self.project_prefix}_{component_num}_LowPoly.fbx, "
-                              f"fbx_highpoly/{self.project_prefix}_{component_num}_HighPoly.fbx",
+                    "output": ", ".join(output_list) if output_list else "none",
                     "status": "success",
                 })
 
@@ -780,7 +846,6 @@ class ModelProcessor:
                 print(f"\nCheckpoint saved. Re-run script to resume from: {component_name}")
                 raise
 
-        # Clear checkpoint on successful completion
         self._clear_checkpoint()
 
         return exported_models
@@ -797,6 +862,16 @@ class ModelProcessor:
         successful = sum(1 for entry in self.process_log if 'success' in entry['status'])
         failed = sum(1 for entry in self.process_log if entry['status'] == 'FAILED')
 
+        export_formats = []
+        if self.export_lowpoly_fbx:
+            export_formats.append("FBX (_LowPoly)")
+        if self.export_highpoly_fbx:
+            export_formats.append("FBX (_HighPoly)")
+        if self.export_cesium:
+            export_formats.append("Cesium 3D Tiles")
+        if self.export_alignment:
+            export_formats.append("Alignment (.rsalign)")
+
         summary_lines = [
             "=" * 80,
             "RealityCapture Model Processing Summary",
@@ -804,17 +879,25 @@ class ModelProcessor:
             f"Processing Date/Time: {timestamp}",
             f"Alignment Directory: {self.alignment_dir}",
             f"Output Directory: {self.output_base_dir}",
-            f"  - Low-poly FBX exports: {self.fbx_lowpoly_dir}",
-            f"  - High-poly FBX exports: {self.fbx_highpoly_dir}",
-            f"  - Cesium 3D Tiles exports: {self.cesium_dir}",
-            f"  - Alignment files: {self.alignments_dir}",
+            ]
+
+        if self.export_lowpoly_fbx:
+            summary_lines.append(f"  - Low-poly FBX exports: {self.fbx_lowpoly_dir}")
+        if self.export_highpoly_fbx:
+            summary_lines.append(f"  - High-poly FBX exports: {self.fbx_highpoly_dir}")
+        if self.export_cesium:
+            summary_lines.append(f"  - Cesium 3D Tiles exports: {self.cesium_dir}")
+        if self.export_alignment:
+            summary_lines.append(f"  - Alignment files: {self.alignments_dir}")
+
+        summary_lines.extend([
             f"Project Prefix: {self.project_prefix}",
-            f"Export Formats: FBX (_LowPoly), FBX (_HighPoly), Cesium 3D Tiles, Alignment (.rsalign)",
+            f"Export Formats: {', '.join(export_formats) if export_formats else 'None'}",
             f"Total Processed: {len(self.process_log)}",
             f"Successful: {successful}",
             f"Failed: {failed}",
             "",
-        ]
+        ])
 
         if failed > 0:
             summary_lines.append("*** PROCESSING HALTED DUE TO EXPORT FAILURE ***")
@@ -827,7 +910,7 @@ class ModelProcessor:
             "-" * 80,
             f"{'Component Name':<30} {'Output Files':<45} {'Status':<15}",
             "-" * 80,
-        ])
+            ])
 
         for entry in self.process_log:
             summary_lines.append(
@@ -839,7 +922,7 @@ class ModelProcessor:
             "",
             "Processing completed." if failed == 0 else "Processing incomplete due to error.",
             "=" * 80,
-        ])
+            ])
 
         summary_text = "\n".join(summary_lines)
 
@@ -901,6 +984,18 @@ def prompt_resume_from_checkpoint(checkpoint: CheckpointData) -> tuple[bool, boo
         print(f"│ Failed Component: {checkpoint.failed_component:<58}│")
     print("│                                                                              │")
     print("│ Mode: " + ("Export-Only" if checkpoint.export_only else "Full Processing").ljust(70) + "│")
+
+    export_types = []
+    if checkpoint.export_lowpoly_fbx:
+        export_types.append("LowPoly FBX")
+    if checkpoint.export_highpoly_fbx:
+        export_types.append("HighPoly FBX")
+    if checkpoint.export_cesium:
+        export_types.append("Cesium")
+    if checkpoint.export_alignment:
+        export_types.append("Alignment")
+
+    print("│ Exports: " + (", ".join(export_types) if export_types else "None").ljust(68) + "│")
     print("│                                                                              │")
     print("├" + "─" * 78 + "┤")
     print("│ OPTIONS:                                                                     │")
@@ -925,19 +1020,18 @@ def prompt_resume_from_checkpoint(checkpoint: CheckpointData) -> tuple[bool, boo
             print("Invalid option. Please enter R, C, or Q.")
 
 
-def get_user_input(checkpoint: Optional[CheckpointData] = None) -> tuple[Path, Path, str, bool, bool, bool]:
+def get_user_input(checkpoint: Optional[CheckpointData] = None) -> tuple[Path, Path, str, bool, bool, bool, bool, bool, bool, bool]:
     """
     Prompt user for settings.
 
     Returns:
-        Tuple of (alignment_dir, output_dir, project_prefix, test_mode, export_only, resume_from_checkpoint)
+        Tuple of (alignment_dir, output_dir, project_prefix, test_mode, export_only, resume_from_checkpoint,
+                  export_lowpoly_fbx, export_highpoly_fbx, export_cesium, export_alignment)
     """
-    # Defaults
-    default_alignment_dir = r"D:\NA168\Zeuss_NA168_H2080\aligned_components"
+    default_alignment_dir = r"D:\NA168\Zeuss_NA168_H2080\finishthesealignments"
     default_output_dir = r"D:\NA168\Zeuss_NA168_H2080\models"
     default_project_prefix = "NA168_H2080"
 
-    # If resuming from checkpoint, use checkpoint values
     resume_from_checkpoint = False
     if checkpoint:
         default_alignment_dir = checkpoint.alignment_dir
@@ -969,7 +1063,7 @@ def get_user_input(checkpoint: Optional[CheckpointData] = None) -> tuple[Path, P
         print("│   - Close holes and re-texture to ensure complete coverage                  │")
         print("│   - Create simplified low-poly version through double-pass decimation       │")
         print("│   - Reproject texture from high-poly to low-poly for optimal quality        │")
-        print("│   - Export low-poly FBX, high-poly FBX, Cesium 3D Tiles, and alignment      │")
+        print("│   - Export in selected formats (FBX, Cesium 3D Tiles, alignment files)      │")
         print("│                                                                              │")
         print("│ CHECKPOINT/RESUME: Progress is saved after each component. If processing   │")
         print("│ fails, re-run the script to resume from the last successful export.        │")
@@ -1020,13 +1114,12 @@ def get_user_input(checkpoint: Optional[CheckpointData] = None) -> tuple[Path, P
         print("│     Recommended for: First-time processing of aligned components            │")
         print("│                                                                              │")
         print("│ [2] EXPORT-ONLY MODE                                                         │")
-        print("│     Only exports existing _HighPoly models as Cesium and FBX                │")
+        print("│     Only exports existing _HighPoly models (skips all processing)           │")
         print("│     Recommended for: Re-exporting after changing export settings            │")
         print("│                                                                              │")
         print("└" + "─" * 78 + "┘")
         print()
 
-    # Export-only mode option (use checkpoint value if resuming)
     if resume_from_checkpoint:
         export_only = checkpoint.export_only
         print(f"Resuming in {'export-only' if export_only else 'full processing'} mode (from checkpoint)")
@@ -1035,7 +1128,42 @@ def get_user_input(checkpoint: Optional[CheckpointData] = None) -> tuple[Path, P
         export_only = export_only_input == 'y'
     print()
 
-    # Use defaults/checkpoint values automatically if paths exist
+    if resume_from_checkpoint:
+        export_lowpoly_fbx = checkpoint.export_lowpoly_fbx
+        export_highpoly_fbx = checkpoint.export_highpoly_fbx
+        export_cesium = checkpoint.export_cesium
+        export_alignment = checkpoint.export_alignment
+
+        print("Export settings (from checkpoint):")
+        print(f"  - Low-poly FBX: {'enabled' if export_lowpoly_fbx else 'disabled'}")
+        print(f"  - High-poly FBX: {'enabled' if export_highpoly_fbx else 'disabled'}")
+        print(f"  - Cesium 3D Tiles: {'enabled' if export_cesium else 'disabled'}")
+        print(f"  - Alignment files: {'enabled' if export_alignment else 'disabled'}")
+    else:
+        print("┌" + "─" * 78 + "┐")
+        print("│ EXPORT OPTIONS:".ljust(79) + "│")
+        print("├" + "─" * 78 + "┤")
+        print("│ Select which export formats to generate (default: all enabled)              │")
+        print("└" + "─" * 78 + "┘")
+        print()
+
+        if not export_only:
+            lowpoly_input = input("Export low-poly FBX? [Y/n]: ").strip().lower()
+            export_lowpoly_fbx = lowpoly_input != 'n'
+        else:
+            export_lowpoly_fbx = False
+
+        highpoly_input = input("Export high-poly FBX? [Y/n]: ").strip().lower()
+        export_highpoly_fbx = highpoly_input != 'n'
+
+        cesium_input = input("Export Cesium 3D Tiles? [Y/n]: ").strip().lower()
+        export_cesium = cesium_input != 'n'
+
+        alignment_input = input("Copy alignment files? [Y/n]: ").strip().lower()
+        export_alignment = alignment_input != 'n'
+
+    print()
+
     alignment_dir = Path(default_alignment_dir)
     if alignment_dir.exists():
         if resume_from_checkpoint:
@@ -1053,7 +1181,6 @@ def get_user_input(checkpoint: Optional[CheckpointData] = None) -> tuple[Path, P
                 break
             print(f"X Error: Directory not found: {alignment_dir}")
 
-    # Ask for output directory (use checkpoint value if resuming)
     print()
     if resume_from_checkpoint:
         output_dir = Path(default_output_dir)
@@ -1068,10 +1195,14 @@ def get_user_input(checkpoint: Optional[CheckpointData] = None) -> tuple[Path, P
         output_dir.mkdir(parents=True, exist_ok=True)
         if not resume_from_checkpoint:
             print(f"* Output directory: {output_dir}")
-        print(f"  -> Low-poly FBX: {output_dir / 'fbx_lowpoly'}")
-        print(f"  -> High-poly FBX: {output_dir / 'fbx_highpoly'}")
-        print(f"  -> Cesium 3D Tiles: {output_dir / 'cesium'}")
-        print(f"  -> Alignment files: {output_dir / 'alignments'}")
+        if export_lowpoly_fbx:
+            print(f"  -> Low-poly FBX: {output_dir / 'fbx_lowpoly'}")
+        if export_highpoly_fbx:
+            print(f"  -> High-poly FBX: {output_dir / 'fbx_highpoly'}")
+        if export_cesium:
+            print(f"  -> Cesium 3D Tiles: {output_dir / 'cesium'}")
+        if export_alignment:
+            print(f"  -> Alignment files: {output_dir / 'alignments'}")
     except Exception as e:
         print(f"X Error: Could not create directory: {e}")
         sys.exit(1)
@@ -1088,7 +1219,6 @@ def get_user_input(checkpoint: Optional[CheckpointData] = None) -> tuple[Path, P
 
     print()
     if resume_from_checkpoint:
-        # In resume mode, always process all remaining (no test mode)
         test_mode = False
         print("* Full mode enabled (resuming all remaining components)")
     else:
@@ -1103,12 +1233,12 @@ def get_user_input(checkpoint: Optional[CheckpointData] = None) -> tuple[Path, P
     print("-" * 80)
     print()
 
-    return alignment_dir, output_dir, project_prefix, test_mode, export_only, resume_from_checkpoint
+    return (alignment_dir, output_dir, project_prefix, test_mode, export_only, resume_from_checkpoint,
+            export_lowpoly_fbx, export_highpoly_fbx, export_cesium, export_alignment)
 
 
 def main():
     """Main entry point."""
-    # Try to find RealityScan executable automatically
     rc_exe = find_rc_executable()
 
     if not rc_exe:
@@ -1130,7 +1260,6 @@ def main():
     print(f"* Using RealityScan: {rc_exe}")
     print()
 
-    # Check for existing checkpoint in default output directory
     default_output_dir = Path(r"D:\NA168\Zeuss_NA168_H2080\models")
     checkpoint = check_for_checkpoint(default_output_dir)
 
@@ -1140,7 +1269,6 @@ def main():
         if should_resume:
             resume_from_checkpoint = True
         elif should_clear:
-            # Clear checkpoint file
             checkpoint_file = default_output_dir / CHECKPOINT_FILENAME
             if checkpoint_file.exists():
                 checkpoint_file.unlink()
@@ -1149,9 +1277,11 @@ def main():
 
     try:
         if resume_from_checkpoint and checkpoint:
-            alignment_dir, output_dir, project_prefix, test_mode, export_only, _ = get_user_input(checkpoint)
+            (alignment_dir, output_dir, project_prefix, test_mode, export_only, _,
+             export_lowpoly_fbx, export_highpoly_fbx, export_cesium, export_alignment) = get_user_input(checkpoint)
         else:
-            alignment_dir, output_dir, project_prefix, test_mode, export_only, _ = get_user_input()
+            (alignment_dir, output_dir, project_prefix, test_mode, export_only, _,
+             export_lowpoly_fbx, export_highpoly_fbx, export_cesium, export_alignment) = get_user_input()
 
         processor = ModelProcessor(
             rc_exe=rc_exe,
@@ -1162,6 +1292,10 @@ def main():
             test_mode=test_mode,
             export_only=export_only,
             resume_from_checkpoint=resume_from_checkpoint,
+            export_lowpoly_fbx=export_lowpoly_fbx,
+            export_highpoly_fbx=export_highpoly_fbx,
+            export_cesium=export_cesium,
+            export_alignment=export_alignment,
         )
 
         if export_only:
@@ -1183,12 +1317,12 @@ def main():
         if exported:
             print()
             print("+" + "=" * 78 + "+")
-            print("|" + f"* SUCCESS: Exported {len(exported)} model(s)".center(78) + "|")
+            print("|" + f"* SUCCESS: Exported {len(exported)} file(s)".center(78) + "|")
             print("+" + "=" * 78 + "+")
         else:
             print()
             print("+" + "=" * 78 + "+")
-            print("|" + "WARNING: No models were exported".center(78) + "|")
+            print("|" + "WARNING: No files were exported".center(78) + "|")
             print("+" + "=" * 78 + "+")
 
     except ExportError as e:
