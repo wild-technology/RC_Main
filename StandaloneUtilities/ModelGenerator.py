@@ -472,7 +472,7 @@ class ModelProcessor:
         else:
             print(f"    Warning: Source alignment file not found: {source_file}")
 
-    def process_component(self, component_name: str, simplify_params: Optional[Path] = None) -> Path:
+    def process_component(self, component_name: str, simplify_params: Optional[Path] = None) -> list[Path]:
         """
         Process a single component through the full pipeline.
 
@@ -497,11 +497,11 @@ class ModelProcessor:
         18. Unwrap _LowPoly (required for texture reprojection)
         19. Reproject texture from _HighPoly to _LowPoly
         20. Save project
-        21. Export _LowPoly as FBX (to fbx_lowpoly/ subdirectory)
+        21. Export _LowPoly as FBX (to fbx_lowpoly/ subdirectory) [if enabled]
         22. Select _HighPoly model
-        23. Export _HighPoly as Cesium 3D Tiles (to cesium/ subdirectory)
-        24. Export _HighPoly as FBX (to fbx_highpoly/ subdirectory)
-        25. Copy .rsalign alignment file (to alignments/ subdirectory)
+        23. Export _HighPoly as Cesium 3D Tiles (to cesium/ subdirectory) [if enabled]
+        24. Export _HighPoly as FBX (to fbx_highpoly/ subdirectory) [if enabled]
+        25. Copy .rsalign alignment file (to alignments/ subdirectory) [if enabled]
         """
         print(f"\n{'=' * 60}")
         print(f"Processing component: {component_name}")
@@ -608,45 +608,61 @@ class ModelProcessor:
         print("\n  [20/26] Saving project...")
         self._run_command("save", "-save")
 
-        # 21. Export low-poly as FBX
-        print(f"\n  [21/26] Exporting low-poly FBX to fbx_lowpoly/{fbx_lowpoly_output.name}...")
-        self._run_command("export", "-exportModel", low_poly_name, str(fbx_lowpoly_output))
+        exported_files: list[Path] = []
 
-        self._validate_export(fbx_lowpoly_output, component_name)
+        # 21. Export low-poly as FBX
+        if self.export_lowpoly_fbx:
+            print(f"\n  [21/26] Exporting low-poly FBX to fbx_lowpoly/{fbx_lowpoly_output.name}...")
+            self._run_command("export", "-exportModel", low_poly_name, str(fbx_lowpoly_output))
+            self._validate_export(fbx_lowpoly_output, component_name)
+            exported_files.append(fbx_lowpoly_output)
+        else:
+            print("\n  [21/26] Skipping low-poly FBX export (disabled)")
 
         # 22. Select high-poly model for exports
         print(f"\n  [22/26] Selecting {high_poly_name} for exports...")
         self._run_command("select model", "-selectModel", high_poly_name)
 
         # 23. Export high-poly as Cesium 3D Tiles
-        print(f"\n  [23/26] Exporting high-poly Cesium 3D Tiles to cesium/{cesium_output.name}...")
-        self._run_command("export cesium", "-export3dTiles", str(cesium_output))
+        if self.export_cesium:
+            print(f"\n  [23/26] Exporting high-poly Cesium 3D Tiles to cesium/{cesium_output.name}...")
+            self._run_command("export cesium", "-export3dTiles", str(cesium_output))
 
-        print(f"           Validating Cesium export...")
-        actual_cesium_file = self._validate_and_rename_cesium_export(cesium_output, component_num)
+            print(f"           Validating Cesium export...")
+            actual_cesium_file = self._validate_and_rename_cesium_export(cesium_output, component_num)
 
-        if not actual_cesium_file:
-            print(f"           Warning: Cesium export validation failed")
+            if actual_cesium_file:
+                exported_files.append(actual_cesium_file)
+            else:
+                print(f"           Warning: Cesium export validation failed")
+        else:
+            print("\n  [23/26] Skipping Cesium 3D Tiles export (disabled)")
 
         # 24. Export high-poly as FBX
-        print(f"\n  [24/26] Exporting high-poly FBX to fbx_highpoly/{fbx_highpoly_output.name}...")
-        self._run_command("export", "-exportModel", high_poly_name, str(fbx_highpoly_output))
-
-        self._validate_export(fbx_highpoly_output, component_name)
+        if self.export_highpoly_fbx:
+            print(f"\n  [24/26] Exporting high-poly FBX to fbx_highpoly/{fbx_highpoly_output.name}...")
+            self._run_command("export", "-exportModel", high_poly_name, str(fbx_highpoly_output))
+            self._validate_export(fbx_highpoly_output, component_name)
+            exported_files.append(fbx_highpoly_output)
+        else:
+            print("\n  [24/26] Skipping high-poly FBX export (disabled)")
 
         # 25. Copy alignment file
-        print(f"\n  [25/26] Copying alignment file to alignments/{self.project_prefix}_{component_num}.rsalign...")
-        self._copy_alignment_file(component_name, component_num)
+        if self.export_alignment:
+            print(f"\n  [25/26] Copying alignment file to alignments/{self.project_prefix}_{component_num}.rsalign...")
+            self._copy_alignment_file(component_name, component_num)
+        else:
+            print("\n  [25/26] Skipping alignment file copy (disabled)")
 
         # 26. Final validation summary
-        print(f"\n  [26/26] All exports completed successfully")
+        print(f"\n  [26/26] All enabled exports completed successfully")
 
-        return fbx_lowpoly_output
+        return exported_files
 
     def export_only_highpoly(self) -> list[Path]:
         """
         Export only mode: Assumes models are already calculated and named correctly.
-        Only exports _HighPoly models as Cesium 3D Tiles and FBX.
+        Only exports _HighPoly models as Cesium 3D Tiles and FBX based on export settings.
         """
         component_names = self.scan_component_names()
 
@@ -698,28 +714,49 @@ class ModelProcessor:
             cesium_output = self.cesium_dir / f"{high_poly_name}.json"
             fbx_highpoly_output = self.fbx_highpoly_dir / f"{high_poly_name}.fbx"
 
+            # Calculate total steps based on enabled exports
+            total_steps = 1  # Select model
+            if self.export_cesium:
+                total_steps += 2  # Export + validate
+            if self.export_highpoly_fbx:
+                total_steps += 1
+            if self.export_alignment:
+                total_steps += 1
+
             try:
-                print(f"  [1/5] Selecting {high_poly_name}...")
+                step = 1
+                output_list = []
+
+                print(f"  [{step}/{total_steps}] Selecting {high_poly_name}...")
                 self._run_command("select model", "-selectModel", high_poly_name)
+                step += 1
 
-                print(f"  [2/5] Exporting Cesium 3D Tiles to cesium/{cesium_output.name}...")
-                self._run_command("export cesium", "-export3dTiles", str(cesium_output))
+                if self.export_cesium:
+                    print(f"  [{step}/{total_steps}] Exporting Cesium 3D Tiles to cesium/{cesium_output.name}...")
+                    self._run_command("export cesium", "-export3dTiles", str(cesium_output))
+                    step += 1
 
-                print(f"  [3/5] Validating Cesium export...")
-                actual_cesium_file = self._validate_and_rename_cesium_export(cesium_output, component_num)
+                    print(f"  [{step}/{total_steps}] Validating Cesium export...")
+                    actual_cesium_file = self._validate_and_rename_cesium_export(cesium_output, component_num)
+                    step += 1
 
-                if actual_cesium_file:
-                    exported_models.append(actual_cesium_file)
-                else:
-                    raise ExportError(f"Cesium export failed: {cesium_output.name}")
+                    if actual_cesium_file:
+                        exported_models.append(actual_cesium_file)
+                        output_list.append(f"cesium/{actual_cesium_file.name}")
+                    else:
+                        raise ExportError(f"Cesium export failed: {cesium_output.name}")
 
-                print(f"  [4/5] Exporting high-poly FBX to fbx_highpoly/{fbx_highpoly_output.name}...")
-                self._run_command("export", "-exportModel", high_poly_name, str(fbx_highpoly_output))
-                self._validate_export(fbx_highpoly_output, component_name)
-                exported_models.append(fbx_highpoly_output)
+                if self.export_highpoly_fbx:
+                    print(f"  [{step}/{total_steps}] Exporting high-poly FBX to fbx_highpoly/{fbx_highpoly_output.name}...")
+                    self._run_command("export", "-exportModel", high_poly_name, str(fbx_highpoly_output))
+                    self._validate_export(fbx_highpoly_output, component_name)
+                    exported_models.append(fbx_highpoly_output)
+                    output_list.append(f"fbx_highpoly/{fbx_highpoly_output.name}")
+                    step += 1
 
-                print(f"  [5/5] Copying alignment file...")
-                self._copy_alignment_file(component_name, component_num)
+                if self.export_alignment:
+                    print(f"  [{step}/{total_steps}] Copying alignment file...")
+                    self._copy_alignment_file(component_name, component_num)
 
                 # Mark component as completed and save checkpoint
                 self.completed_components.append(component_name)
@@ -727,7 +764,7 @@ class ModelProcessor:
 
                 self.process_log.append({
                     "component": component_name,
-                    "output": f"cesium/{actual_cesium_file.name}, fbx_highpoly/{fbx_highpoly_output.name}",
+                    "output": ", ".join(output_list) if output_list else "none",
                     "status": "success",
                 })
 
@@ -736,7 +773,7 @@ class ModelProcessor:
                 self._save_checkpoint(failed_component=component_name)
                 self.process_log.append({
                     "component": component_name,
-                    "output": f"cesium/{high_poly_name}.json",
+                    "output": f"{high_poly_name}.json",
                     "status": "FAILED",
                 })
                 self.generate_summary()
@@ -788,11 +825,9 @@ class ModelProcessor:
                 all_component_names = set(self.scan_component_names())
                 for comp in self.completed_components:
                     if comp in all_component_names:
-                        comp_num = self._extract_component_number(comp)
                         self.process_log.append({
                             "component": comp,
-                            "output": f"fbx_lowpoly/{self.project_prefix}_{comp_num}_LowPoly.fbx, "
-                                      f"fbx_highpoly/{self.project_prefix}_{comp_num}_HighPoly.fbx",
+                            "output": "(previous run)",
                             "status": "success (previous run)",
                         })
 
@@ -812,29 +847,22 @@ class ModelProcessor:
             try:
                 output_files = self.process_component(component_name, self.simplify_params)
                 exported_models.extend(output_files)
-                component_num = self._extract_component_number(component_name)
 
                 self.completed_components.append(component_name)
                 self._save_checkpoint()
 
-                output_list = []
-                if self.export_lowpoly_fbx:
-                    output_list.append(f"fbx_lowpoly/{self.project_prefix}_{component_num}_LowPoly.fbx")
-                if self.export_highpoly_fbx:
-                    output_list.append(f"fbx_highpoly/{self.project_prefix}_{component_num}_HighPoly.fbx")
-
                 self.process_log.append({
                     "component": component_name,
-                    "output": ", ".join(output_list) if output_list else "none",
+                    "output": ", ".join([f.name for f in output_files]) if output_files else "none",
                     "status": "success",
                 })
 
             except ExportError as e:
-                component_num = self._extract_component_number(component_name)
+                low_poly_name = f"{component_name}_LowPoly"
                 self._save_checkpoint(failed_component=component_name)
                 self.process_log.append({
                     "component": component_name,
-                    "output": f"fbx_lowpoly/{self.project_prefix}_{component_num}_LowPoly.fbx",
+                    "output": f"{low_poly_name}.fbx",
                     "status": "FAILED",
                 })
 
@@ -879,7 +907,7 @@ class ModelProcessor:
             f"Processing Date/Time: {timestamp}",
             f"Alignment Directory: {self.alignment_dir}",
             f"Output Directory: {self.output_base_dir}",
-            ]
+        ]
 
         if self.export_lowpoly_fbx:
             summary_lines.append(f"  - Low-poly FBX exports: {self.fbx_lowpoly_dir}")
@@ -901,7 +929,7 @@ class ModelProcessor:
 
         if failed > 0:
             summary_lines.append("*** PROCESSING HALTED DUE TO EXPORT FAILURE ***")
-            summary_lines.append(f"*** Checkpoint saved - re-run to resume ***")
+            summary_lines.append("*** Checkpoint saved - re-run to resume ***")
             summary_lines.append("")
 
         summary_lines.extend([
@@ -910,7 +938,7 @@ class ModelProcessor:
             "-" * 80,
             f"{'Component Name':<30} {'Output Files':<45} {'Status':<15}",
             "-" * 80,
-            ])
+        ])
 
         for entry in self.process_log:
             summary_lines.append(
@@ -922,7 +950,7 @@ class ModelProcessor:
             "",
             "Processing completed." if failed == 0 else "Processing incomplete due to error.",
             "=" * 80,
-            ])
+        ])
 
         summary_text = "\n".join(summary_lines)
 
