@@ -13,9 +13,11 @@ Workflow:
    - Enable alignment for batch images only
    - Run alignment (with proper monitoring)
    - Disable batch images
+   - Save and checkpoint
 5. Final save
 
 Uses proper polling to detect operation start, monitor progress, and confirm completion.
+Supports resume from checkpoint if processing fails mid-batch.
 """
 
 import os
@@ -28,10 +30,15 @@ from typing import Optional
 
 
 class BatchAlignmentProcessor:
-    def __init__(self, images_root: Path, instance_name: str = "RC1"):
+    def __init__(self, images_root: Path, instance_name: str = "RC1",
+                 checkpoint_file: Optional[Path] = None):
         self.images_root = images_root
         self.instance_name = instance_name
         self.rc_exe: Optional[Path] = None
+
+        # Checkpoint support
+        self.checkpoint_file = checkpoint_file or (images_root / "batch_alignment_checkpoint.txt")
+        self.completed_batches: set[str] = set()
 
         # Image index: {batch_name: [image_paths]}
         self.batches: dict[str, list[Path]] = {}
@@ -94,6 +101,24 @@ class BatchAlignmentProcessor:
 
         total_images = sum(len(imgs) for imgs in self.batches.values())
         print(f"\nTotal: {len(self.batches)} batches, {total_images} images")
+
+    def _load_checkpoint(self) -> None:
+        """Load completed batches from checkpoint file."""
+        if self.checkpoint_file.exists():
+            with open(self.checkpoint_file, 'r') as f:
+                self.completed_batches = {line.strip() for line in f if line.strip()}
+            if self.completed_batches:
+                print(f"\nCheckpoint found: {len(self.completed_batches)} batch(es) already completed")
+                for batch in sorted(self.completed_batches):
+                    print(f"  ✓ {batch}")
+
+    def _save_checkpoint(self, batch_name: str) -> None:
+        """Mark a batch as completed in checkpoint file."""
+        self.completed_batches.add(batch_name)
+        with open(self.checkpoint_file, 'w') as f:
+            for batch in sorted(self.completed_batches):
+                f.write(f"{batch}\n")
+        print(f"  ✓ Checkpoint saved: {batch_name}")
 
     def _delegate(self, *args: str) -> subprocess.CompletedProcess:
         """
@@ -188,7 +213,10 @@ class BatchAlignmentProcessor:
         Monitor a delegated operation using -getStatus polling.
         Displays progress, ETA, and elapsed time.
 
-        CRITICAL: Detects operation start by transition from idle→busy, then monitors to completion.
+        Handles three scenarios:
+        1. RC idle at start → waits for busy transition
+        2. RC already busy at start → assumes operation started, begins monitoring
+        3. Operation completes → detects idle state
 
         Args:
             operation_name: Human-readable operation name
@@ -198,9 +226,9 @@ class BatchAlignmentProcessor:
         start_time = time.time()
         last_print_time = start_time
         operation_started = False
-        seen_idle = False
+        initial_check_done = False
 
-        print(f"\n[{operation_name}] Waiting for operation to start...")
+        print(f"\n[{operation_name}] Checking operation status...")
 
         while True:
             elapsed = time.time() - start_time
@@ -213,22 +241,26 @@ class BatchAlignmentProcessor:
             status_text = self._get_status()
             status = self._parse_status(status_text)
 
-            # CRITICAL: Detect operation start by transition from idle to non-idle
-            if not operation_started:
+            # Initial check: determine if operation already started
+            if not initial_check_done:
+                initial_check_done = True
                 if status['is_idle']:
-                    seen_idle = True
-                    time.sleep(0.5)
-                    continue
-                elif seen_idle:
-                    # Transitioned from idle to non-idle - operation has started!
+                    print(f"[{operation_name}] RC idle, waiting for operation to start...")
+                else:
+                    # Already busy - operation must have started
+                    operation_started = True
+                    print(f"[{operation_name}] Operation already in progress, monitoring...")
+
+            # If not started yet, wait for busy transition
+            if not operation_started:
+                if not status['is_idle']:
                     operation_started = True
                     print(f"[{operation_name}] Operation started, monitoring progress...")
                 else:
-                    # Haven't seen idle yet, keep waiting
                     time.sleep(0.5)
                     continue
 
-            # Now monitor progress with periodic updates
+            # Now monitoring progress with periodic updates
             current_time = time.time()
             if current_time - last_print_time >= poll_interval:
                 progress_pct = status['progress_pct']
@@ -332,14 +364,17 @@ class BatchAlignmentProcessor:
         escaped_name = re.escape(batch_name)
         pattern = f"g/[/\\\\]{escaped_name}[/\\\\]/"
 
+        # Combine commands into single delegation call to prevent race conditions
         print(f"  CMD: -deselectAllImages -selectImage {pattern} -enableAlignment true")
-        self._delegate("-deselectAllImages")
+        self._delegate(
+            "-deselectAllImages",
+            "-selectImage", pattern,
+            "-enableAlignment", "true"
+        )
         self._wait_completed()
-        self._delegate("-selectImage", pattern)
-        self._wait_completed()
-        self._delegate("-enableAlignment", "true")
-        self._wait_completed()
-        time.sleep(0.5)
+
+        # Wait 5 seconds for RC to fully process the state change
+        time.sleep(5.0)
 
         batch_size = len(self.batches.get(batch_name, []))
         print(f"✓ Enabled {batch_size} images from batch '{batch_name}'")
@@ -368,14 +403,17 @@ class BatchAlignmentProcessor:
         escaped_name = re.escape(batch_name)
         pattern = f"g/[/\\\\]{escaped_name}[/\\\\]/"
 
+        # Combine commands into single delegation call to prevent race conditions
         print(f"  CMD: -deselectAllImages -selectImage {pattern} -enableAlignment false")
-        self._delegate("-deselectAllImages")
+        self._delegate(
+            "-deselectAllImages",
+            "-selectImage", pattern,
+            "-enableAlignment", "false"
+        )
         self._wait_completed()
-        self._delegate("-selectImage", pattern)
-        self._wait_completed()
-        self._delegate("-enableAlignment", "false")
-        self._wait_completed()
-        time.sleep(0.5)
+
+        # Wait 5 seconds for RC to fully process the state change
+        time.sleep(5.0)
 
         print(f"✓ Batch '{batch_name}' disabled")
 
@@ -402,6 +440,9 @@ class BatchAlignmentProcessor:
             print("\nNo image batches found. Exiting.")
             return
 
+        # Load checkpoint
+        self._load_checkpoint()
+
         # Verify RC is running
         status = self._get_status()
         if not status:
@@ -412,10 +453,20 @@ class BatchAlignmentProcessor:
         print(f"\nConnected to RealityCapture instance '{self.instance_name}'")
         print(f"Status: {status}")
 
+        # Determine remaining batches
+        remaining_batches = [b for b in self.batches.keys() if b not in self.completed_batches]
+
+        if not remaining_batches:
+            print("\nAll batches already completed!")
+            return
+
         # Confirm workflow
-        print(f"\nThis will process {len(self.batches)} batches sequentially:")
-        for i, batch_name in enumerate(self.batches.keys(), 1):
+        print(f"\nThis will process {len(remaining_batches)} remaining batches sequentially:")
+        for i, batch_name in enumerate(remaining_batches, 1):
             print(f"  {i}. {batch_name} ({len(self.batches[batch_name])} images)")
+
+        if self.completed_batches:
+            print(f"\nSkipping {len(self.completed_batches)} already-completed batch(es)")
 
         confirm = input("\nProceed? [Y/n]: ").strip().lower()
         if confirm and confirm not in ('y', 'yes'):
@@ -423,16 +474,15 @@ class BatchAlignmentProcessor:
             return
 
         try:
-            # Load all images
-            self.load_all_images()
+            # Load all images (only if no checkpoint exists)
+            if not self.completed_batches:
+                self.load_all_images()
+                self.disable_all_images()
 
-            # Disable all images initially
-            self.disable_all_images()
-
-            # Process each batch sequentially
-            for i, batch_name in enumerate(self.batches.keys(), 1):
+            # Process remaining batches sequentially
+            for i, batch_name in enumerate(remaining_batches, 1):
                 print("\n" + "=" * 80)
-                print(f"PROCESSING BATCH {i}/{len(self.batches)}: {batch_name}")
+                print(f"PROCESSING BATCH {i}/{len(remaining_batches)}: {batch_name}")
                 print("=" * 80)
 
                 # Enable batch
@@ -447,13 +497,22 @@ class BatchAlignmentProcessor:
                 # Save after each batch
                 self.save_project()
 
+                # Save checkpoint
+                self._save_checkpoint(batch_name)
+
             print("\n" + "=" * 80)
             print("BATCH PROCESSING COMPLETE")
             print("=" * 80)
-            print(f"Processed {len(self.batches)} batches successfully")
+            print(f"Processed {len(remaining_batches)} batches successfully")
+
+            # Clean up checkpoint file on successful completion
+            if self.checkpoint_file.exists():
+                self.checkpoint_file.unlink()
+                print("✓ Checkpoint file removed")
 
         except Exception as e:
             print(f"\n[ERROR] Processing failed: {e}")
+            print(f"\nProgress saved. Re-run script to resume from checkpoint.")
             # Try to save project before exit
             try:
                 self.save_project()
