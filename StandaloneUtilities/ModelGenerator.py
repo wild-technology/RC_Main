@@ -1372,7 +1372,7 @@ def main():
     except Exception as e:
         print()
         print("+" + "=" * 78 + "+")
-        print("|" + "X UNEXPECTED ERROR:".center(78) + "|")
+        print("|" + "X UNEXPECTED ERROR: ".center(78) + "|")
         print("+" + "=" * 78 + "+")
         print(f"\n{e}", file=sys.stderr)
         sys.exit(1)
