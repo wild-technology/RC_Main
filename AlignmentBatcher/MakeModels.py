@@ -433,10 +433,7 @@ class ModelProcessor:
             self.smooth_params
         )
 
-        # Step: Close holes (large - 50000 edges max)
-        step += 1
-        print(f"\n  [{step}] Closing holes (max 50000 edges)...")
-        self._run_command("close holes", "-closeHoles", "50000")
+
 
         # Step: Close holes (small - 5000 edges max)
         step += 1
@@ -474,10 +471,10 @@ class ModelProcessor:
                 self.simplify_params
             )
 
-            # Step: Close holes
+            # Step: Close holes (large - 60000 edges max)
             step += 1
-            print(f"\n  [{step}] Closing holes...")
-            self._run_command("close holes", "-closeHoles")
+            print(f"\n  [{step}] Closing holes (max 600000 edges)...")
+            self._run_command("close holes", "-closeHoles", "600000")
 
             # Step: Simplify (pass 2)
             step += 1
