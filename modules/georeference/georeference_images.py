@@ -658,6 +658,24 @@ class GeoreferenceImages(RCModule):
         if not accepted_images:
             raise ValueError("No accepted images to write to flight log")
 
+        # Deduplicate by filename, keeping first occurrence
+        seen_filenames = set()
+        unique_images = []
+        duplicates_removed = 0
+
+        for img in accepted_images:
+            filename = img.get("FILENAME", "")
+            if filename and filename not in seen_filenames:
+                seen_filenames.add(filename)
+                unique_images.append(img)
+            elif filename:
+                duplicates_removed += 1
+
+        if duplicates_removed > 0:
+            self.logger.warning(f"Removed {duplicates_removed} duplicate filename entries from flight log")
+
+        accepted_images = unique_images
+
         decl_deg = self.params['magnetic_declination_deg'].get_value()
 
         # Fixed accuracy values
@@ -741,8 +759,10 @@ class GeoreferenceImages(RCModule):
             raise IOError("No lines written to flight log")
 
         self.stats['written_to_flight_log'] = lines_written
+        self.stats['duplicates_removed'] = duplicates_removed
         print(f"Flight log: {flight_log_filename}")
         print(f"  Lines written: {self.stats['written_to_flight_log']}")
+        print(f"  Duplicates removed: {duplicates_removed}")
         print(f"  File size: {file_size} bytes")
 
         return flight_log_filename
