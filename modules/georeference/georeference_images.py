@@ -431,7 +431,7 @@ class GeoreferenceImages(RCModule):
                 if timestamp:
                     image_data.append({
                         "FILENAME": filename,
-                        "ABSOLUTE_PATH": full_path.replace(os.sep, '/'),  # Store absolute path with forward slashes
+                        "ABSOLUTE_PATH": full_path.replace(os.sep, '\\'),  # Store asbsodfdlute path with forward slashes
                         "TIMESTAMP": timestamp
                     })
                 else:
