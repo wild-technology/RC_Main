@@ -69,6 +69,27 @@ class GeoreferenceImages(RCModule):
 
         return {**super().get_parameters(), **additional_params}
 
+    def __get_project_title(self) -> str:
+        """
+        Build project title from expedition and dive names.
+        Returns format: 'NA168_H2080' or empty string if not available.
+        """
+        expedition = None
+        dive = None
+
+        if 'expedition_name' in self.params:
+            expedition = self.params['expedition_name'].get_value()
+        if 'dive_name' in self.params:
+            dive = self.params['dive_name'].get_value()
+
+        if expedition and dive:
+            return f"{expedition}_{dive}"
+        elif expedition:
+            return expedition
+        elif dive:
+            return dive
+        return ""
+
     @staticmethod
     def _wrap180(angle_deg: float) -> float:
         """Wrap angle to [-180, 180] range."""
@@ -117,7 +138,7 @@ class GeoreferenceImages(RCModule):
     def _get_camera_pitch_accuracy(self, filename: str) -> float:
         """
         Return pitch accuracy (degrees) for a camera based on its name.
-        Yaw and Roll are fixed at 3° for all cameras.
+        Yaw and Roll are fixed at 3 degrees for all cameras.
         """
         camera_type = self._get_camera_type(filename)
 
@@ -130,7 +151,7 @@ class GeoreferenceImages(RCModule):
         elif camera_type == 'zeuss':
             return 30.0
         else:
-            self.logger.warning(f"Unknown camera type for {filename}, using default pitch accuracy 10°")
+            self.logger.warning(f"Unknown camera type for {filename}, using default pitch accuracy 10 degrees")
             return 10.0
 
     def _get_camera_pitch_offset(self, filename: str) -> float:
@@ -149,7 +170,7 @@ class GeoreferenceImages(RCModule):
         elif camera_type == 'zeuss':
             return 30.0
         else:
-            self.logger.warning(f"Unknown camera type for {filename}, assuming 0° pitch offset")
+            self.logger.warning(f"Unknown camera type for {filename}, assuming 0 degree pitch offset")
             return 0.0
 
     def _apply_camera_position_offset(self, utm_x: float | None, utm_y: float | None,
@@ -555,13 +576,13 @@ class GeoreferenceImages(RCModule):
 
         print("Matching summary:")
         print(f"  Examined images: {self.stats['examined_images']}")
-        print(f"  Accepted ≤2s:    {self.stats['accepted_images']} ({self.stats['accept_rate_pct']:.1f}%)")
+        print(f"  Accepted <=2s:    {self.stats['accepted_images']} ({self.stats['accept_rate_pct']:.1f}%)")
         print(f"  Rejected >2s:    {self.stats['rejected_time']}")
         print(f"  Rejected no CSV: {self.stats['rejected_no_csv']}")
         print("  Time-delta buckets (all pairs, pre-threshold):")
         print(f"    Exact: {self.stats['bucket_exact']}")
-        print(f"    1–4s:  {self.stats['bucket_1_4']}")
-        print(f"    5–15s: {self.stats['bucket_5_15']}")
+        print(f"    1-4s:  {self.stats['bucket_1_4']}")
+        print(f"    5-15s: {self.stats['bucket_5_15']}")
         print(f"    >15s:  {self.stats['bucket_gt15']}")
         print("  Accepted field completeness:")
         print(f"    Missing UTM:         {self.stats['accepted_missing_utm']}")
@@ -609,7 +630,7 @@ class GeoreferenceImages(RCModule):
         elif camera_type == 'zeuss':
             return 30.0, 30.0, 30.0
         else:
-            self.logger.warning(f"Unknown camera type for {filename}, using default accuracy 10°")
+            self.logger.warning(f"Unknown camera type for {filename}, using default accuracy 10 degrees")
             return 10.0, 10.0, 10.0
 
     def _get_camera_focal_length_mm(self, filename: str) -> float | None:
@@ -643,8 +664,20 @@ class GeoreferenceImages(RCModule):
         if not os.path.isdir(image_folder):
             raise ValueError(f"Image folder does not exist: {image_folder}")
 
+        # Build filename with expedition/dive prefix
+        project_title = self.__get_project_title()
         zone_suffix = self.utm_zone if self.utm_zone else "UNKNOWN"
-        flight_log_filename = os.path.join(image_folder, f"flight_log_{zone_suffix}_UTM.txt")
+
+        if project_title:
+            flight_log_filename = os.path.join(
+                image_folder,
+                f"flight_log_{project_title}_{zone_suffix}_UTM.txt"
+            )
+        else:
+            flight_log_filename = os.path.join(
+                image_folder,
+                f"flight_log_{zone_suffix}_UTM.txt"
+            )
 
         if os.path.exists(flight_log_filename):
             self.logger.warning(f"Flight log file already exists: {flight_log_filename}, overriding.")
@@ -772,7 +805,6 @@ class GeoreferenceImages(RCModule):
 
             output_data = {}
 
-
             data_rows = self.__read_csv_data(flight_log)
             image_data = self.__read_image_filenames(input_dir, input_type)
             matches_made = self.__estimate_location(image_data, data_rows, input_type)
@@ -790,15 +822,15 @@ class GeoreferenceImages(RCModule):
             output_data['Timestamp Parse Failures'] = int(self.stats.get('timestamp_parse_failures', 0))
             output_data['Images With Valid Timestamps'] = int(self.stats.get('images_with_valid_ts', 0))
             output_data['Images Examined'] = int(self.stats.get('examined_images', 0))
-            output_data['Matched ≤2s'] = matches_made
+            output_data['Matched <=2s'] = matches_made
             output_data['Rejected >2s'] = int(self.stats.get('rejected_time', 0))
             output_data['Rejected No CSV'] = int(self.stats.get('rejected_no_csv', 0))
             output_data['Written To Flight Log'] = int(self.stats.get('written_to_flight_log', 0))
             output_data['Acceptance Rate %'] = float(f"{self.stats.get('accept_rate_pct', 0.0):.2f}")
             output_data['Delta Buckets'] = {
                 "Exact": int(self.stats.get('bucket_exact', 0)),
-                "1–4s": int(self.stats.get('bucket_1_4', 0)),
-                "5–15s": int(self.stats.get('bucket_5_15', 0)),
+                "1-4s": int(self.stats.get('bucket_1_4', 0)),
+                "5-15s": int(self.stats.get('bucket_5_15', 0)),
                 ">15s": int(self.stats.get('bucket_gt15', 0))
             }
             output_data['Accepted Field Gaps'] = {
@@ -817,7 +849,7 @@ class GeoreferenceImages(RCModule):
         self.logger.info(f"Timestamp Parse Failures: {output_data['Timestamp Parse Failures']}")
         self.logger.info(f"Images With Valid Timestamps: {output_data['Images With Valid Timestamps']}")
         self.logger.info(f"Images Examined: {output_data['Images Examined']}")
-        self.logger.info(f"Matched ≤2s: {output_data['Matched ≤2s']}")
+        self.logger.info(f"Matched <=2s: {output_data['Matched <=2s']}")
         self.logger.info(f"Rejected >2s: {output_data['Rejected >2s']}")
         self.logger.info(f"Rejected No CSV: {output_data['Rejected No CSV']}")
         self.logger.info(f"Written To Flight Log: {output_data['Written To Flight Log']}")
@@ -903,6 +935,6 @@ class GeoreferenceImages(RCModule):
             return False, 'Magnetic declination must be a number'
 
         if abs(mag_decl) > 180:
-            return False, f'Magnetic declination out of range: {mag_decl}° (must be between -180° and 180°)'
+            return False, f'Magnetic declination out of range: {mag_decl} degrees (must be between -180 and 180 degrees)'
 
         return True, None
