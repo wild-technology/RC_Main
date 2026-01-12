@@ -452,7 +452,7 @@ class GeoreferenceImages(RCModule):
                 if timestamp:
                     image_data.append({
                         "FILENAME": filename,
-                        "ABSOLUTE_PATH": full_path.replace(os.sep, '\\'),  # Store asbsodfdlute path with forward slashes
+                        "ABSOLUTE_PATH": full_path,
                         "TIMESTAMP": timestamp
                     })
                 else:
@@ -661,37 +661,20 @@ class GeoreferenceImages(RCModule):
             return None
 
     def __generate_flight_log(self, accepted_images, output_path):
-        """Generate flight log with relative paths for zone disambiguation"""
+        """Generate flight log with absolute paths for zone disambiguation"""
 
         def fmt(value):
             """Format numeric value with 6 decimal places, empty string if None"""
             return f"{value:.6f}" if value is not None else ""
 
-<<<<<<< HEAD
-        # Build filename with expedition/dive prefix
-        project_title = self.__get_project_title()
-        zone_suffix = self.utm_zone if self.utm_zone else "UNKNOWN"
-
-        if project_title:
-            flight_log_filename = os.path.join(
-                image_folder,
-                f"flight_log_{project_title}_{zone_suffix}_UTM.txt"
-            )
-        else:
-            flight_log_filename = os.path.join(
-                image_folder,
-                f"flight_log_{zone_suffix}_UTM.txt"
-            )
-=======
         with open(output_path, 'w', encoding='utf-8') as f:
             # Write header
             f.write(
                 "filename;X (East);Y (North);Alt;X Accuracy;Y Accuracy;Alt Accuracy;Yaw;Pitch;Roll;Yaw Accuracy;Pitch Accuracy;Roll Accuracy;FocalLength\n")
->>>>>>> origin/main_v2
 
             # Write data for all accepted images
             for image in accepted_images:
-                # Use relative path instead of filename for zone disambiguation
+                # Use absolute path instead of filename for zone disambiguation
                 flight_log_name = image.get("ABSOLUTE_PATH", image.get("FILENAME", ""))
 
                 # Extract position data
