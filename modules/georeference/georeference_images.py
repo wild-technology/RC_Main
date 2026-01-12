@@ -429,7 +429,7 @@ class GeoreferenceImages(RCModule):
             if self.__is_image_file(filename, os.path.dirname(full_path)):
                 timestamp = self.__parse_timestamp_from_filename(filename, data_type)
                 if timestamp:
-                    image_data.append({"FILENAME": filename, "TIMESTAMP": timestamp})
+                    image_data.append({"FILENAME": rel_path, "TIMESTAMP": timestamp})
                 else:
                     ts_parse_failures += 1
             else:
