@@ -207,7 +207,7 @@ class BatchAlignmentProcessor:
         except Exception:
             return False
 
-    def _monitor_operation(self, operation_name: str, timeout_sec: float = 30601.0,
+    def _monitor_operation(self, operation_name: str, timeout_sec: float = 300601.0,
                            poll_interval: float = 5.0) -> None:
         """
         Monitor a delegated operation using -getStatus polling.

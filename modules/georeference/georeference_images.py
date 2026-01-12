@@ -441,10 +441,18 @@ class GeoreferenceImages(RCModule):
 
         unreadable_files = 0
         ts_parse_failures = 0
+        skipped_mask_files = 0
 
         bar = self._initialize_loading_bar(total_files, "Reading Image Data")
         for full_path in jpeg_files:
             filename = os.path.basename(full_path)
+
+            # Skip mask files (e.g., camlower_20250524T061405Z.jpeg.mask.png)
+            if '.mask.' in filename.lower():
+                skipped_mask_files += 1
+                self._update_loading_bar(bar, 1)
+                continue
+
             image_dir = os.path.dirname(full_path)
 
             if self.__is_image_file(filename, image_dir):
@@ -467,6 +475,10 @@ class GeoreferenceImages(RCModule):
         self.stats['files_unreadable'] = unreadable_files
         self.stats['timestamp_parse_failures'] = ts_parse_failures
         self.stats['images_with_valid_ts'] = len(image_data)
+        self.stats['skipped_mask_files'] = skipped_mask_files
+
+        if skipped_mask_files > 0:
+            self.logger.info(f"Skipped {skipped_mask_files} mask files")
 
         if not image_data:
             raise ValueError(f"No images with valid timestamps found in {image_folder}")
