@@ -28,8 +28,8 @@ class ComponentExporter:
             rc_exe: Path,
             output_dir: Path,
             base_name: str = "Component",
-            max_component_num: int = 40,
-            max_parenthesis_num: int = 15,
+            max_component_num: int = 150,
+            max_parenthesis_num: int = 2,
             poll_interval: float = 2.0,
     ):
         """
@@ -348,6 +348,9 @@ class ComponentExporter:
             else:
                 print("not found")
 
+            # Wait 5 seconds between component selection attempts
+            time.sleep(5.0)
+
             # Then try with parentheses: "Component ## (1)" through "Component ## (max)"
             for paren_num in range(1, self.max_parenthesis_num + 1):
                 component_name = f"Component {comp_num} ({paren_num})"
@@ -365,6 +368,9 @@ class ComponentExporter:
                     export_index += 1
                 else:
                     print("not found")
+
+                # Wait 5 seconds between component selection attempts
+                time.sleep(1.0)
 
         print()
         print(f"Completed. Exported {len(exported_files)} component(s).")
@@ -419,16 +425,18 @@ class ComponentExporter:
         print(f"\nSummary saved to: {summary_file}")
 
 
-def get_user_input() -> tuple[Path, str]:
+def get_user_input() -> tuple[Path, str, int, int]:
     """
     Prompt user for required paths and settings.
 
     Returns:
-        Tuple of (output_dir, base_name)
+        Tuple of (output_dir, base_name, max_component_num, max_parenthesis_num)
     """
     # Default values
     default_output_dir = r"D:\NA168\Zeuss_NA168_H2080\aligned_components"
     default_base_name = "NA168_H2080_"
+    default_max_component = 40
+    default_max_parenthesis = 15
 
     print("=" * 80)
     print("RealityCapture Component Exporter (Delegation Mode)")
@@ -464,8 +472,38 @@ def get_user_input() -> tuple[Path, str]:
     base_name_input = input(f"Enter base name for exported files [{default_base_name}]: ").strip()
     base_name = base_name_input if base_name_input else default_base_name
 
+    # Get maximum component number
+    while True:
+        max_comp_input = input(f"Enter maximum component number to check [{default_max_component}]: ").strip()
+        if not max_comp_input:
+            max_component_num = default_max_component
+            break
+        try:
+            max_component_num = int(max_comp_input)
+            if max_component_num < 0:
+                print("Error: Maximum component number must be non-negative.")
+                continue
+            break
+        except ValueError:
+            print("Error: Please enter a valid integer.")
+
+    # Get maximum parenthesis number
+    while True:
+        max_paren_input = input(f"Enter maximum parenthesis variant to check [{default_max_parenthesis}]: ").strip()
+        if not max_paren_input:
+            max_parenthesis_num = default_max_parenthesis
+            break
+        try:
+            max_parenthesis_num = int(max_paren_input)
+            if max_parenthesis_num < 0:
+                print("Error: Maximum parenthesis number must be non-negative.")
+                continue
+            break
+        except ValueError:
+            print("Error: Please enter a valid integer.")
+
     print()
-    return output_dir, base_name
+    return output_dir, base_name, max_component_num, max_parenthesis_num
 
 
 def main():
@@ -473,7 +511,7 @@ def main():
     Main entry point for the component export script.
     """
     # RealityScan executable path
-    rc_exe = Path(r"C:\Program Files\Epic Games\RealityScan_2.0\RealityScan.exe")
+    rc_exe = Path(r"C:\Program Files\Epic Games\RealityScan_2.1\RealityScan.exe")
 
     if not rc_exe.exists():
         print(f"Error: RealityScan executable not found: {rc_exe}")
@@ -482,15 +520,15 @@ def main():
 
     try:
         # Get user input
-        output_dir, base_name = get_user_input()
+        output_dir, base_name, max_component_num, max_parenthesis_num = get_user_input()
 
         # Create exporter and run
         exporter = ComponentExporter(
             rc_exe=rc_exe,
             output_dir=output_dir,
             base_name=base_name,
-            max_component_num=13,
-            max_parenthesis_num=7,
+            max_component_num=max_component_num,
+            max_parenthesis_num=max_parenthesis_num,
             poll_interval=2.0,
         )
 
