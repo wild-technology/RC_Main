@@ -473,7 +473,7 @@ def main():
     Main entry point for the component export script.
     """
     # RealityScan executable path
-    rc_exe = Path(r"C:\Program Files\Epic Games\RealityScan_2.1\RealityScan.exe")
+    rc_exe = Path(r"C:\Program Files\Epic Games\RealityScan_2.0\RealityScan.exe")
 
     if not rc_exe.exists():
         print(f"Error: RealityScan executable not found: {rc_exe}")
@@ -489,8 +489,8 @@ def main():
             rc_exe=rc_exe,
             output_dir=output_dir,
             base_name=base_name,
-            max_component_num=40,
-            max_parenthesis_num=15,
+            max_component_num=13,
+            max_parenthesis_num=7,
             poll_interval=2.0,
         )
 
