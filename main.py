@@ -98,6 +98,26 @@ def initialize_parameters(modules) -> dict[str, Parameter]:
     params: dict[str, Parameter] = {}
 
     # Global Parameters
+    params['expedition_name'] = Parameter(
+        name='Expedition Name',
+        cli_short='exp',
+        cli_long='expedition_name',
+        type=str,
+        default_value=None,
+        description='Expedition identifier (e.g., NA168)',
+        prompt_user=True
+    )
+
+    params['dive_name'] = Parameter(
+        name='Dive Name',
+        cli_short='dive',
+        cli_long='dive_name',
+        type=str,
+        default_value=None,
+        description='Dive identifier (e.g., H2080)',
+        prompt_user=True
+    )
+
     params['output_dir'] = Parameter(
         name='Output Directory',
         cli_short='o',
