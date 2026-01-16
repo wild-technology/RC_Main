@@ -10,90 +10,227 @@ Execution Logic:
 - Processes each component incrementally, creating models within the same project
 - Validates export success and halts on failure
 
-Per-component workflow:
-  1. -selectComponent <n> — Select component by name
-  2. -calculateHighModel — Generate high detail mesh
-  3. -selectMarginalTriangles + filter — Remove marginal triangles
-  4. -simplify — Reduce to 70% triangle count (set in RC before running)
-  5. -selectLargeTrianglesAbs 60 + filter — Remove triangles with edges > 60 units
-  6. -selectLargestModelComponent + invert + filter — Keep only largest connected part
-  7. -cleanModel — Fix geometry issues
-  8. -smooth — Smooth surface
-  9. -calculateTexture — Generate texture on high-poly
-  10. -closeHoles 80000 — Close holes with max 80000 edges
-  11. -calculateTexture — Re-texture to cover closed holes
-  12. -renameSelectedModel — Rename to <n>_HighPoly
-  13. -simplify — First simplification (uses RC settings or params.xml)
-  14. -closeHoles — Close holes
-  15. -simplify — Second simplification
-  16. -closeHoles — Close holes
-  17. -renameSelectedModel — Rename to <n>_LowPoly
-  18. -unwrap — Unwrap low-poly model (required for texture reprojection)
-  19. -reprojectTexture — Reproject texture from _HighPoly to _LowPoly
-  20. -save — Save project
-  21. -exportModel — Export _LowPoly as FBX (to fbx_lowpoly/ subdirectory)
-  22. -selectModel — Select _HighPoly model
-  23. -export3dTiles — Export _HighPoly as Cesium 3D Tiles (to cesium/ subdirectory)
-  24. -exportModel — Export _HighPoly as FBX (to fbx_highpoly/ subdirectory)
-  25. Copy .rsalign alignment file (to alignments/ subdirectory)
-  26. Validate all exports exist — HALT if missing
+Safety Features:
+- Sends -abortInstance on startup to clear any queued commands from previous runs
+- Each command is sent as a separate delegation (one command at a time)
+- Uses TWO-PHASE IDLE DETECTION to properly wait for operations:
+  1. Wait for RC to become BUSY (proves operation started)
+  2. Wait for RC to return to IDLE (proves operation completed)
+- This avoids race conditions where -waitCompleted returns before RC starts
+- Ctrl+C triggers -abortInstance before exiting to stop RC processing
 
-Export-Only Mode:
-  - Assumes models already processed and named as {component_name}_HighPoly
-  - Only exports _HighPoly models as Cesium 3D Tiles
-  - Skips all processing steps
+Pipeline per component (25 steps):
+  1. -selectComponent <n>
+  2. -calculateHighModel
+  3. -selectMarginalTriangles
+  4. -removeSelectedTriangles
+  5. -simplify (to 70%)
+  6. -selectLargeTrianglesRel 3.0
+  7. Wait 10s for selection calculation
+  8. -removeSelectedTriangles
+  9. -cleanModel
+  10. -smooth
+  11. -calculateTexture
+  12. -closeHoles 80000
+  13. -renameSelectedModel <n>_HighPoly
+  14. -simplify (pass 1)
+  15. -closeHoles
+  16. -simplify (pass 2)
+  17. -closeHoles
+  18. -unwrap
+  19. -renameSelectedModel <n>_LowPoly (unwrapped)
+  20. -reprojectTexture HighPoly LowPoly
+  21. -renameSelectedModel <n>_LowPoly (textured result)
+  22. -save
+  23. -exportModel LowPoly as FBX
+  24. -selectModel HighPoly
+  25. -export3dTiles as Cesium 3D Tiles
 
-Uses delegation (-delegateTo * -waitCompleted *) to communicate with running RealityCapture instance.
+Uses delegation (-delegateTo * <single_cmd> -waitCompleted *) for each step.
 """
 
 import subprocess
 import sys
+import signal
 import time
-import shutil
+import re
+import atexit
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
+from dataclasses import dataclass, field
 
 
-class ExportError(Exception):
+class RCError(Exception):
+    """Base exception for RealityCapture errors."""
+    pass
+
+
+class ExportError(RCError):
     """Raised when model export fails or exported file is not found."""
     pass
+
+
+class CommandError(RCError):
+    """Raised when a RealityCapture command fails."""
+    pass
+
+
+class ConnectionError(RCError):
+    """Raised when unable to communicate with RealityCapture."""
+    pass
+
+
+class AbortedError(RCError):
+    """Raised when processing is aborted by user."""
+    pass
+
+
+@dataclass
+class StepResult:
+    """Result of a single pipeline step."""
+    step_number: int
+    step_name: str
+    started_at: datetime
+    completed_at: datetime
+    duration_seconds: float
+    success: bool
+    final_status: str = ""
+    error_message: str = ""
+
+
+@dataclass
+class ComponentResult:
+    """Result of processing a single component."""
+    component_name: str
+    started_at: datetime
+    completed_at: Optional[datetime] = None
+    success: bool = False
+    steps: list[StepResult] = field(default_factory=list)
+    output_files: list[Path] = field(default_factory=list)
+    error_message: str = ""
+
+
+class RCStatusParser:
+    """
+    Parse RealityCapture status strings.
+
+    Expected format: id:0x10001 progress:57.5% runtime:4.26sec endEstimation:3.40sec
+    Or when idle: id:0xffffffff progress:0.0% (or similar idle indicators)
+    """
+
+    IDLE_INDICATORS = [
+        "idle",
+        "id:0xffffffff",
+    ]
+
+    @staticmethod
+    def parse(status_text: Optional[str]) -> dict:
+        """Parse status string into components."""
+        result = {
+            "raw": status_text or "",
+            "id": "",
+            "progress": 0.0,
+            "progress_str": "",
+            "runtime": "",
+            "estimation": "",
+            "is_idle": False,
+        }
+
+        if not status_text:
+            result["is_idle"] = True
+            return result
+
+        status_lower = status_text.lower()
+
+        # Check for idle indicators
+        for indicator in RCStatusParser.IDLE_INDICATORS:
+            if indicator in status_lower:
+                result["is_idle"] = True
+
+        # Parse key:value pairs
+        parts = status_text.split()
+        for part in parts:
+            if ':' not in part:
+                continue
+            key, value = part.split(':', 1)
+            key_lower = key.lower()
+
+            if key_lower == "id":
+                result["id"] = value
+            elif key_lower == "progress":
+                result["progress_str"] = value
+                match = re.search(r'(\d+(?:\.\d+)?)', value)
+                if match:
+                    result["progress"] = float(match.group(1))
+            elif key_lower == "runtime":
+                result["runtime"] = value
+            elif key_lower in ("endestimation", "estimation"):
+                result["estimation"] = value
+
+        # 100% progress also means complete/idle for waiting purposes
+        if result["progress"] >= 100.0:
+            result["is_idle"] = True
+
+        return result
 
 
 class ModelProcessor:
     """
     Process components in an open RealityCapture project through the model pipeline.
+
+    Features:
+    - One command per delegation call for safe abort capability
+    - Startup abort to clear any queued commands
+    - Signal handler for clean abort on Ctrl+C
+    - Progress monitoring via -getStatus polling
     """
+
+    # Class-level reference for signal handler
+    _active_instance: Optional["ModelProcessor"] = None
 
     def __init__(
             self,
             rc_exe: Path,
             alignment_dir: Path,
-            output_base_dir: Path,
+            export_dir: Path,
             project_prefix: str,
             simplify_params: Optional[Path] = None,
+            texture_reproj_params: Optional[Path] = None,
+            instance_name: str = "*",
             poll_interval: float = 2.0,
             test_mode: bool = True,
+            verbose: bool = True,
     ):
+        """
+        Initialize the ModelProcessor.
+
+        Args:
+            rc_exe: Path to RealityScan.exe
+            alignment_dir: Directory containing .rsalign files
+            export_dir: Directory for exported models
+            project_prefix: Prefix for output filenames (e.g., "NA168_H2080")
+            simplify_params: Optional path to simplification params.xml
+            texture_reproj_params: Optional path to texture reprojection params.xml
+            instance_name: RC instance name or "*" for first available
+            poll_interval: Seconds between status polls
+            test_mode: If True, only process first component
+            verbose: If True, print detailed status updates
+        """
         self.rc_exe = rc_exe
         self.alignment_dir = alignment_dir
-        self.output_base_dir = output_base_dir
+        self.export_dir = export_dir
         self.project_prefix = project_prefix
         self.simplify_params = simplify_params
+        self.texture_reproj_params = texture_reproj_params
+        self.instance_name = instance_name
         self.poll_interval = poll_interval
         self.test_mode = test_mode
-        self.process_log: list[dict[str, str]] = []
+        self.verbose = verbose
 
-        # Create subdirectories for exports
-        self.fbx_lowpoly_dir = output_base_dir / "fbx_lowpoly"
-        self.fbx_highpoly_dir = output_base_dir / "fbx_highpoly"
-        self.cesium_dir = output_base_dir / "cesium"
-        self.alignments_dir = output_base_dir / "alignments"
-
-        self.fbx_lowpoly_dir.mkdir(parents=True, exist_ok=True)
-        self.fbx_highpoly_dir.mkdir(parents=True, exist_ok=True)
-        self.cesium_dir.mkdir(parents=True, exist_ok=True)
-        self.alignments_dir.mkdir(parents=True, exist_ok=True)
+        self.results: list[ComponentResult] = []
+        self._status_parser = RCStatusParser()
+        self._abort_requested = False
 
         if not self.rc_exe.exists():
             raise FileNotFoundError(f"RealityScan executable not found: {self.rc_exe}")
@@ -101,138 +238,328 @@ class ModelProcessor:
         if not self.alignment_dir.exists():
             raise FileNotFoundError(f"Alignment directory not found: {self.alignment_dir}")
 
-    def _get_status(self) -> Optional[str]:
-        """Query RealityCapture status."""
-        cmd = [str(self.rc_exe), "-getStatus", "*"]
-        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        if result.returncode == 0 and result.stdout:
-            return result.stdout.strip()
-        return None
+        self.export_dir.mkdir(parents=True, exist_ok=True)
 
-    def _parse_status(self, status: Optional[str]) -> dict:
-        """Parse status string into components."""
-        result = {}
-        if not status:
-            return result
-        parts = status.split()
-        for part in parts:
-            if ':' in part:
-                key, value = part.split(':', 1)
-                result[key] = value
-        return result
+        # Set up signal handlers and cleanup
+        ModelProcessor._active_instance = self
+        self._setup_signal_handlers()
+        atexit.register(self._cleanup)
 
-    def _is_idle(self, status: Optional[str] = None) -> bool:
-        """Check if RealityCapture is idle."""
-        if status is None:
-            status = self._get_status()
-        if not status:
-            return False
+    def _setup_signal_handlers(self) -> None:
+        """Set up signal handlers for graceful abort."""
+        signal.signal(signal.SIGINT, self._signal_handler)
+        signal.signal(signal.SIGTERM, self._signal_handler)
 
-        parsed = self._parse_status(status)
-        status_lower = status.lower()
+    @staticmethod
+    def _signal_handler(signum, frame) -> None:
+        """Handle interrupt signals by requesting abort."""
+        instance = ModelProcessor._active_instance
+        if instance is not None:
+            instance._log("")
+            instance._log("=" * 60)
+            instance._log("INTERRUPT RECEIVED - Aborting RealityCapture operations...")
+            instance._log("=" * 60)
+            instance._request_abort()
+            raise AbortedError("Processing aborted by user")
 
-        if "idle" in status_lower:
-            return True
+    def _request_abort(self) -> None:
+        """Request abort and send abort command to RC."""
+        self._abort_requested = True
 
-        progress = parsed.get('progress', '')
-        if progress in ('100.0%', '100%'):
-            return True
+        # Send abort command to RC to stop current operations
+        self._abort_instance()
 
-        op_id = parsed.get('id', '')
-        if op_id == '0xffffffff' and progress in ('0.0%', '0%'):
-            return True
+    def _cleanup(self) -> None:
+        """Cleanup on exit."""
+        ModelProcessor._active_instance = None
 
-        return False
+    def _log(self, message: str, indent: int = 0) -> None:
+        """Print a timestamped log message."""
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        prefix = "  " * indent
+        print(f"[{timestamp}] {prefix}{message}")
 
-    def _wait_until_idle(self, operation_name: str = "operation", timeout: float = 18000.0) -> None:
-        """Wait until RealityCapture reports idle status (5 hour timeout)."""
-        print(f"    Waiting for {operation_name}...", end=" ", flush=True)
+    def _abort_instance(self) -> None:
+        """Send abort command to RealityCapture to stop current operations."""
+        self._log("Sending -abortInstance to RealityCapture...", indent=1)
+        try:
+            cmd = [str(self.rc_exe), "-abortInstance", self.instance_name]
+            subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            self._log("Abort command sent", indent=1)
+        except subprocess.TimeoutExpired:
+            self._log("Warning: Abort command timed out", indent=1)
+        except Exception as e:
+            self._log(f"Warning: Failed to send abort: {e}", indent=1)
 
-        time.sleep(0.5)
+    def _clear_queue(self) -> None:
+        """
+        Clear any queued commands from previous runs by sending abort.
 
+        This should be called at startup to ensure a clean state.
+        """
+        self._log("Clearing any queued commands from previous runs...")
+        self._abort_instance()
+        # Brief pause to let RC process the abort
+        time.sleep(1.0)
+
+    def _get_status(self) -> dict:
+        """
+        Query RealityCapture status via -getStatus.
+
+        Returns parsed status dictionary.
+        """
+        try:
+            cmd = [str(self.rc_exe), "-getStatus", self.instance_name]
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+
+            if result.returncode == 0 and result.stdout:
+                lines = [ln.strip() for ln in result.stdout.splitlines() if ln.strip()]
+                status_text = lines[-1] if lines else ""
+                return self._status_parser.parse(status_text)
+
+            return self._status_parser.parse(None)
+
+        except subprocess.TimeoutExpired:
+            return self._status_parser.parse(None)
+        except Exception:
+            return self._status_parser.parse(None)
+
+    def _verify_connection(self) -> bool:
+        """Verify we can communicate with RealityCapture."""
         status = self._get_status()
-        if self._is_idle(status):
-            print("done")
-            return
+        return bool(status.get("raw"))
 
-        start_time = time.time()
-        last_progress = None
+    def _delegate_single_command(
+            self,
+            operation_name: str,
+            *rc_command_args: str,
+            step_number: int = 0,
+            total_steps: int = 0,
+    ) -> StepResult:
+        """
+        Execute a SINGLE command via delegation and wait for completion.
 
-        while time.time() - start_time < timeout:
+        Uses two-phase idle detection:
+        1. Send delegation command (no -waitCompleted, it's unreliable)
+        2. Wait for RC to become BUSY (operation actually started)
+        3. Wait for RC to return to IDLE (operation completed)
+
+        This avoids the race condition where -waitCompleted returns immediately
+        before RC has picked up the queued command.
+
+        Args:
+            operation_name: Human-readable name for logging
+            rc_command_args: Single RealityCapture command with its arguments
+            step_number: Current step number for display
+            total_steps: Total steps for display
+
+        Returns:
+            StepResult with timing and status information
+        """
+        # Check for abort before starting
+        if self._abort_requested:
+            raise AbortedError("Abort requested")
+
+        step_label = f"[{step_number}/{total_steps}]" if total_steps > 0 else ""
+        self._log(f"{step_label} {operation_name}...", indent=1)
+
+        started_at = datetime.now()
+
+        # Build command WITHOUT -waitCompleted (it's unreliable)
+        cmd = [
+                  str(self.rc_exe),
+                  "-delegateTo", self.instance_name,
+              ] + list(rc_command_args)
+
+        if self.verbose:
+            cmd_str = " ".join(rc_command_args)
+            self._log(f"Command: {cmd_str}", indent=2)
+
+        # Get initial status to detect change
+        initial_status = self._get_status()
+        initial_id = initial_status.get("id", "")
+        initial_progress = initial_status.get("progress", 0.0)
+
+        # Send the delegation command (returns immediately after queuing)
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode != 0:
+                self._log(f"Warning: Delegation returned {result.returncode}", indent=2)
+        except subprocess.TimeoutExpired:
+            self._log("Warning: Delegation command timed out", indent=2)
+        except Exception as e:
+            self._log(f"Warning: Delegation failed: {e}", indent=2)
+
+        # Brief delay to let RC pick up the command before polling
+        time.sleep(1.5)
+
+        # PHASE 1: Wait for operation to START (RC becomes busy)
+        # Detection: operation ID changes, status transitions from idle to busy,
+        # or progress resets/changes significantly
+        self._log("Waiting for operation to start...", indent=2)
+        operation_started = False
+        phase1_timeout = 30.0  # Max time to wait for operation to start
+        phase1_start = time.time()
+        was_initially_idle = initial_status.get("is_idle", True)
+
+        while not operation_started and (time.time() - phase1_start) < phase1_timeout:
+            if self._abort_requested:
+                raise AbortedError("Abort requested waiting for operation start")
+
             status = self._get_status()
-            parsed = self._parse_status(status)
-            progress = parsed.get('progress', '')
+            current_id = status.get("id", "")
+            current_progress = status.get("progress", 0.0)
+            is_idle = status.get("is_idle", True)
 
-            if progress and progress != last_progress:
-                print(f"{progress}", end=" ", flush=True)
-                last_progress = progress
+            # Operation started if:
+            # 1. ID changed to a real operation ID (not idle ID)
+            if current_id != initial_id and current_id != "" and current_id != "0xffffffff":
+                operation_started = True
+                self._log(f"Operation started (new ID: {current_id})", indent=2)
+            # 2. Was idle, now not idle (status transition)
+            elif was_initially_idle and not is_idle:
+                operation_started = True
+                self._log(f"Operation started (status: busy, progress: {current_progress:.1f}%)", indent=2)
+            # 3. Progress reset to near 0 from a higher value (new operation starting)
+            elif initial_progress > 10.0 and current_progress < 5.0:
+                operation_started = True
+                self._log(f"Operation started (progress reset: {initial_progress:.1f}% -> {current_progress:.1f}%)",
+                          indent=2)
+            # 4. Not idle and actively processing (progress between 0 and 95)
+            elif not is_idle and current_progress > 0 and current_progress < 95.0:
+                operation_started = True
+                self._log(f"Operation in progress ({current_progress:.1f}%)", indent=2)
 
-            if self._is_idle(status):
-                elapsed = time.time() - start_time
-                print(f"done ({elapsed:.1f}s)")
-                return
+            if not operation_started:
+                time.sleep(1.25)
+
+        if not operation_started:
+            # Maybe operation was instant, check if still idle
+            status = self._get_status()
+            if status.get("is_idle", False):
+                self._log("Operation may have completed instantly or failed to start", indent=2)
+                # Give RC a moment and check again
+                time.sleep(1.0)
+
+        # PHASE 2: Wait for operation to COMPLETE (RC returns to idle)
+        self._log("Waiting for operation to complete...", indent=2)
+        last_progress = -1.0
+        last_log_time = time.time()
+
+        while True:
+            if self._abort_requested:
+                raise AbortedError("Abort requested during operation")
+
+            status = self._get_status()
+            current_progress = status.get("progress", 0.0)
+            is_idle = status.get("is_idle", False)
+            estimation = status.get("estimation", "")
+
+            # Report progress periodically
+            now = time.time()
+            if abs(current_progress - last_progress) >= 1.0 or (now - last_log_time) >= 10.0:
+                elapsed = (datetime.now() - started_at).total_seconds()
+                est_str = f" (est: {estimation})" if estimation else ""
+                self._log(f"Progress: {current_progress:.1f}%{est_str} [{elapsed:.1f}s]", indent=2)
+                last_progress = current_progress
+                last_log_time = now
+
+            # Check for completion
+            if is_idle:
+                # Verify it's really idle by checking a couple more times
+                time.sleep(0.5)
+                status2 = self._get_status()
+                if status2.get("is_idle", False):
+                    time.sleep(0.5)
+                    status3 = self._get_status()
+                    if status3.get("is_idle", False):
+                        break  # Confirmed idle
 
             time.sleep(self.poll_interval)
 
-        print(f"timeout after {timeout}s")
-        raise TimeoutError(f"Operation '{operation_name}' timed out after {timeout} seconds")
+        completed_at = datetime.now()
+        duration = (completed_at - started_at).total_seconds()
 
-    def _run_command(self, operation_name: str, *args: str) -> bool:
-        """Run a command and wait for completion using combined delegation."""
-        # Combine -delegateTo and -waitCompleted in single command array
-        cmd = [str(self.rc_exe), "-delegateTo", "*", "-waitCompleted", "*"] + list(args)
-        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        self._log(f"Completed in {duration:.1f}s", indent=2)
 
-        # Check if command failed to send
-        if result.returncode != 0:
-            print(f"    Warning: Command returned error code {result.returncode}")
-            if result.stderr:
-                print(f"    Error: {result.stderr}")
+        return StepResult(
+            step_number=step_number,
+            step_name=operation_name,
+            started_at=started_at,
+            completed_at=completed_at,
+            duration_seconds=duration,
+            success=True,  # If we got here without abort, assume success
+            final_status=status.get("raw", ""),
+            error_message="",
+        )
 
-        # Always wait for completion - don't skip based on idle check
-        self._wait_until_idle(operation_name)
+    def _validate_export(
+            self,
+            output_file: Path,
+            description: str,
+            max_retries: int = 3,
+            retry_delay: float = 2.0,
+    ) -> bool:
+        """
+        Validate that an exported file exists and has content.
 
-        return True
+        Includes retry logic for network drive sync delays.
+        """
+        for attempt in range(max_retries):
+            if self._abort_requested:
+                return False
 
-    def _validate_export(self, output_file: Path, component_name: str) -> None:
-        """Validate that the exported model file exists and has content."""
-        if not output_file.exists():
-            raise ExportError(
-                f"Export FAILED for component '{component_name}': "
-                f"Output file not found at {output_file}"
-            )
+            if attempt > 0:
+                self._log(f"Retry {attempt}/{max_retries} after {retry_delay}s...", indent=2)
+                time.sleep(retry_delay)
 
-        file_size = output_file.stat().st_size
-        if file_size == 0:
-            raise ExportError(
-                f"Export FAILED for component '{component_name}': "
-                f"Output file is empty (0 bytes) at {output_file}"
-            )
+            if not output_file.exists():
+                continue
 
-        if file_size < 1024:
-            size_str = f"{file_size} bytes"
-        elif file_size < 1024 * 1024:
-            size_str = f"{file_size / 1024:.1f} KB"
-        else:
-            size_str = f"{file_size / (1024 * 1024):.1f} MB"
+            file_size = output_file.stat().st_size
+            if file_size == 0:
+                continue
 
-        print(f"    Export validated: {output_file.name} ({size_str})")
+            # Format size for display
+            if file_size < 1024:
+                size_str = f"{file_size} bytes"
+            elif file_size < 1024 * 1024:
+                size_str = f"{file_size / 1024:.1f} KB"
+            else:
+                size_str = f"{file_size / (1024 * 1024):.1f} MB"
+
+            self._log(f"Validated {description}: {output_file.name} ({size_str})", indent=2)
+            return True
+
+        self._log(f"FAILED: {description} not found or empty: {output_file}", indent=2)
+        return False
 
     def _extract_component_number(self, component_name: str) -> str:
-        """Extract the component number from the component name."""
-        import re
-
-        # Try format: "Component (01)"
+        """Extract a zero-padded component number from the component name."""
+        # Try format: "Component (01)" or "Component(01)"
         match = re.search(r'\((\d+)\)', component_name)
         if match:
-            num = int(match.group(1))
-            return f"{num:02d}"
+            return f"{int(match.group(1)):02d}"
 
         # Try format: "Name_123" (number at end after underscore)
         match = re.search(r'_(\d+)$', component_name)
         if match:
-            num = int(match.group(1))
-            return f"{num:02d}"
+            return f"{int(match.group(1)):02d}"
+
+        # Try format: "Name123" (number at end)
+        match = re.search(r'(\d+)$', component_name)
+        if match:
+            return f"{int(match.group(1)):02d}"
 
         return "00"
 
@@ -242,559 +569,445 @@ class ModelProcessor:
         component_names = [f.stem for f in rsalign_files]
         return component_names
 
-    def _copy_alignment_file(self, component_name: str, component_num: str) -> None:
-        """Copy the .rsalign file to the alignments output directory."""
-        source_file = self.alignment_dir / f"{component_name}.rsalign"
-        dest_file = self.alignments_dir / f"{self.project_prefix}_{component_num}.rsalign"
-
-        if source_file.exists():
-            try:
-                shutil.copy2(source_file, dest_file)
-                print(f"    Alignment file copied: {dest_file.name}")
-            except Exception as e:
-                print(f"    Warning: Could not copy alignment file: {e}")
-        else:
-            print(f"    Warning: Source alignment file not found: {source_file}")
-
-    def _validate_and_rename_cesium_export(self, expected_output: Path, component_num: str) -> Optional[Path]:
-        """
-        Validate and rename Cesium export if needed.
-        Cesium exports create both a .json file and a folder with the same base name.
-        Both need to be renamed if RC adds the 'tileset_' prefix.
-        """
-        # Check both possible filenames (with and without tileset_ prefix)
-        cesium_with_prefix = expected_output.parent / f"tileset_{expected_output.name}"
-        folder_with_prefix = expected_output.parent / f"tileset_{expected_output.stem}"
-        expected_folder = expected_output.parent / expected_output.stem
-
-        actual_cesium_file = None
-        needs_rename = False
-
-        if expected_output.exists() and expected_output.stat().st_size > 0:
-            actual_cesium_file = expected_output
-        elif cesium_with_prefix.exists() and cesium_with_prefix.stat().st_size > 0:
-            actual_cesium_file = cesium_with_prefix
-            needs_rename = True
-
-        if actual_cesium_file:
-            size = actual_cesium_file.stat().st_size
-            if size < 1024:
-                size_str = f"{size} bytes"
-            elif size < 1024 * 1024:
-                size_str = f"{size / 1024:.1f} KB"
-            else:
-                size_str = f"{size / (1024 * 1024):.1f} MB"
-
-            # Rename both json and folder if needed to match expected naming
-            if needs_rename:
-                print(f"           Renaming: {actual_cesium_file.name} -> {expected_output.name}")
-                actual_cesium_file.rename(expected_output)
-                actual_cesium_file = expected_output
-
-                # Also rename the associated folder
-                if folder_with_prefix.exists() and folder_with_prefix.is_dir():
-                    print(f"           Renaming folder: {folder_with_prefix.name}/ -> {expected_folder.name}/")
-                    folder_with_prefix.rename(expected_folder)
-
-            print(f"           Cesium export validated: {actual_cesium_file.name} ({size_str})")
-            return actual_cesium_file
-        else:
-            print(f"           Warning: Cesium export failed")
-            print(f"           Checked: {expected_output.name}")
-            print(f"           Checked: {cesium_with_prefix.name}")
-            return None
-
-    def process_component(self, component_name: str, simplify_params: Optional[Path] = None) -> Path:
+    def process_component(self, component_name: str) -> ComponentResult:
         """
         Process a single component through the full pipeline.
 
-        Pipeline:
-        1. Select component
-        2. Calculate high detail model
-        3. Select marginal triangles -> filter
-        4. Simplify to 70% (uses RC current settings - must be configured in RC)
-        5. Select large triangles (absolute 60 units) -> filter
-        6. Select largest component -> invert -> filter (keep only largest part)
-        7. Clean model
-        8. Smooth
-        9. Calculate texture on high-poly
-        10. Close holes (80000 max edges)
-        11. Re-calculate texture (to properly texture closed holes)
-        12. Rename to _HighPoly (textured source model - preserved)
-        13. Simplify (pass 1) - creates new model
-        14. Close holes
-        15. Simplify (pass 2)
-        16. Close holes
-        17. Rename to _LowPoly
-        18. Unwrap _LowPoly (required for texture reprojection)
-        19. Reproject texture from _HighPoly to _LowPoly
-        20. Save project
-        21. Export _LowPoly as FBX (to fbx_lowpoly/ subdirectory)
-        22. Select _HighPoly model
-        23. Export _HighPoly as Cesium 3D Tiles (to cesium/ subdirectory)
-        24. Export _HighPoly as FBX (to fbx_highpoly/ subdirectory)
-        25. Copy .rsalign alignment file (to alignments/ subdirectory)
-        """
-        print(f"\n{'=' * 60}")
-        print(f"Processing component: {component_name}")
-        print(f"{'=' * 60}")
+        Each step is sent as a separate delegation call for safe abort capability.
 
-        # Model names
+        Args:
+            component_name: Name of the component to process
+
+        Returns:
+            ComponentResult with all step results and output files
+        """
+        result = ComponentResult(
+            component_name=component_name,
+            started_at=datetime.now(),
+        )
+
         high_poly_name = f"{component_name}_HighPoly"
         low_poly_name = f"{component_name}_LowPoly"
         component_num = self._extract_component_number(component_name)
 
-        # Output files in separate subdirectories
-        fbx_lowpoly_output = self.fbx_lowpoly_dir / f"{self.project_prefix}_{component_num}_LowPoly.fbx"
-        fbx_highpoly_output = self.fbx_highpoly_dir / f"{self.project_prefix}_{component_num}_HighPoly.fbx"
-        cesium_output = self.cesium_dir / f"{self.project_prefix}_{component_num}_HighPoly.json"
+        fbx_output = self.export_dir / f"{self.project_prefix}_{component_num}.fbx"
+        cesium_output = self.export_dir / f"{self.project_prefix}_{component_num}.json"
 
-        # 1. Select the component by name
-        print("\n  [1/26] Selecting component...")
-        self._run_command("select component", "-selectComponent", component_name)
+        self._log("=" * 60)
+        self._log(f"Processing component: {component_name}")
+        self._log(f"High-poly model: {high_poly_name}")
+        self._log(f"Low-poly model: {low_poly_name}")
+        self._log(f"FBX output: {fbx_output}")
+        self._log(f"Cesium output: {cesium_output}")
+        self._log("=" * 60)
 
-        # 2. Calculate high detail model
-        print("\n  [2/26] Calculating high detail model...")
-        self._run_command("model calculation", "-calculateHighModel")
+        # Build simplify command args
+        simplify_args = ["-simplify"]
+        if self.simplify_params and self.simplify_params.exists():
+            simplify_args.append(str(self.simplify_params))
 
-        # 3. Select marginal triangles and filter
-        print("\n  [3/26] Filtering marginal triangles...")
-        self._run_command("select marginal triangles", "-selectMarginalTriangles")
-        self._run_command("filter", "-removeSelectedTriangles")
+        # Build texture reprojection command args
+        reproj_args = ["-reprojectTexture", high_poly_name, low_poly_name]
+        if self.texture_reproj_params and self.texture_reproj_params.exists():
+            reproj_args.append(str(self.texture_reproj_params))
 
-        # 4. Simplify to 70% (keep 70% of triangles)
-        print("\n  [4/26] Simplifying to 70% (using RC current settings)...")
-        self._run_command("simplify", "-simplify")
+        # Define all pipeline steps - each is a separate command
+        # IMPORTANT: Every RC command creates a NEW model that becomes selected.
+        # We must rename at the right points to preserve named models.
+        #
+        # Format: (step_name, [command, arg1, arg2, ...]) or (step_name, None) for delays
+        #
+        # Model flow:
+        #   Steps 1-12: Process and texture the model
+        #   Step 13: Rename to _HighPoly (textured source, preserved)
+        #   Steps 14-17: Simplify twice with hole closing (creates intermediate models)
+        #   Step 18: Unwrap (creates new unwrapped model)
+        #   Step 19: Rename unwrapped model to _LowPoly
+        #   Step 20: Reproject texture from _HighPoly to _LowPoly (creates new textured model)
+        #   Step 21: Rename textured result to _LowPoly (overwrites reference)
+        #   Steps 22-25: Save and export
+        #
+        steps = [
+            # Select and build high-detail model
+            ("Select component", ["-selectComponent", component_name]),
+            ("Calculate high detail model", ["-calculateHighModel"]),
+            ("Simplify to 70%", ["-simplify"]),  # Uses RC's current settings
+            ("Simplify to 70%", ["-simplify"]),  # Uses RC's current settings
+            ("Clean model", ["-cleanModel"]),
+            ("Smooth model", ["-smooth"]),
 
-        # 5. Select large triangles and filter (absolute threshold 60 units)
-        print("\n  [5/26] Filtering large triangles (>60 units)...")
-        self._run_command("select large triangles", "-selectLargeTrianglesAbs", "60")
-        self._run_command("filter", "-removeSelectedTriangles")
+            # Texture the high-poly model
+            ("Calculate texture", ["-calculateTexture"]),
+            (f"Rename to {high_poly_name}", ["-renameSelectedModel", high_poly_name]),
+            # _HighPoly is now preserved with texture
 
-        # 6. Keep largest connected part
-        print("\n  [6/26] Keeping largest connected part...")
-        self._run_command("select largest", "-selectLargestModelComponent")
-        self._run_command("invert selection", "-invertTrianglesSelection")
-        self._run_command("filter", "-removeSelectedTriangles")
+        ]
 
-        # 7. Clean model
-        print("\n  [7/26] Cleaning model...")
-        self._run_command("clean model", "-cleanModel")
+        total_steps = len(steps)
 
-        # 8. Smooth
-        print("\n  [8/26] Smoothing...")
-        self._run_command("smooth", "-smooth")
+        try:
+            for i, (step_name, cmd_args) in enumerate(steps, start=1):
+                # Handle delay steps (cmd_args is None)
+                if cmd_args is None:
+                    self._log(f"[{i}/{total_steps}] {step_name}...", indent=1)
+                    delay_seconds = 10.0
+                    self._log(f"Waiting {delay_seconds}s for RealityCapture to complete calculation", indent=2)
 
-        # 9. Calculate texture on high-poly model
-        print("\n  [9/26] Calculating texture...")
-        self._run_command("texture", "-calculateTexture")
+                    started_at = datetime.now()
 
-        # 10. Close holes (max 80000 edges)
-        print("\n  [10/26] Closing holes (max 80000 edges)...")
-        self._run_command("close holes", "-closeHoles", "80000")
+                    # Check for abort during delay
+                    start_delay = time.time()
+                    while time.time() - start_delay < delay_seconds:
+                        if self._abort_requested:
+                            raise AbortedError("Abort requested during delay")
+                        time.sleep(0.5)
 
-        # 11. Re-calculate texture to properly texture the closed holes
-        print("\n  [11/26] Re-calculating texture (to texture closed holes)...")
-        self._run_command("texture", "-calculateTexture")
+                    completed_at = datetime.now()
+                    actual_duration = (completed_at - started_at).total_seconds()
+                    self._log(f"Completed in {actual_duration:.1f}s", indent=2)
 
-        # 12. Rename to preserve as high-poly textured source
-        print(f"\n  [12/26] Renaming to {high_poly_name}...")
-        self._run_command("rename", "-renameSelectedModel", high_poly_name)
+                    # Record as successful step
+                    result.steps.append(StepResult(
+                        step_number=i,
+                        step_name=step_name,
+                        started_at=started_at,
+                        completed_at=completed_at,
+                        duration_seconds=actual_duration,
+                        success=True,
+                        final_status="delay",
+                        error_message="",
+                    ))
+                    continue
 
-        # 13. Simplify (pass 1) - simplify creates a new model from the selected one
-        print("\n  [13/26] Simplifying (pass 1)...")
-        if simplify_params and simplify_params.exists():
-            self._run_command("simplify", "-simplify", str(simplify_params))
-        else:
-            self._run_command("simplify", "-simplify")
+                step_result = self._delegate_single_command(
+                    step_name,
+                    *cmd_args,
+                    step_number=i,
+                    total_steps=total_steps,
+                )
+                result.steps.append(step_result)
 
-        # 14. Close holes
-        print("\n  [14/26] Closing holes...")
-        self._run_command("close holes", "-closeHoles")
+                if not step_result.success:
+                    result.error_message = f"Step {i} ({step_name}) failed: {step_result.error_message}"
+                    result.completed_at = datetime.now()
+                    return result
 
-        # 15. Simplify (pass 2)
-        print("\n  [15/26] Simplifying (pass 2)...")
-        if simplify_params and simplify_params.exists():
-            self._run_command("simplify", "-simplify", str(simplify_params))
-        else:
-            self._run_command("simplify", "-simplify")
+                # Validate exports after export commands
+                if "Export FBX" in step_name:
+                    if not self._validate_export(fbx_output, "FBX export"):
+                        result.error_message = f"FBX export validation failed: {fbx_output}"
+                        result.completed_at = datetime.now()
+                        return result
+                    result.output_files.append(fbx_output)
 
-        # 16. Close holes
-        print("\n  [16/26] Closing holes...")
-        self._run_command("close holes", "-closeHoles")
+                elif "Export Cesium" in step_name:
+                    if self._validate_export(cesium_output, "Cesium export"):
+                        result.output_files.append(cesium_output)
+                    else:
+                        self._log("Warning: Cesium export validation failed (non-fatal)", indent=1)
 
-        # 17. Rename simplified model to low-poly
-        print(f"\n  [17/26] Renaming to {low_poly_name}...")
-        self._run_command("rename", "-renameSelectedModel", low_poly_name)
+            result.success = True
+            result.completed_at = datetime.now()
 
-        # 18. Unwrap the low-poly model (required before texture reprojection)
-        print(f"\n  [18/26] Unwrapping {low_poly_name}...")
-        self._run_command("unwrap", "-unwrap")
+            total_duration = (result.completed_at - result.started_at).total_seconds()
+            self._log(f"Component completed successfully in {total_duration:.1f}s", indent=0)
 
-        # 19. Reproject texture from high-poly to low-poly
-        print(f"\n  [19/26] Reprojecting texture...")
-        print(f"           Source (textured): {high_poly_name}")
-        print(f"           Target (simplified): {low_poly_name}")
-        self._run_command("reproject texture", "-reprojectTexture", high_poly_name, low_poly_name)
+        except AbortedError:
+            result.error_message = "Aborted by user"
+            result.completed_at = datetime.now()
+            raise
 
-        # 20. Save project
-        print("\n  [20/26] Saving project...")
-        self._run_command("save", "-save")
+        return result
 
-        # 21. Export low-poly as FBX
-        print(f"\n  [21/26] Exporting low-poly FBX to fbx_lowpoly/{fbx_lowpoly_output.name}...")
-        self._run_command("export", "-exportModel", low_poly_name, str(fbx_lowpoly_output))
-
-        self._validate_export(fbx_lowpoly_output, component_name)
-
-        # 22. Select high-poly model for exports
-        print(f"\n  [22/26] Selecting {high_poly_name} for exports...")
-        self._run_command("select model", "-selectModel", high_poly_name)
-
-        # 23. Export high-poly as Cesium 3D Tiles
-        print(f"\n  [23/26] Exporting high-poly Cesium 3D Tiles to cesium/{cesium_output.name}...")
-        self._run_command("export cesium", "-export3dTiles", str(cesium_output))
-
-        # Validate and rename Cesium export if needed (both .json and folder)
-        print(f"           Validating Cesium export...")
-        actual_cesium_file = self._validate_and_rename_cesium_export(cesium_output, component_num)
-
-        if not actual_cesium_file:
-            print(f"           Warning: Cesium export validation failed")
-
-        # 24. Export high-poly as FBX
-        print(f"\n  [24/26] Exporting high-poly FBX to fbx_highpoly/{fbx_highpoly_output.name}...")
-        self._run_command("export", "-exportModel", high_poly_name, str(fbx_highpoly_output))
-
-        self._validate_export(fbx_highpoly_output, component_name)
-
-        # 25. Copy alignment file
-        print(f"\n  [25/26] Copying alignment file to alignments/{self.project_prefix}_{component_num}.rsalign...")
-        self._copy_alignment_file(component_name, component_num)
-
-        # 26. Final validation summary
-        print(f"\n  [26/26] All exports completed successfully")
-
-        return fbx_lowpoly_output
-
-    def export_only_highpoly(self) -> list[Path]:
+    def process_all(self) -> list[ComponentResult]:
         """
-        Export only mode: Assumes models are already calculated and named correctly.
-        Only exports _HighPoly models as Cesium 3D Tiles and FBX.
+        Process all components found in the alignment directory.
+
+        Returns:
+            List of ComponentResult for each processed component
         """
         component_names = self.scan_component_names()
 
         if not component_names:
-            print("No .rsalign files found in alignment directory.")
+            self._log("No .rsalign files found in alignment directory.")
+            self._log("Cannot determine component names to process.")
             return []
 
-        print(f"Found {len(component_names)} component(s) for export:")
+        self._log(f"Found {len(component_names)} component(s) to process:")
         for name in component_names:
-            print(f"  - {name}")
-        print()
+            self._log(f"  - {name}")
+        self._log("")
 
-        status = self._get_status()
-        if not status:
-            print("Error: Could not communicate with RealityCapture.")
-            print("Please ensure RealityCapture is already running with the project open.")
+        # Verify connection to RC
+        if not self._verify_connection():
+            self._log("ERROR: Could not communicate with RealityCapture.")
+            self._log("Please ensure RealityCapture is running with the project open.")
             return []
 
-        print(f"Connected to RealityCapture. Status: {status}")
-        print()
-        print("IMPORTANT: Ensure models are named as: {component_name}_HighPoly")
-        print()
+        self._log("Connected to RealityCapture")
+
+        # Clear any queued commands from previous runs
+        self._clear_queue()
+
+        self._log("")
 
         if self.test_mode:
-            print("*** TEST MODE: Only exporting first component ***\n")
+            self._log("*** TEST MODE: Only processing first component ***")
+            self._log("")
             component_names = component_names[:1]
 
-        exported_models: list[Path] = []
+        try:
+            for i, component_name in enumerate(component_names):
+                self._log("")
+                self._log(f"[Component {i + 1}/{len(component_names)}]")
 
-        for i, component_name in enumerate(component_names):
-            print(f"\n[{i + 1}/{len(component_names)}] Exporting component: {component_name}")
+                result = self.process_component(component_name)
+                self.results.append(result)
 
-            high_poly_name = f"{component_name}_HighPoly"
-            component_num = self._extract_component_number(component_name)
-            cesium_output = self.cesium_dir / f"{self.project_prefix}_{component_num}_HighPoly.json"
-            fbx_highpoly_output = self.fbx_highpoly_dir / f"{self.project_prefix}_{component_num}_HighPoly.fbx"
+                if not result.success:
+                    self._log("")
+                    self._log("=" * 60)
+                    self._log("FATAL ERROR: Processing failed. Halting.")
+                    self._log(f"Error: {result.error_message}")
+                    self._log("=" * 60)
+                    break
 
-            try:
-                # Select high-poly model
-                print(f"  [1/5] Selecting {high_poly_name}...")
-                self._run_command("select model", "-selectModel", high_poly_name)
+        except AbortedError:
+            self._log("")
+            self._log("Processing aborted by user.")
 
-                # Export as Cesium 3D Tiles
-                print(f"  [2/5] Exporting Cesium 3D Tiles to cesium/{cesium_output.name}...")
-                self._run_command("export cesium", "-export3dTiles", str(cesium_output))
+        return self.results
 
-                # Validate and rename Cesium export (both .json and folder)
-                print(f"  [3/5] Validating Cesium export...")
-                actual_cesium_file = self._validate_and_rename_cesium_export(cesium_output, component_num)
+    def export_only_highpoly(self) -> list[ComponentResult]:
+        """
+        Export-only mode: Only exports existing _HighPoly models as Cesium 3D Tiles.
 
-                if actual_cesium_file:
-                    exported_models.append(actual_cesium_file)
+        Assumes models are already processed and named as {component_name}_HighPoly.
+
+        Returns:
+            List of ComponentResult for each exported component
+        """
+        component_names = self.scan_component_names()
+
+        if not component_names:
+            self._log("No .rsalign files found in alignment directory.")
+            return []
+
+        self._log(f"Found {len(component_names)} component(s) for export:")
+        for name in component_names:
+            self._log(f"  - {name}")
+        self._log("")
+
+        if not self._verify_connection():
+            self._log("ERROR: Could not communicate with RealityCapture.")
+            self._log("Please ensure RealityCapture is running with the project open.")
+            return []
+
+        self._log("Connected to RealityCapture")
+
+        # Clear any queued commands from previous runs
+        self._clear_queue()
+
+        self._log("")
+        self._log("EXPORT-ONLY MODE: Expecting models named as {component_name}_HighPoly")
+        self._log("")
+
+        if self.test_mode:
+            self._log("*** TEST MODE: Only exporting first component ***")
+            self._log("")
+            component_names = component_names[:1]
+
+        try:
+            for i, component_name in enumerate(component_names):
+                self._log("")
+                self._log(f"[Export {i + 1}/{len(component_names)}]")
+
+                result = ComponentResult(
+                    component_name=component_name,
+                    started_at=datetime.now(),
+                )
+
+                high_poly_name = f"{component_name}_HighPoly"
+                component_num = self._extract_component_number(component_name)
+                cesium_output = self.export_dir / f"{self.project_prefix}_{component_num}.json"
+
+                # Step 1: Select high-poly model
+                step_result = self._delegate_single_command(
+                    f"Select {high_poly_name}",
+                    "-selectModel", high_poly_name,
+                    step_number=1,
+                    total_steps=2,
+                )
+                result.steps.append(step_result)
+
+                if not step_result.success:
+                    result.error_message = f"Could not select model {high_poly_name}"
+                    result.completed_at = datetime.now()
+                    self.results.append(result)
+                    self._log(f"FAILED: {result.error_message}")
+                    continue
+
+                # Step 2: Export Cesium 3D Tiles
+                step_result = self._delegate_single_command(
+                    f"Export Cesium: {cesium_output.name}",
+                    "-export3dTiles", str(cesium_output),
+                    step_number=2,
+                    total_steps=2,
+                )
+                result.steps.append(step_result)
+
+                if step_result.success and self._validate_export(cesium_output, "Cesium export"):
+                    result.output_files.append(cesium_output)
+                    result.success = True
                 else:
-                    raise ExportError(f"Cesium export failed: {cesium_output.name}")
+                    result.error_message = "Cesium export failed or validation failed"
 
-                # Export high-poly FBX
-                print(f"  [4/5] Exporting high-poly FBX to fbx_highpoly/{fbx_highpoly_output.name}...")
-                self._run_command("export", "-exportModel", high_poly_name, str(fbx_highpoly_output))
-                self._validate_export(fbx_highpoly_output, component_name)
-                exported_models.append(fbx_highpoly_output)
+                result.completed_at = datetime.now()
+                self.results.append(result)
 
-                # Copy alignment file
-                print(f"  [5/5] Copying alignment file...")
-                self._copy_alignment_file(component_name, component_num)
+        except AbortedError:
+            self._log("")
+            self._log("Export aborted by user.")
 
-                self.process_log.append({
-                    "component": component_name,
-                    "output": f"cesium/{actual_cesium_file.name}, fbx_highpoly/{fbx_highpoly_output.name}",
-                    "status": "success",
-                })
+        return self.results
 
-            except Exception as e:
-                print(f"    Error exporting {component_name}: {e}")
-                self.process_log.append({
-                    "component": component_name,
-                    "output": f"cesium/{self.project_prefix}_{component_num}_HighPoly.json",
-                    "status": "FAILED",
-                })
-                self.generate_summary()
-                raise
-
-        return exported_models
-
-    def process_all(self) -> list[Path]:
-        """Process all components found in the alignment directory."""
-        component_names = self.scan_component_names()
-
-        if not component_names:
-            print("No .rsalign files found in alignment directory.")
-            print("Cannot determine component names to process.")
-            return []
-
-        print(f"Found {len(component_names)} component(s) to process:")
-        for name in component_names:
-            print(f"  - {name}")
-        print()
-
-        status = self._get_status()
-        if not status:
-            print("Error: Could not communicate with RealityCapture.")
-            print("Please ensure RealityCapture is already running with the project open.")
-            return []
-
-        print(f"Connected to RealityCapture. Status: {status}")
-        print()
-        print("IMPORTANT: Ensure the project with these components is already open in RC.")
-        print()
-
-        if self.test_mode:
-            print("*** TEST MODE: Only processing first component ***\n")
-            component_names = component_names[:1]
-
-        exported_models: list[Path] = []
-
-        for i, component_name in enumerate(component_names):
-            print(f"\n[{i + 1}/{len(component_names)}] Processing component: {component_name}")
-
-            try:
-                output_file = self.process_component(component_name, self.simplify_params)
-                exported_models.append(output_file)
-                component_num = self._extract_component_number(component_name)
-                self.process_log.append({
-                    "component": component_name,
-                    "output": f"fbx_lowpoly/{self.project_prefix}_{component_num}_LowPoly.fbx, fbx_highpoly/{self.project_prefix}_{component_num}_HighPoly.fbx",
-                    "status": "success",
-                })
-
-            except ExportError as e:
-                component_num = self._extract_component_number(component_name)
-                self.process_log.append({
-                    "component": component_name,
-                    "output": f"fbx_lowpoly/{self.project_prefix}_{component_num}_LowPoly.fbx",
-                    "status": "FAILED",
-                })
-
-                self.generate_summary()
-
-                print(f"\n{'=' * 60}")
-                print("FATAL ERROR: Export failed. Processing halted.")
-                print(f"{'=' * 60}")
-                raise
-
-        return exported_models
-
-    def generate_summary(self) -> None:
-        """Generate and save a summary of processing."""
-        if not self.process_log:
-            print("\nNo components were processed.")
-            return
+    def generate_summary(self) -> str:
+        """Generate a summary report of all processing."""
+        if not self.results:
+            return "No components were processed."
 
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        summary_file = self.output_base_dir / "processing_summary.txt"
 
-        successful = sum(1 for entry in self.process_log if entry['status'] == 'success')
-        failed = sum(1 for entry in self.process_log if entry['status'] == 'FAILED')
-
-        summary_lines = [
+        lines = [
             "=" * 80,
             "RealityCapture Model Processing Summary",
             "=" * 80,
-            f"Processing Date/Time: {timestamp}",
+            f"Report Generated: {timestamp}",
             f"Alignment Directory: {self.alignment_dir}",
-            f"Output Directory: {self.output_base_dir}",
-            f"  - Low-poly FBX exports: {self.fbx_lowpoly_dir}",
-            f"  - High-poly FBX exports: {self.fbx_highpoly_dir}",
-            f"  - Cesium 3D Tiles exports: {self.cesium_dir}",
-            f"  - Alignment files: {self.alignments_dir}",
+            f"Export Directory: {self.export_dir}",
             f"Project Prefix: {self.project_prefix}",
-            f"Export Formats: FBX (_LowPoly), FBX (_HighPoly), Cesium 3D Tiles, Alignment (.rsalign)",
-            f"Total Processed: {len(self.process_log)}",
-            f"Successful: {successful}",
-            f"Failed: {failed}",
             "",
         ]
 
-        if failed > 0:
-            summary_lines.append("*** PROCESSING HALTED DUE TO EXPORT FAILURE ***")
-            summary_lines.append("")
+        successful = sum(1 for r in self.results if r.success)
+        failed = len(self.results) - successful
 
-        summary_lines.extend([
-            "-" * 80,
-            "Processing Details:",
-            "-" * 80,
-            f"{'Component Name':<30} {'Output Files':<45} {'Status':<10}",
-            "-" * 80,
+        lines.extend([
+            f"Total Components: {len(self.results)}",
+            f"Successful: {successful}",
+            f"Failed: {failed}",
+            "",
         ])
 
-        for entry in self.process_log:
-            summary_lines.append(
-                f"{entry['component']:<30} {entry['output']:<45} {entry['status']:<10}"
-            )
+        if failed > 0:
+            lines.append("*** PROCESSING INCOMPLETE - ERRORS OCCURRED ***")
+            lines.append("")
 
-        summary_lines.extend([
-            "-" * 80,
+        lines.append("-" * 80)
+        lines.append("Component Details:")
+        lines.append("-" * 80)
+
+        for result in self.results:
+            status = "SUCCESS" if result.success else "FAILED"
+            duration = ""
+            if result.completed_at:
+                dur_sec = (result.completed_at - result.started_at).total_seconds()
+                duration = f" ({dur_sec:.1f}s)"
+
+            lines.append(f"\n{result.component_name}: {status}{duration}")
+
+            if result.error_message:
+                lines.append(f"  Error: {result.error_message}")
+
+            if result.output_files:
+                lines.append("  Outputs:")
+                for f in result.output_files:
+                    lines.append(f"    - {f.name}")
+
+            if self.verbose and result.steps:
+                lines.append("  Steps:")
+                for step in result.steps:
+                    step_status = "OK" if step.success else "FAIL"
+                    lines.append(f"    [{step_status}] {step.step_name} ({step.duration_seconds:.1f}s)")
+
+        lines.extend([
             "",
-            "Processing completed." if failed == 0 else "Processing incomplete due to error.",
+            "-" * 80,
+            f"Report completed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
             "=" * 80,
         ])
 
-        summary_text = "\n".join(summary_lines)
+        summary = "\n".join(lines)
 
-        with open(summary_file, "w", encoding="utf-8") as f:
-            f.write(summary_text)
+        # Save to file
+        summary_file = self.export_dir / "processing_summary.txt"
+        try:
+            with open(summary_file, "w", encoding="utf-8") as f:
+                f.write(summary)
+            print(summary)
+            print(f"\nSummary saved to: {summary_file}")
+        except Exception as e:
+            print(summary)
+            print(f"\nWarning: Could not save summary to file: {e}")
 
-        print(f"\n{summary_text}")
-        print(f"\nSummary saved to: {summary_file}")
-
-
-def find_rc_executable() -> Optional[Path]:
-    """
-    Try to find RealityScan executable in common locations.
-    Returns first existing path or None.
-    """
-    candidates = [
-        Path(r"C:\Program Files\Epic Games\RealityScan_2.1\RealityScan.exe"),
-        Path(r"C:\Program Files\Epic Games\RealityScan_2.0\RealityScan.exe"),
-    ]
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return None
+        return summary
 
 
 def get_user_input() -> tuple[Path, Path, str, bool, bool]:
     """Prompt user for settings."""
-    # Defaults
     default_alignment_dir = r"D:\NA168\Zeuss_NA168_H2080\aligned_components"
-    default_output_dir = r"D:\NA168\Zeuss_NA168_H2080\models"
+    default_export_dir = r"D:\NA168\Zeuss_NA168_H2080\models"
     default_project_prefix = "NA168_H2080"
 
+    print("=" * 80)
+    print("RealityCapture Model Processor")
+    print("=" * 80)
     print()
-    print("╔" + "═" * 78 + "╗")
-    print("║" + " " * 78 + "║")
-    print("║" + "        RealityCapture Automated Model Processing Pipeline".center(78) + "║")
-    print("║" + " " * 78 + "║")
-    print("╚" + "═" * 78 + "╝")
+    print("Pipeline (25 steps per component):")
+    print("  1. Select component")
+    print("  2. Calculate high detail model")
+    print("  3-4. Filter marginal triangles")
+    print("  5. Simplify to 70%")
+    print("  6. Select large triangles (3.0x)")
+    print("  7. Wait 10s for selection calculation")
+    print("  8. Remove large triangles")
+    print("  9. Clean model")
+    print("  10. Smooth")
+    print("  11. Calculate texture")
+    print("  12. Close holes (80000 max)")
+    print("  13. Rename to _HighPoly (textured source preserved)")
+    print("  14-17. Simplify/Close holes (2 passes)")
+    print("  18. Unwrap")
+    print("  19. Rename to _LowPoly (unwrapped)")
+    print("  20. Reproject texture from _HighPoly to _LowPoly")
+    print("  21. Rename textured result to _LowPoly")
+    print("  22. Save project")
+    print("  23. Export FBX")
+    print("  24. Select _HighPoly")
+    print("  25. Export Cesium 3D Tiles")
     print()
-    print("┌" + "─" * 78 + "┐")
-    print("│ WHAT THIS SCRIPT DOES:".ljust(79) + "│")
-    print("├" + "─" * 78 + "┤")
-    print("│                                                                              │")
-    print("│ This script automates the complete 3D model generation workflow in          │")
-    print("│ RealityCapture, processing aligned components through a comprehensive       │")
-    print("│ pipeline that produces production-ready assets.                             │")
-    print("│                                                                              │")
-    print("│ For each component, the script will:                                        │")
-    print("│   • Generate high-detail mesh from aligned images                           │")
-    print("│   • Filter marginal/oversized triangles and keep largest geometry           │")
-    print("│   • Clean, smooth, and texture the high-poly model                          │")
-    print("│   • Close holes and re-texture to ensure complete coverage                  │")
-    print("│   • Create simplified low-poly version through double-pass decimation       │")
-    print("│   • Reproject texture from high-poly to low-poly for optimal quality        │")
-    print("│   • Export low-poly FBX, high-poly FBX, Cesium 3D Tiles, and alignment      │")
-    print("│                                                                              │")
-    print("│ OUTPUT STRUCTURE:                                                            │")
-    print("│   output_directory/                                                          │")
-    print("│   ├── fbx_lowpoly/  → Low-poly FBX models (simplified, game-ready)          │")
-    print("│   ├── fbx_highpoly/ → High-poly FBX models (full detail)                    │")
-    print("│   ├── cesium/       → High-poly Cesium 3D Tiles for web visualization       │")
-    print("│   ├── alignments/   → Component alignment files (.rsalign)                  │")
-    print("│   └── processing_summary.txt → Detailed processing log                      │")
-    print("│                                                                              │")
-    print("└" + "─" * 78 + "┘")
+    print("SAFETY FEATURES:")
+    print("  - Clears queued commands on startup")
+    print("  - One command per delegation (safe abort)")
+    print("  - Two-phase detection: waits for START then COMPLETE")
+    print("  - Ctrl+C sends abort to RealityCapture")
     print()
-    print("┌" + "─" * 78 + "┐")
-    print("│ CRITICAL REQUIREMENTS - READ BEFORE PROCEEDING:".ljust(79) + "│")
-    print("├" + "─" * 78 + "┤")
-    print("│                                                                              │")
-    print("│ ✓ RealityCapture must be ALREADY RUNNING with your project OPEN             │")
-    print("│ ✓ All components must be loaded and named to match .rsalign filenames       │")
-    print("│                                                                              │")
-    print("│ ⚠ CONFIGURE THESE SETTINGS IN REALITYCAPTURE BEFORE RUNNING:                │")
-    print("│                                                                              │")
-    print("│   1. SIMPLIFICATION SETTINGS (Tools → Simplify):                            │")
-    print("│      • For Step 4 (initial simplify): Set to keep 70% of triangles          │")
-    print("│      • For Steps 13 & 15 (low-poly): Set to keep 30% of triangles           │")
-    print("│                                                                              │")
-    print("│   2. TEXTURE SETTINGS (optional):                                            │")
-    print("│      • Set desired texture resolution and quality                           │")
-    print("│      • Configure unwrap parameters if needed                                │")
-    print("│                                                                              │")
-    print("│   3. EXPORT SETTINGS (optional):                                             │")
-    print("│      • Configure FBX export parameters if needed                            │")
-    print("│      • Configure Cesium 3D Tiles export settings if needed                  │")
-    print("│                                                                              │")
-    print("│ NOTE: Script uses 5-hour timeout per operation. Complex models may take     │")
-    print("│       significant time to process - this is normal for high-quality output. │")
-    print("│                                                                              │")
-    print("└" + "─" * 78 + "┘")
-    print()
-    print("┌" + "─" * 78 + "┐")
-    print("│ PROCESSING MODES:".ljust(79) + "│")
-    print("├" + "─" * 78 + "┤")
-    print("│                                                                              │")
-    print("│ [1] FULL PROCESSING (Default)                                               │")
-    print("│     Complete 26-step pipeline from component selection through export       │")
-    print("│     Recommended for: First-time processing of aligned components            │")
-    print("│                                                                              │")
-    print("│ [2] EXPORT-ONLY MODE                                                         │")
-    print("│     Only exports existing _HighPoly models as Cesium and FBX                │")
-    print("│     Recommended for: Re-exporting after changing export settings            │")
-    print("│                                                                              │")
-    print("└" + "─" * 78 + "┘")
+    print("REQUIREMENTS:")
+    print("  - RealityCapture must be running")
+    print("  - Project with components must be open")
+    print("  - Component names must match .rsalign file stems")
     print()
 
-    # Export-only mode option
-    export_only_input = input("Enable export-only mode? [y/N]: ").strip().lower()
+    export_only_input = input(
+        "Export-only mode (skip processing, export existing _HighPoly)? [y/N]: "
+    ).strip().lower()
     export_only = export_only_input == 'y'
     print()
 
-    # Use defaults automatically if paths exist
+    # Check for default directories
     alignment_dir = Path(default_alignment_dir)
     if alignment_dir.exists():
-        print(f"✓ Alignment directory: {alignment_dir}")
+        print(f"Alignment directory: {alignment_dir}")
     else:
         while True:
             align_input = input(f"Alignment directory [{default_alignment_dir}]: ").strip()
@@ -802,131 +1015,105 @@ def get_user_input() -> tuple[Path, Path, str, bool, bool]:
                 align_input = default_alignment_dir
             alignment_dir = Path(align_input)
             if alignment_dir.exists():
-                print(f"✓ Alignment directory: {alignment_dir}")
                 break
-            print(f"✗ Error: Directory not found: {alignment_dir}")
+            print(f"Error: Directory not found: {alignment_dir}")
 
-    # Ask for output directory
-    print()
-    output_input = input(f"Output directory [{default_output_dir}]: ").strip()
-    if not output_input:
-        output_input = default_output_dir
-    output_dir = Path(output_input)
-
+    export_dir = Path(default_export_dir)
     try:
-        output_dir.mkdir(parents=True, exist_ok=True)
-        print(f"✓ Output directory: {output_dir}")
-        print(f"  → Low-poly FBX: {output_dir / 'fbx_lowpoly'}")
-        print(f"  → High-poly FBX: {output_dir / 'fbx_highpoly'}")
-        print(f"  → Cesium 3D Tiles: {output_dir / 'cesium'}")
-        print(f"  → Alignment files: {output_dir / 'alignments'}")
-    except Exception as e:
-        print(f"✗ Error: Could not create directory: {e}")
-        sys.exit(1)
+        export_dir.mkdir(parents=True, exist_ok=True)
+        print(f"Export directory: {export_dir}")
+    except Exception:
+        while True:
+            export_input = input(f"Export directory [{default_export_dir}]: ").strip()
+            if not export_input:
+                export_input = default_export_dir
+            export_dir = Path(export_input)
+            try:
+                export_dir.mkdir(parents=True, exist_ok=True)
+                break
+            except Exception as e:
+                print(f"Error: Could not create directory: {e}")
 
-    print()
-    project_prefix = input(f"Project prefix [{default_project_prefix}]: ").strip()
-    if not project_prefix:
-        project_prefix = default_project_prefix
-    print(f"✓ Project prefix: {project_prefix}")
+    project_prefix = default_project_prefix
+    print(f"Project prefix: {project_prefix}")
 
-    print()
-    test_input = input("Test mode (process only first component)? [Y/n]: ").strip().lower()
+    test_input = input("\nTest mode (only process first component)? [Y/n]: ").strip().lower()
     test_mode = test_input != 'n'
-    if test_mode:
-        print("✓ Test mode enabled - will process only first component")
-    else:
-        print("✓ Full mode enabled - will process all components")
 
     print()
-    print("─" * 80)
-    print()
-
-    return alignment_dir, output_dir, project_prefix, test_mode, export_only
+    return alignment_dir, export_dir, project_prefix, test_mode, export_only
 
 
 def main():
     """Main entry point."""
-    # Try to find RealityScan executable automatically
-    rc_exe = find_rc_executable()
+    rc_exe = Path(r"C:\Program Files\Epic Games\RealityScan_2.0\RealityScan.exe")
 
-    if not rc_exe:
-        print()
-        print("✗ RealityScan executable not found in default locations.")
-        print()
-        print("  Checked locations:")
-        print("    • C:\\Program Files\\Epic Games\\RealityScan_2.1\\RealityScan.exe")
-        print("    • C:\\Program Files\\Epic Games\\RealityScan_2.0\\RealityScan.exe")
-        print()
+    if not rc_exe.exists():
+        print(f"Error: RealityScan executable not found: {rc_exe}")
+        print("Please update the 'rc_exe' variable in the script.")
+        sys.exit(1)
 
-        custom_path = input("Please enter the full path to RealityScan.exe: ").strip()
-        rc_exe = Path(custom_path)
-
-        if not rc_exe.exists():
-            print(f"✗ Error: File not found at {rc_exe}")
-            sys.exit(1)
-
-    print(f"✓ Using RealityScan: {rc_exe}")
-    print()
+    processor = None
 
     try:
-        alignment_dir, output_dir, project_prefix, test_mode, export_only = get_user_input()
+        alignment_dir, export_dir, project_prefix, test_mode, export_only = get_user_input()
+
+        # Optional params files
+        simplify_params = Path(r"D:\NA168\Zeuss_NA168_H2080\simplificationParameters.xml")
+        texture_reproj_params = Path(r"D:\NA168\Zeuss_NA168_H2080\TextureReprojectionSettings.xml")
 
         processor = ModelProcessor(
             rc_exe=rc_exe,
             alignment_dir=alignment_dir,
-            output_base_dir=output_dir,
+            export_dir=export_dir,
             project_prefix=project_prefix,
+            simplify_params=simplify_params if simplify_params.exists() else None,
+            texture_reproj_params=texture_reproj_params if texture_reproj_params.exists() else None,
             poll_interval=2.0,
             test_mode=test_mode,
+            verbose=True,
         )
 
         if export_only:
-            print("╔" + "═" * 78 + "╗")
-            print("║" + "EXPORT-ONLY MODE: Exporting _HighPoly models".center(78) + "║")
-            print("╚" + "═" * 78 + "╝")
+            print("=" * 80)
+            print("EXPORT-ONLY MODE")
+            print("=" * 80)
             print()
-            exported = processor.export_only_highpoly()
+            results = processor.export_only_highpoly()
         else:
-            print("╔" + "═" * 78 + "╗")
-            print("║" + "FULL PROCESSING MODE: Starting 26-step pipeline".center(78) + "║")
-            print("╚" + "═" * 78 + "╝")
-            print()
-            exported = processor.process_all()
+            results = processor.process_all()
 
         processor.generate_summary()
 
-        if exported:
-            print()
-            print("╔" + "═" * 78 + "╗")
-            print("║" + f"✓ SUCCESS: Exported {len(exported)} model(s)".center(78) + "║")
-            print("╚" + "═" * 78 + "╝")
+        successful = sum(1 for r in results if r.success)
+        if successful > 0:
+            print(f"\nSuccessfully processed {successful} component(s).")
         else:
-            print()
-            print("╔" + "═" * 78 + "╗")
-            print("║" + "⚠ WARNING: No models were exported".center(78) + "║")
-            print("╚" + "═" * 78 + "╝")
+            print("\nNo components were successfully processed.")
 
-    except ExportError as e:
-        print()
-        print("╔" + "═" * 78 + "╗")
-        print("║" + "✗ EXPORT ERROR".center(78) + "║")
-        print("╚" + "═" * 78 + "╝")
-        print(f"\n{e}", file=sys.stderr)
-        sys.exit(2)
+        # Exit with appropriate code
+        if results and all(r.success for r in results):
+            sys.exit(0)
+        else:
+            sys.exit(2)
+
+    except AbortedError:
+        print("\nProcessing was aborted.")
+        if processor:
+            processor.generate_summary()
+        sys.exit(1)
     except KeyboardInterrupt:
-        print()
-        print()
-        print("╔" + "═" * 78 + "╗")
-        print("║" + "⚠ Processing cancelled by user".center(78) + "║")
-        print("╚" + "═" * 78 + "╝")
+        print("\n\nInterrupt received.")
+        if processor:
+            processor._request_abort()
+            processor.generate_summary()
         sys.exit(1)
     except Exception as e:
-        print()
-        print("╔" + "═" * 78 + "╗")
-        print("║" + "✗ UNEXPECTED ERROR".center(78) + "║")
-        print("╚" + "═" * 78 + "╝")
-        print(f"\n{e}", file=sys.stderr)
+        print(f"\nUnexpected Error: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        if processor:
+            processor._request_abort()
         sys.exit(1)
 
 
