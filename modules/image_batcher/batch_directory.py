@@ -97,6 +97,27 @@ class BatchDirectory(RCModule):
 
 		return {**super().get_parameters(), **additional_params}
 
+	def __get_project_title(self) -> str:
+		"""
+		Build project title from expedition and dive names.
+		Returns format: 'NA168_H2080' or empty string if not available.
+		"""
+		expedition = None
+		dive = None
+
+		if 'expedition_name' in self.params:
+			expedition = self.params['expedition_name'].get_value()
+		if 'dive_name' in self.params:
+			dive = self.params['dive_name'].get_value()
+
+		if expedition and dive:
+			return f"{expedition}_{dive}"
+		elif expedition:
+			return expedition
+		elif dive:
+			return dive
+		return ""
+
 	def __get_input_dir(self):
 		# Priority 1: Explicit batch_input_image_dir parameter
 		if 'batch_input_image_dir' in self.params:
@@ -307,8 +328,8 @@ class BatchDirectory(RCModule):
 	@staticmethod
 	def __scott_bandwidth(xy: np.ndarray) -> float:
 		"""
-		Calculate bandwidth using Scott's rule: Ïƒ Ã— n^(-1/(d+4))
-		where Ïƒ is standard deviation, n is sample size, d is dimensions
+		Calculate bandwidth using Scott's rule: sigma * n^(-1/(d+4))
+		where sigma is standard deviation, n is sample size, d is dimensions
 		"""
 		n, d = xy.shape
 		if n < 2:
@@ -632,6 +653,10 @@ class BatchDirectory(RCModule):
 		x = gdf.geometry.x.to_numpy(dtype=np.float64, copy=False)
 		y = gdf.geometry.y.to_numpy(dtype=np.float64, copy=False)
 
+		# Build title prefix from expedition/dive
+		project_title = self.__get_project_title()
+		title_prefix = f"{project_title} - " if project_title else ""
+
 		# Plot 1: Kernel Density
 		fig1, ax1 = plt.subplots(figsize=(12, 10))
 		try:
@@ -667,7 +692,7 @@ class BatchDirectory(RCModule):
 				cbar.set_label('Density (proxy)')
 				sc = ax1.scatter(x, y, c=gdf['density'].to_numpy(), cmap='viridis', s=10)
 
-		ax1.set_title('Kernel Density Estimation of Image Locations')
+		ax1.set_title(f'{title_prefix}Kernel Density Estimation of Image Locations')
 		ax1.set_xlabel('X (Easting)')
 		ax1.set_ylabel('Y (Northing)')
 		kernel_plot_path = os.path.join(output_dir, 'kernel_density.png')
@@ -700,7 +725,7 @@ class BatchDirectory(RCModule):
 				except Exception as e:
 					self.logger.warning(f"Could not generate convex hull for Zone {i + 1}: {e}")
 
-		ax2.set_title('Image Batches by Geographic Zone')
+		ax2.set_title(f'{title_prefix}Image Batches by Geographic Zone')
 		ax2.set_xlabel('X (Easting)')
 		ax2.set_ylabel('Y (Northing)')
 		ax2.legend()
@@ -751,7 +776,7 @@ class BatchDirectory(RCModule):
 
 	def __build_file_index(self, input_dir: str) -> dict[str, str]:
 		"""
-		Build filename â†’ full_path index once. O(n) instead of O(nÂ²).
+		Build filename -> full_path index once. O(n) instead of O(n^2).
 		"""
 		self.logger.info(f"Building file index for {input_dir}...")
 
@@ -978,7 +1003,7 @@ class BatchDirectory(RCModule):
 			print("\n--- Batch Summary ---")
 			print(f"Total unique images: {len(gdf)}")
 			print(f"Number of zones created: {len(final_zones)}")
-			print(f"Target: {target_size} images/zone (range: {min_size}-{max_size}, Â±15%)")
+			print(f"Target: {target_size} images/zone (range: {min_size}-{max_size}, +/-15%)")
 			print(f"Overlap: {overlap_percent}%")
 			print("\nPer-zone breakdown:")
 

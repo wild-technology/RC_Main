@@ -1,551 +1,488 @@
 #!/usr/bin/env python3
 """
-Export all components from an open RealityCapture project with custom names as .rsalign files.
-Uses delegation to communicate with the running RealityCapture instance.
-Handles component naming pattern: "Component ##" and "Component ## (#)"
+Batch Sequential Alignment Script for RealityCapture
 
-Based on RealityScan CLI documentation:
-- Uses -delegateTo * to delegate commands to the first available instance
-- Uses -waitCompleted * to wait for operations to finish
-- Uses -getStatus * to check instance status
+Scans image subdirectories, loads all images into an open RC instance,
+then sequentially enables/aligns each batch (directory) one at a time.
+
+Workflow:
+1. Scan subdirectories and build image index
+2. Load all images into open RC instance
+3. Disable alignment for all images
+4. For each batch (subdirectory):
+   - Enable alignment for batch images only
+   - Run alignment (with proper monitoring)
+   - Disable batch images
+5. Final save
+
+Uses proper polling to detect operation start, monitor progress, and confirm completion.
 """
 
-import subprocess
+import os
 import sys
+import subprocess
 import time
+import re
 from pathlib import Path
-from datetime import datetime
 from typing import Optional
 
 
-class ComponentExporter:
-    """
-    Export all components from a RealityCapture project using delegation.
-    """
+class BatchAlignmentProcessor:
+    def __init__(self, images_root: Path, instance_name: str = "RC1"):
+        self.images_root = images_root
+        self.instance_name = instance_name
+        self.rc_exe: Optional[Path] = None
 
-    def __init__(
-            self,
-            rc_exe: Path,
-            output_dir: Path,
-            base_name: str = "Component",
-            max_component_num: int = 150,
-            max_parenthesis_num: int = 2,
-            poll_interval: float = 2.0,
-    ):
+        # Image index: {batch_name: [image_paths]}
+        self.batches: dict[str, list[Path]] = {}
+
+        # Supported image extensions
+        self.image_exts = {".jpg", ".jpeg", ".png", ".heif", ".tif", ".tiff"}
+
+        # Polling configuration
+        self.poll_interval = 2.0
+
+    def find_rc_executable(self) -> Path:
+        """Find RealityCapture executable (checks multiple versions)."""
+        candidates = [
+            Path(r"C:\Program Files\Epic Games\RealityScan_2.1\RealityScan.exe"),
+            Path(r"C:\Program Files\Epic Games\RealityScan_2.0\RealityScan.exe"),
+            Path(r"C:\Program Files\Epic Games\RealityScan\RealityScan.exe"),
+        ]
+        for c in candidates:
+            if c.exists():
+                print(f"Found RealityScan: {c}")
+                return c
+
+        # Prompt user
+        custom = input("Path to RealityScan executable: ").strip().strip('"')
+        if not custom:
+            raise RuntimeError("RealityScan executable not found")
+        rc = Path(custom)
+        if not rc.exists():
+            raise RuntimeError(f"Executable not found: {rc}")
+        return rc
+
+    def scan_directories(self) -> None:
         """
-        Initialize the component exporter.
-
-        Args:
-            rc_exe: Path to RealityScan.exe
-            output_dir: Directory where .rsalign files will be saved
-            base_name: Base name for exported files
-            max_component_num: Maximum component number to check
-            max_parenthesis_num: Maximum parenthesis number to check
-            poll_interval: Seconds between status checks
+        Scan subdirectories under images_root and build batch index.
+        Each immediate subdirectory becomes a batch.
         """
-        self.rc_exe = rc_exe
-        self.output_dir = output_dir
-        self.base_name = base_name
-        self.max_component_num = max_component_num
-        self.max_parenthesis_num = max_parenthesis_num
-        self.poll_interval = poll_interval
-        self.export_log: list[dict[str, str]] = []
+        print(f"\nScanning for image batches in: {self.images_root}")
 
-        if not self.rc_exe.exists():
-            raise FileNotFoundError(f"RealityScan executable not found: {self.rc_exe}")
+        # Get immediate subdirectories
+        subdirs = sorted([d for d in self.images_root.iterdir() if d.is_dir()])
 
-        self.output_dir.mkdir(parents=True, exist_ok=True)
+        if not subdirs:
+            raise RuntimeError(f"No subdirectories found in {self.images_root}")
+
+        # Build index
+        for subdir in subdirs:
+            batch_name = subdir.name
+            images = []
+
+            # Recursively find images in this batch directory
+            for img_path in subdir.rglob("*"):
+                if img_path.suffix.lower() in self.image_exts:
+                    images.append(img_path)
+
+            if images:
+                self.batches[batch_name] = sorted(images)
+                print(f"  Batch '{batch_name}': {len(images)} images")
+            else:
+                print(f"  Batch '{batch_name}': no images found (skipped)")
+
+        total_images = sum(len(imgs) for imgs in self.batches.values())
+        print(f"\nTotal: {len(self.batches)} batches, {total_images} images")
 
     def _delegate(self, *args: str) -> subprocess.CompletedProcess:
         """
-        Send delegation command to running RealityCapture instance.
-
-        Uses: RealityScan.exe -delegateTo * -command params
-
-        The -delegateTo * delegates to the first available instance.
-
-        Args:
-            *args: Command arguments to delegate (e.g., "-selectComponent", "Component 0")
-
-        Returns:
-            CompletedProcess object
+        Execute RealityCapture command via delegation.
+        Does NOT wait for completion.
         """
-        cmd = [str(self.rc_exe), "-delegateTo", "*"] + list(args)
-        return subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        cmd = [str(self.rc_exe), "-delegateTo", self.instance_name] + list(args)
+        return subprocess.run(cmd, capture_output=True, text=True, check=False)
 
     def _get_status(self) -> Optional[str]:
         """
-        Query RealityCapture status.
-
-        Uses: RealityScan.exe -getStatus *
+        Query RC instance status using -getStatus command.
 
         Returns:
             Status string or None if query failed
         """
-        cmd = [str(self.rc_exe), "-getStatus", "*"]
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        cmd = [str(self.rc_exe), "-getStatus", self.instance_name]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+
         if result.returncode == 0 and result.stdout:
-            return result.stdout.strip()
+            lines = [ln.strip() for ln in result.stdout.splitlines() if ln.strip()]
+            return lines[-1] if lines else None
         return None
 
     def _wait_completed(self) -> subprocess.CompletedProcess:
         """
-        Wait for current process to complete using the CLI's built-in waitCompleted command.
-
-        Uses: RealityScan.exe -waitCompleted *
-
-        This pauses execution until the current process in the first available instance
-        is finished.
+        Wait for current operation to complete using CLI's built-in -waitCompleted command.
 
         Returns:
             CompletedProcess object
         """
-        cmd = [str(self.rc_exe), "-waitCompleted", "*"]
-        return subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-
-    def _is_idle(self) -> bool:
-        """
-        Check if RealityCapture is idle.
-
-        Returns:
-            True if idle, False if busy or cannot determine
-        """
-        status = self._get_status()
-        if not status:
-            return False
-
-        status_lower = status.lower()
-
-        # Check for idle indicators
-        if "idle" in status_lower:
-            return True
-
-        # Check for 100% progress
-        if "progress:100" in status_lower.replace(" ", ""):
-            return True
-
-        # Check for "ready" state
-        if "ready" in status_lower:
-            return True
-
-        return False
-
-    def _wait_until_idle(self, operation_name: str = "operation") -> None:
-        """
-        Wait until RealityCapture reports idle status.
-
-        First uses the CLI's built-in -waitCompleted command, then polls
-        status as a fallback to ensure the operation is truly finished.
-
-        Args:
-            operation_name: Name of operation for logging
-        """
-        print(f"  Waiting for {operation_name} to complete...")
-
-        # Use the CLI's built-in wait mechanism
-        self._wait_completed()
-
-        # Additional polling as a safety measure
-        start_time = time.time()
-        last_status = None
-        last_heartbeat = start_time
-
-        while True:
-            status = self._get_status()
-
-            # Print status updates when it changes
-            if status and status != last_status:
-                print(f"  Status: {status}")
-                last_status = status
-
-            # Print periodic heartbeat so user knows we're still waiting
-            elapsed = time.time() - last_heartbeat
-            if elapsed >= 30.0:
-                total_elapsed = int(time.time() - start_time)
-                print(f"  Still waiting... ({total_elapsed}s elapsed)")
-                last_heartbeat = time.time()
-
-            # Check if idle
-            if self._is_idle():
-                total_elapsed = time.time() - start_time
-                print(f"  {operation_name.capitalize()} completed ({total_elapsed:.1f}s)")
-                return
-
-            time.sleep(self.poll_interval)
+        cmd = [str(self.rc_exe), "-waitCompleted", self.instance_name]
+        return subprocess.run(cmd, capture_output=True, text=True, check=False)
 
     def _parse_status(self, status: Optional[str]) -> dict:
         """
-        Parse status string into components.
+        Parse status string into structured data with progress tracking.
 
-        Example status: "id:0xffffffff progress:0.0% runtime:3137.67sec endEstimation:0.00sec rev:473 lastError:0"
+        Example: "id:0x10001 progress:57.5% runtime:4.26sec endEstimation:3.40sec"
 
         Returns:
-            Dictionary with parsed values
+            Dictionary with keys: progress_pct, runtime_sec, eta_sec, is_idle
         """
-        result = {}
+        result = {
+            'progress_pct': 0.0,
+            'runtime_sec': 0.0,
+            'eta_sec': 0.0,
+            'is_idle': False
+        }
+
         if not status:
             return result
 
-        # Parse key:value pairs
-        parts = status.split()
-        for part in parts:
-            if ':' in part:
-                key, value = part.split(':', 1)
-                result[key] = value
+        status_lower = status.lower()
+
+        # Detect idle state
+        if 'idle' in status_lower or 'progress:100' in status.replace(' ', ''):
+            result['is_idle'] = True
+            result['progress_pct'] = 100.0
+
+        # Parse progress percentage
+        progress_match = re.search(r'progress:(\d+\.?\d*)%', status)
+        if progress_match:
+            result['progress_pct'] = float(progress_match.group(1))
+
+        # Parse runtime
+        runtime_match = re.search(r'runtime:(\d+\.?\d*)sec', status)
+        if runtime_match:
+            result['runtime_sec'] = float(runtime_match.group(1))
+
+        # Parse ETA
+        eta_match = re.search(r'endEstimation:(\d+\.?\d*)sec', status)
+        if eta_match:
+            result['eta_sec'] = float(eta_match.group(1))
+
+        # Check for idle ID pattern
+        if 'id:0xffffffff' in status and result['progress_pct'] == 0.0:
+            result['is_idle'] = True
 
         return result
 
-    def _get_status_rev(self) -> Optional[int]:
-        """
-        Get the current revision counter from status.
+    def _is_valid_image(self, img_path: Path) -> bool:
+        """Validate that image file exists and is accessible."""
+        try:
+            return img_path.exists() and img_path.is_file()
+        except Exception:
+            return False
 
-        Returns:
-            Revision number or None if unavailable
+    def _monitor_operation(self, operation_name: str, timeout_sec: float = 30601.0,
+                           poll_interval: float = 5.0) -> None:
         """
-        status = self._get_status()
-        parsed = self._parse_status(status)
-        rev_str = parsed.get('rev')
-        if rev_str:
-            try:
-                return int(rev_str)
-            except ValueError:
-                pass
-        return None
+        Monitor a delegated operation using -getStatus polling.
+        Displays progress, ETA, and elapsed time.
 
-    def _try_export_component(
-            self,
-            component_name: str,
-            output_file: Path,
-    ) -> bool:
-        """
-        Attempt to export a single component using delegation.
-
-        Strategy:
-        1. Get current status revision
-        2. Select the component
-        3. Wait for completion
-        4. Check if revision changed (indicates something happened)
-        5. If revision changed, attempt export and verify file created
+        CRITICAL: Detects operation start by transition from idle→busy, then monitors to completion.
 
         Args:
-            component_name: Name of the component in RealityCapture
-            output_file: Path where the .rsalign file should be saved
-
-        Returns:
-            True if export succeeded, False otherwise
+            operation_name: Human-readable operation name
+            timeout_sec: Maximum time to wait before raising TimeoutError
+            poll_interval: Seconds between status polls for progress display
         """
-        # Remove any existing file to ensure we detect new creation
-        if output_file.exists():
-            output_file.unlink()
+        start_time = time.time()
+        last_print_time = start_time
+        operation_started = False
+        seen_idle = False
 
-        # Get revision before selection
-        rev_before = self._get_status_rev()
+        print(f"\n[{operation_name}] Waiting for operation to start...")
 
-        # Select the component
-        # Command: RealityScan.exe -delegateTo * -selectComponent "Component 0"
-        self._delegate("-selectComponent", component_name)
+        while True:
+            elapsed = time.time() - start_time
 
-        # Wait for selection to complete
-        self._wait_completed()
+            # Check timeout
+            if elapsed > timeout_sec:
+                raise TimeoutError(f"{operation_name} exceeded {timeout_sec}s timeout")
 
-        # Small additional delay for RC to update internal state
-        time.sleep(0.3)
+            # Poll status
+            status_text = self._get_status()
+            status = self._parse_status(status_text)
 
-        # Get revision after selection
-        rev_after = self._get_status_rev()
-
-        # If revision didn't change, the selection likely failed (component doesn't exist)
-        # A successful selection should increment the revision
-        if rev_before is not None and rev_after is not None:
-            if rev_after == rev_before:
-                # No change - component probably doesn't exist
-                return False
-
-        # Revision changed - attempt export
-        # Command: RealityScan.exe -delegateTo * -exportSelectedComponentFile "path/to/file.rsalign"
-        self._delegate("-exportSelectedComponentFile", str(output_file))
-
-        # Wait for export to complete
-        self._wait_completed()
-
-        # Check if file was created - this is the definitive test
-        time.sleep(0.3)  # Brief delay for file system
-
-        if output_file.exists() and output_file.stat().st_size > 0:
-            return True
-
-        # No file created - export failed
-        # Clean up any empty/partial file
-        if output_file.exists():
-            output_file.unlink()
-
-        return False
-
-    def export_all_components(self) -> list[Path]:
-        """
-        Export all components from the open project with custom names.
-
-        Searches for components in the pattern:
-        - Component 0, Component 1, ..., Component {max_component_num}
-        - Component 0 (1), Component 0 (2), ..., Component 0 ({max_parenthesis_num})
-        - etc.
-
-        Returns:
-            List of exported file paths
-        """
-        exported_files: list[Path] = []
-        export_index = 0
-
-        print(f"Output directory: {self.output_dir}")
-        print(f"Searching for components 0-{self.max_component_num}")
-        print(f"Checking parenthesis variants 1-{self.max_parenthesis_num}")
-        print()
-
-        # Verify RealityCapture is running by checking status
-        status = self._get_status()
-        if not status:
-            print("Error: Could not communicate with RealityCapture.")
-            print("Please ensure RealityCapture is running with a project loaded.")
-            print()
-            print("Note: The delegation commands require RealityCapture to be")
-            print("running with an open project. Start RealityCapture first,")
-            print("then run this script.")
-            return []
-
-        print(f"Connected to RealityCapture. Initial status: {status}")
-        print()
-
-        for comp_num in range(self.max_component_num + 1):
-            # First, try without parentheses: "Component ##"
-            component_name = f"Component {comp_num}"
-            output_file = self.output_dir / f"{self.base_name}{export_index}.rsalign"
-
-            print(f"Trying: {component_name}...", end=" ", flush=True)
-            if self._try_export_component(component_name, output_file):
-                print(f"FOUND -> {output_file.name}")
-                exported_files.append(output_file)
-                self.export_log.append({
-                    "original_name": component_name,
-                    "exported_name": output_file.name,
-                    "export_index": str(export_index),
-                })
-                export_index += 1
-            else:
-                print("not found")
-
-            # Wait 5 seconds between component selection attempts
-            time.sleep(5.0)
-
-            # Then try with parentheses: "Component ## (1)" through "Component ## (max)"
-            for paren_num in range(1, self.max_parenthesis_num + 1):
-                component_name = f"Component {comp_num} ({paren_num})"
-                output_file = self.output_dir / f"{self.base_name}{export_index}.rsalign"
-
-                print(f"Trying: {component_name}...", end=" ", flush=True)
-                if self._try_export_component(component_name, output_file):
-                    print(f"FOUND -> {output_file.name}")
-                    exported_files.append(output_file)
-                    self.export_log.append({
-                        "original_name": component_name,
-                        "exported_name": output_file.name,
-                        "export_index": str(export_index),
-                    })
-                    export_index += 1
+            # CRITICAL: Detect operation start by transition from idle to non-idle
+            if not operation_started:
+                if status['is_idle']:
+                    seen_idle = True
+                    time.sleep(0.5)
+                    continue
+                elif seen_idle:
+                    # Transitioned from idle to non-idle - operation has started!
+                    operation_started = True
+                    print(f"[{operation_name}] Operation started, monitoring progress...")
                 else:
-                    print("not found")
+                    # Haven't seen idle yet, keep waiting
+                    time.sleep(0.5)
+                    continue
 
-                # Wait 5 seconds between component selection attempts
-                time.sleep(1.0)
+            # Now monitor progress with periodic updates
+            current_time = time.time()
+            if current_time - last_print_time >= poll_interval:
+                progress_pct = status['progress_pct']
+                eta_sec = status['eta_sec']
 
-        print()
-        print(f"Completed. Exported {len(exported_files)} component(s).")
-        return exported_files
+                elapsed_min = int(elapsed // 60)
+                elapsed_sec = int(elapsed % 60)
 
-    def generate_summary(self) -> None:
+                eta_display = f"{int(eta_sec)}s remaining" if eta_sec > 0 else "calculating..."
+
+                print(f"[{operation_name}] Progress: {progress_pct:.1f}% | "
+                      f"Elapsed: {elapsed_min}m {elapsed_sec}s | "
+                      f"ETA: {eta_display}")
+
+                last_print_time = current_time
+
+            # Check completion
+            if status['is_idle'] or status['progress_pct'] >= 100.0:
+                elapsed_total = int(elapsed)
+                print(f"[{operation_name}] ✓ Complete (took {elapsed_total}s)")
+                # Grace period to ensure all file writes complete
+                time.sleep(3.0)
+                return
+
+            time.sleep(2.0)  # Quick polls to catch completion
+
+    def _run_command_quick(self, operation_name: str, *args: str) -> None:
         """
-        Generate and save a summary text file of all exports.
-        Also prints summary to console.
+        Run a quick command and wait for completion using -waitCompleted.
+        Use this for fast operations that don't need progress monitoring.
+
+        Args:
+            operation_name: Name for logging
+            *args: Command arguments to delegate
         """
-        if not self.export_log:
-            print("\nNo components were exported. Summary not generated.")
+        print(f"  CMD: {' '.join(args)}")
+        self._delegate(*args)
+        self._wait_completed()
+        time.sleep(0.5)
+        print(f"  ✓ {operation_name} complete")
+
+    def load_all_images(self) -> None:
+        """
+        Load all images from all batches into RC project.
+        Creates a temporary imagelist file with only validated image paths.
+        """
+        print("\n=== Loading All Images ===")
+
+        # Create temporary imagelist file in system temp directory (NOT in images folder)
+        import tempfile
+        temp_dir = Path(tempfile.gettempdir())
+        imagelist = temp_dir / f"realityscan_batch_imagelist_{os.getpid()}.txt"
+
+        # Collect all validated images
+        all_images = []
+        for images in self.batches.values():
+            all_images.extend(images)
+
+        # Verify all paths before writing
+        validated_images = [img for img in all_images if self._is_valid_image(img)]
+
+        if len(validated_images) != len(all_images):
+            skipped = len(all_images) - len(validated_images)
+            print(f"  Warning: Skipped {skipped} invalid file(s)")
+
+        # Write imagelist with only validated images
+        print(f"  Creating imagelist: {imagelist}")
+        with open(imagelist, "w", encoding="utf-8") as f:
+            for img in validated_images:
+                f.write(f"{img}\n")
+
+        print(f"Loading {len(validated_images)} validated images...")
+        self._run_command_quick("load images", "-add", str(imagelist))
+
+        # Cleanup temporary file
+        try:
+            imagelist.unlink()
+            print(f"  Cleaned up temporary imagelist")
+        except Exception as e:
+            print(f"  Warning: Could not delete temporary imagelist: {e}")
+
+        print("✓ All images loaded")
+
+    def disable_all_images(self) -> None:
+        """Disable alignment for all images in project."""
+        print("\n=== Disabling All Images ===")
+        self._run_command_quick(
+            "disable all",
+            "-selectAllImages",
+            "-enableAlignment", "false"
+        )
+        print("✓ All images disabled for alignment")
+
+    def enable_batch(self, batch_name: str) -> None:
+        """Enable alignment for images in specified batch."""
+        print(f"\n=== Enabling Batch: {batch_name} ===")
+
+        # Use regex pattern with path separators to match exact directory name
+        # This prevents "Zone 1" from matching "Zone 10", "Zone 11", etc.
+        # Pattern matches: /batch_name/ or \batch_name\ (directory boundaries)
+        escaped_name = re.escape(batch_name)
+        pattern = f"g/[/\\\\]{escaped_name}[/\\\\]/"
+
+        print(f"  CMD: -deselectAllImages -selectImage {pattern} -enableAlignment true")
+        self._delegate("-deselectAllImages")
+        self._wait_completed()
+        self._delegate("-selectImage", pattern)
+        self._wait_completed()
+        self._delegate("-enableAlignment", "true")
+        self._wait_completed()
+        time.sleep(0.5)
+
+        batch_size = len(self.batches.get(batch_name, []))
+        print(f"✓ Enabled {batch_size} images from batch '{batch_name}'")
+
+    def align_current_batch(self, batch_name: str) -> None:
+        """
+        Run alignment for currently enabled images.
+        Uses proper monitoring to track progress until completion.
+        """
+        print(f"\n=== Aligning Batch: {batch_name} ===")
+
+        # Delegate alignment command without waiting
+        print("  CMD: -align")
+        self._delegate("-align")
+
+        # Monitor the alignment operation until completion
+        self._monitor_operation("Alignment", timeout_sec=17200.0, poll_interval=5.0)
+
+        print(f"✓ Batch '{batch_name}' aligned")
+
+    def disable_batch(self, batch_name: str) -> None:
+        """Disable alignment for images in specified batch."""
+        print(f"\n=== Disabling Batch: {batch_name} ===")
+
+        # Use regex pattern with path separators to match exact directory name
+        escaped_name = re.escape(batch_name)
+        pattern = f"g/[/\\\\]{escaped_name}[/\\\\]/"
+
+        print(f"  CMD: -deselectAllImages -selectImage {pattern} -enableAlignment false")
+        self._delegate("-deselectAllImages")
+        self._wait_completed()
+        self._delegate("-selectImage", pattern)
+        self._wait_completed()
+        self._delegate("-enableAlignment", "false")
+        self._wait_completed()
+        time.sleep(0.5)
+
+        print(f"✓ Batch '{batch_name}' disabled")
+
+    def save_project(self, project_path: Optional[Path] = None) -> None:
+        """Save the RC project."""
+        if project_path is None:
+            project_path = self.images_root / "batch_alignment.rcproj"
+
+        print(f"\n=== Saving Project ===")
+        self._run_command_quick("save", "-save", str(project_path))
+        print(f"✓ Project saved: {project_path}")
+
+    def run(self) -> None:
+        """Execute complete batch alignment workflow."""
+        print("=" * 80)
+        print("BATCH SEQUENTIAL ALIGNMENT WORKFLOW")
+        print("=" * 80)
+
+        # Setup
+        self.rc_exe = self.find_rc_executable()
+        self.scan_directories()
+
+        if not self.batches:
+            print("\nNo image batches found. Exiting.")
             return
 
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        summary_file = self.output_dir / f"{self.base_name}_export_summary.txt"
+        # Verify RC is running
+        status = self._get_status()
+        if not status:
+            print("\nError: Could not communicate with RealityCapture.")
+            print(f"Please ensure RealityCapture instance '{self.instance_name}' is running.")
+            return
 
-        summary_lines = [
-            "=" * 80,
-            "RealityCapture Component Export Summary",
-            "=" * 80,
-            f"Export Date/Time: {timestamp}",
-            f"Output Directory: {self.output_dir}",
-            f"Total Components Exported: {len(self.export_log)}",
-            "",
-            "-" * 80,
-            "Export Details:",
-            "-" * 80,
-            f"{'Index':<8} {'Original Component Name':<30} {'Exported Filename':<40}",
-            "-" * 80,
-        ]
+        print(f"\nConnected to RealityCapture instance '{self.instance_name}'")
+        print(f"Status: {status}")
 
-        for entry in self.export_log:
-            summary_lines.append(
-                f"{entry['export_index']:<8} {entry['original_name']:<30} {entry['exported_name']:<40}"
-            )
+        # Confirm workflow
+        print(f"\nThis will process {len(self.batches)} batches sequentially:")
+        for i, batch_name in enumerate(self.batches.keys(), 1):
+            print(f"  {i}. {batch_name} ({len(self.batches[batch_name])} images)")
 
-        summary_lines.extend([
-            "-" * 80,
-            "",
-            "Export completed successfully.",
-            "=" * 80,
-        ])
+        confirm = input("\nProceed? [Y/n]: ").strip().lower()
+        if confirm and confirm not in ('y', 'yes'):
+            print("Cancelled.")
+            return
 
-        summary_text = "\n".join(summary_lines)
-
-        # Write to file
-        with open(summary_file, "w", encoding="utf-8") as f:
-            f.write(summary_text)
-
-        print(f"\n{summary_text}")
-        print(f"\nSummary saved to: {summary_file}")
-
-
-def get_user_input() -> tuple[Path, str, int, int]:
-    """
-    Prompt user for required paths and settings.
-
-    Returns:
-        Tuple of (output_dir, base_name, max_component_num, max_parenthesis_num)
-    """
-    # Default values
-    default_output_dir = r"D:\NA168\Zeuss_NA168_H2080\aligned_components"
-    default_base_name = "NA168_H2080_"
-    default_max_component = 40
-    default_max_parenthesis = 15
-
-    print("=" * 80)
-    print("RealityCapture Component Exporter (Delegation Mode)")
-    print("=" * 80)
-    print()
-    print("This script will export all components from the currently open")
-    print("RealityCapture project using delegation commands.")
-    print()
-    print("CLI Commands Used:")
-    print("  -delegateTo *        : Delegate to first available instance")
-    print("  -waitCompleted *     : Wait for operation to complete")
-    print("  -getStatus *         : Check instance status")
-    print("  -selectComponent     : Select a component by name")
-    print("  -exportSelectedComponentFile : Export selected component")
-    print()
-    print("IMPORTANT: Ensure RealityCapture is running with your project loaded.")
-    print()
-
-    # Get output directory
-    while True:
-        output_input = input(f"Enter output directory for .rsalign files [{default_output_dir}]: ").strip()
-        if not output_input:
-            output_input = default_output_dir
-        output_dir = Path(output_input)
         try:
-            output_dir.mkdir(parents=True, exist_ok=True)
-            break
+            # Load all images
+            self.load_all_images()
+
+            # Disable all images initially
+            self.disable_all_images()
+
+            # Process each batch sequentially
+            for i, batch_name in enumerate(self.batches.keys(), 1):
+                print("\n" + "=" * 80)
+                print(f"PROCESSING BATCH {i}/{len(self.batches)}: {batch_name}")
+                print("=" * 80)
+
+                # Enable batch
+                self.enable_batch(batch_name)
+
+                # Run alignment WITH PROPER MONITORING
+                self.align_current_batch(batch_name)
+
+                # Disable batch (prepare for next)
+                self.disable_batch(batch_name)
+
+                # Save after each batch
+                self.save_project()
+
+            print("\n" + "=" * 80)
+            print("BATCH PROCESSING COMPLETE")
+            print("=" * 80)
+            print(f"Processed {len(self.batches)} batches successfully")
+
         except Exception as e:
-            print(f"Error: Could not create directory: {e}")
-            print()
-
-    # Get base name for exported files
-    base_name_input = input(f"Enter base name for exported files [{default_base_name}]: ").strip()
-    base_name = base_name_input if base_name_input else default_base_name
-
-    # Get maximum component number
-    while True:
-        max_comp_input = input(f"Enter maximum component number to check [{default_max_component}]: ").strip()
-        if not max_comp_input:
-            max_component_num = default_max_component
-            break
-        try:
-            max_component_num = int(max_comp_input)
-            if max_component_num < 0:
-                print("Error: Maximum component number must be non-negative.")
-                continue
-            break
-        except ValueError:
-            print("Error: Please enter a valid integer.")
-
-    # Get maximum parenthesis number
-    while True:
-        max_paren_input = input(f"Enter maximum parenthesis variant to check [{default_max_parenthesis}]: ").strip()
-        if not max_paren_input:
-            max_parenthesis_num = default_max_parenthesis
-            break
-        try:
-            max_parenthesis_num = int(max_paren_input)
-            if max_parenthesis_num < 0:
-                print("Error: Maximum parenthesis number must be non-negative.")
-                continue
-            break
-        except ValueError:
-            print("Error: Please enter a valid integer.")
-
-    print()
-    return output_dir, base_name, max_component_num, max_parenthesis_num
+            print(f"\n[ERROR] Processing failed: {e}")
+            # Try to save project before exit
+            try:
+                self.save_project()
+            except Exception:
+                pass
+            raise
 
 
 def main():
-    """
-    Main entry point for the component export script.
-    """
-    # RealityScan executable path
-    rc_exe = Path(r"C:\Program Files\Epic Games\RealityScan_2.1\RealityScan.exe")
+    print("Batch Sequential Alignment for RealityCapture")
+    print("=" * 80)
 
-    if not rc_exe.exists():
-        print(f"Error: RealityScan executable not found: {rc_exe}")
-        print("Please update the 'rc_exe' variable in the script.")
-        sys.exit(1)
+    # Get images root directory
+    images_root = input("Enter root directory containing image batch subdirectories: ").strip().strip('"')
+    if not images_root:
+        print("No directory provided. Exiting.")
+        return
 
-    try:
-        # Get user input
-        output_dir, base_name, max_component_num, max_parenthesis_num = get_user_input()
+    root_path = Path(images_root)
+    if not root_path.exists() or not root_path.is_dir():
+        print(f"Invalid directory: {images_root}")
+        return
 
-        # Create exporter and run
-        exporter = ComponentExporter(
-            rc_exe=rc_exe,
-            output_dir=output_dir,
-            base_name=base_name,
-            max_component_num=max_component_num,
-            max_parenthesis_num=max_parenthesis_num,
-            poll_interval=2.0,
-        )
+    # Get RC instance name (optional)
+    instance = input("RealityCapture instance name [*]: ").strip() or "*"
 
-        exported = exporter.export_all_components()
-
-        # Generate summary
-        exporter.generate_summary()
-
-        if not exported:
-            print("\nNo components were found or exported.")
-
-    except KeyboardInterrupt:
-        print("\n\nExport cancelled by user.")
-        sys.exit(1)
-    except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
-        sys.exit(1)
+    # Run processor
+    processor = BatchAlignmentProcessor(root_path, instance)
+    processor.run()
 
 
 if __name__ == "__main__":
