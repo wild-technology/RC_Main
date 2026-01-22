@@ -331,7 +331,7 @@ class SimplifyProcessor:
         except Exception as e:
             self._log(f"Warning: Delegation failed: {e}", indent=2)
 
-        time.sleep(1.5)
+        time.sleep(1.3)
 
         # PHASE 1: Wait for operation to START
         self._log("Waiting for operation to start...", indent=2)
