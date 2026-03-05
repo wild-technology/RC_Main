@@ -56,6 +56,13 @@ def initialize_modules(logger) -> dict[str, RCModule]:
         return {name: available_modules[name] for name in selected}
 
     # Fallback to interactive prompt
+    try:
+        import inquirer
+    except ImportError:
+        logger.warning("inquirer not installed — enabling all modules. "
+                       "Install with: pip install inquirer")
+        return available_modules
+
     module_choices = [
         inquirer.Checkbox(
             'modules',

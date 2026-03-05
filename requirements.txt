@@ -17,6 +17,9 @@ shapely>=2.0
 matplotlib>=3.7
 seaborn>=0.13
 
+# Interactive module selection (optional — gracefully skipped if missing)
+inquirer>=3.1
+
 # GUI (optional — only needed for PySide6 GUI mode)
 # PySide6>=6.5
 
