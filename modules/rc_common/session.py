@@ -31,7 +31,7 @@ class SessionState:
         """Record a step as completed with optional output data."""
         if step_name not in self.completed_steps:
             self.completed_steps.append(step_name)
-        if outputs:
+        if outputs is not None:
             self.step_outputs[step_name] = outputs
         self.current_step = ""
         self.timestamp = datetime.now().isoformat()

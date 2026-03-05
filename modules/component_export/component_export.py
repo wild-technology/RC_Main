@@ -164,13 +164,28 @@ class ComponentExportModule(RCModule):
 
         # Obtain the delegation client.  The pipeline is expected to have
         # already configured an RC executable path parameter.
-        rc_exe_param = self.params.get("rc_exe")
+        rc_exe_param = self.params.get("rc_executable_path") or self.params.get("rc_exe")
         rc_exe = rc_exe_param.get_value() if rc_exe_param else None
         if rc_exe is None:
-            # Fallback: try the common Windows default.
-            rc_exe = r"C:\Program Files\Epic Games\RealityScan_2.0\RealityScan.exe"
+            # Fallback: try common Windows defaults.
+            import shutil
+            for candidate in [
+                r"C:\Program Files\Capturing Reality\RealityScan 2.1\RealityScan.exe",
+                r"C:\Program Files\Capturing Reality\RealityScan 2.0\RealityScan.exe",
+                r"C:\Program Files\Capturing Reality\RealityScan\RealityScan.exe",
+            ]:
+                if Path(candidate).exists():
+                    rc_exe = candidate
+                    break
+            if rc_exe is None:
+                rc_exe = shutil.which("RealityScan") or r"C:\Program Files\Capturing Reality\RealityScan 2.1\RealityScan.exe"
+
+        instance_param = self.params.get("rc_instance_name")
+        instance_name = instance_param.get_value() if instance_param else "*"
+
         client = RCDelegationClient(
             rc_exe=Path(rc_exe),
+            instance_name=instance_name,
             logger=self.logger,
         )
 
