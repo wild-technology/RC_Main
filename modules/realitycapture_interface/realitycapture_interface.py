@@ -517,8 +517,9 @@ class RealityCaptureAlignment(RCModule):
         else:
             self.logger.warning("  No flight log - alignment will use image metadata only")
 
-        # Set minimum component size to 100 images
-        min_component_size = 100
+        # Read minimum component size from parameter (default 100)
+        min_param = self.params.get('rc_min_component_size')
+        min_component_size = min_param.get_value() if min_param else 100
 
         # Add alignment and XMP export settings
         command.extend([
@@ -531,7 +532,7 @@ class RealityCaptureAlignment(RCModule):
             "-set", "xmpExGps=true",
             "-exportXMP",
             "-setMinComponentSize", str(min_component_size),
-            "-exportLatestComponents", f"{output_folder}\\",
+            "-exportLatestComponents", f"{output_folder}{os.sep}",
             "-quit"
         ])
 

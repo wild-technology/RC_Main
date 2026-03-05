@@ -291,7 +291,7 @@ class ImageEnhancement(RCModule):
     @staticmethod
     def _apply_white_balance(image: np.ndarray) -> np.ndarray:
         """Minimal white balance for colour consistency."""
-        result = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+        result = cv2.cvtColor(image, cv2.COLOR_BGR2LAB).astype(np.float32)
         avg_a = np.average(result[:, :, 1])
         avg_b = np.average(result[:, :, 2])
         result[:, :, 1] = result[:, :, 1] - (
@@ -300,6 +300,7 @@ class ImageEnhancement(RCModule):
         result[:, :, 2] = result[:, :, 2] - (
             (avg_b - 128) * (result[:, :, 0] / 255.0) * 0.35
         )
+        result = np.clip(result, 0, 255).astype(np.uint8)
         return cv2.cvtColor(result, cv2.COLOR_LAB2BGR)
 
     @staticmethod
@@ -325,7 +326,8 @@ class ImageEnhancement(RCModule):
         sharpened = cv2.addWeighted(image, 1.08, blurred, -0.08, 0)
 
         edge_mask_3ch = cv2.merge([edge_mask, edge_mask, edge_mask])
-        result = (
-            sharpened * edge_mask_3ch + image * (1 - edge_mask_3ch)
+        result = np.clip(
+            sharpened.astype(np.float32) * edge_mask_3ch + image.astype(np.float32) * (1 - edge_mask_3ch),
+            0, 255
         ).astype(np.uint8)
         return result

@@ -135,43 +135,44 @@ class GeoreferenceImages(RCModule):
         else:
             return 'unknown'
 
+    def _get_camera_profile(self, filename: str) -> dict | None:
+        """Load camera profile from camera_profiles.json for the given filename."""
+        if not hasattr(self, '_camera_profiles'):
+            try:
+                from modules.rc_common.camera_utils import load_camera_profiles, get_camera_profile
+                self._camera_profiles = load_camera_profiles(
+                    self.params.get('camera_profiles_path', None)
+                    and self.params['camera_profiles_path'].get_value()
+                )
+                self._get_cam_profile_fn = get_camera_profile
+            except Exception as e:
+                self.logger.warning(f"Could not load camera profiles: {e}")
+                self._camera_profiles = {"cameras": []}
+                self._get_cam_profile_fn = lambda fn, p: None
+        return self._get_cam_profile_fn(filename, self._camera_profiles)
+
     def _get_camera_pitch_accuracy(self, filename: str) -> float:
         """
         Return pitch accuracy (degrees) for a camera based on its name.
-        Yaw and Roll are fixed at 3 degrees for all cameras.
+        Uses camera_profiles.json for values.
         """
-        camera_type = self._get_camera_type(filename)
-
-        if camera_type == 'camupper':
-            return 10.0
-        elif camera_type == 'cammid':
-            return 10.0
-        elif camera_type == 'camlower':
-            return 5.0
-        elif camera_type == 'zeuss':
-            return 30.0
-        else:
-            self.logger.warning(f"Unknown camera type for {filename}, using default pitch accuracy 10 degrees")
-            return 10.0
+        profile = self._get_camera_profile(filename)
+        if profile:
+            return profile.get("accuracy", {}).get("pitch_deg", 10.0)
+        self.logger.warning(f"Unknown camera type for {filename}, using default pitch accuracy 10 degrees")
+        return 10.0
 
     def _get_camera_pitch_offset(self, filename: str) -> float:
         """
         Return camera pitch offset (degrees down from vehicle forward axis).
         Positive values = camera pointing down relative to vehicle.
+        Uses camera_profiles.json for values.
         """
-        camera_type = self._get_camera_type(filename)
-
-        if camera_type == 'cammid':
-            return 20.0
-        elif camera_type == 'camupper':
-            return 70.0
-        elif camera_type == 'camlower':
-            return 10.0
-        elif camera_type == 'zeuss':
-            return 30.0
-        else:
-            self.logger.warning(f"Unknown camera type for {filename}, assuming 0 degree pitch offset")
-            return 0.0
+        profile = self._get_camera_profile(filename)
+        if profile:
+            return profile.get("pitch_offset_deg", 0.0)
+        self.logger.warning(f"Unknown camera type for {filename}, assuming 0 degree pitch offset")
+        return 0.0
 
     def _apply_camera_position_offset(self, utm_x: float | None, utm_y: float | None,
                                       altitude: float | None, heading_deg: float | None,
@@ -271,7 +272,7 @@ class GeoreferenceImages(RCModule):
         data_rows = []
         try:
             with open(filename, "r") as csvfile:
-                reader = csv.reader(csvfile, delimiter=',')
+                reader = csv.reader(csvfile, delimiter='\t')
 
                 try:
                     header = next(reader)
@@ -616,38 +617,32 @@ class GeoreferenceImages(RCModule):
             - lateral: positive = right of vehicle center (not used currently)
             - down: positive = below vehicle center
         """
-        camera_type = self._get_camera_type(filename)
-
-        if camera_type == 'camupper':
-            return (1.0, 0.0, 0.0)
-        elif camera_type == 'cammid':
-            return (1.0, 0.0, 1.0)
-        elif camera_type == 'camlower':
-            return (1.0, 0.0, 1.0)
-        elif camera_type == 'zeuss':
-            return (0.5, 0.0, 0.5)
-        else:
-            self.logger.warning(f"Unknown camera type for {filename}, assuming no offset")
-            return (0.0, 0.0, 0.0)
+        profile = self._get_camera_profile(filename)
+        if profile:
+            offsets = profile.get("position_offsets", {})
+            return (
+                offsets.get("forward_m", 0.0),
+                offsets.get("lateral_m", 0.0),
+                offsets.get("down_m", 0.0),
+            )
+        self.logger.warning(f"Unknown camera type for {filename}, assuming no offset")
+        return (0.0, 0.0, 0.0)
 
     def _get_camera_accuracy(self, filename: str) -> tuple[float, float, float]:
         """
         Return yaw, pitch, roll accuracy (degrees) for a camera based on its name.
         Default values: upper=10, mid=10, lower=5, zeuss=30
         """
-        camera_type = self._get_camera_type(filename)
-
-        if camera_type == 'camupper':
-            return 10.0, 10.0, 10.0
-        elif camera_type == 'cammid':
-            return 10.0, 10.0, 10.0
-        elif camera_type == 'camlower':
-            return 5.0, 5.0, 5.0
-        elif camera_type == 'zeuss':
-            return 30.0, 30.0, 30.0
-        else:
-            self.logger.warning(f"Unknown camera type for {filename}, using default accuracy 10 degrees")
-            return 10.0, 10.0, 10.0
+        profile = self._get_camera_profile(filename)
+        if profile:
+            acc = profile.get("accuracy", {})
+            return (
+                acc.get("yaw_deg", 10.0),
+                acc.get("pitch_deg", 10.0),
+                acc.get("roll_deg", 10.0),
+            )
+        self.logger.warning(f"Unknown camera type for {filename}, using default accuracy 10 degrees")
+        return 10.0, 10.0, 10.0
 
     def _get_camera_focal_length_mm(self, filename: str) -> float | None:
         """
@@ -659,18 +654,11 @@ class GeoreferenceImages(RCModule):
         - Lower: 15 mm
         Returns None if camera type is unknown.
         """
-        camera_type = self._get_camera_type(filename)
-        if camera_type == 'zeuss':
-            return 24.0
-        elif camera_type == 'camupper':
-            return 13.0
-        elif camera_type == 'cammid':
-            return 14.0
-        elif camera_type == 'camlower':
-            return 15.0
-        else:
-            self.logger.warning(f"Unknown camera type for {filename}, focal length will be omitted")
-            return None
+        profile = self._get_camera_profile(filename)
+        if profile:
+            return profile.get("focal_length_mm")
+        self.logger.warning(f"Unknown camera type for {filename}, focal length will be omitted")
+        return None
 
     def __generate_flight_log(self, accepted_images, output_path):
         """Generate flight log with absolute paths for zone disambiguation"""
@@ -805,7 +793,8 @@ class GeoreferenceImages(RCModule):
                 })
 
             # Generate output path
-            output_path = os.path.join(input_dir, f"flight_log_{self.utm_zone}.txt")
+            utm_label = self.utm_zone if self.utm_zone else "unknown"
+            output_path = os.path.join(input_dir, f"flight_log_{utm_label}.txt")
 
             # Generate flight log
             try:
