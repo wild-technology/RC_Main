@@ -36,6 +36,8 @@ from modules.georeference.georeference_images import GeoreferenceImages
 from modules.image_batcher.batch_directory import BatchDirectory
 from modules.realitycapture_interface.realitycapture_interface import RealityCaptureAlignment
 from modules.image_enhancement.image_enhancement import ImageEnhancement
+from modules.camera_setup.camera_setup import CameraSetup
+from modules.component_export.component_export import ComponentExport
 
 def initialize_logger() -> logging.Logger:
     logging.basicConfig(level=logging.INFO)
@@ -54,7 +56,9 @@ def initialize_modules(logger) -> dict[str, RCModule]:
         'Enhance Images': ImageEnhancement(logger),
         'Georeference Images': GeoreferenceImages(logger),
         'Batch Directory': BatchDirectory(logger),
-        'RealityCapture Alignment': RealityCaptureAlignment(logger)
+        'Camera Setup': CameraSetup(logger),
+        'RealityCapture Alignment': RealityCaptureAlignment(logger),
+        'Component Export': ComponentExport(logger),
     }
 
     # Non-interactive selection via environment
