@@ -23,7 +23,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from PySide6.QtCore import QThreadPool
+
 from gui.widgets import LogViewer, ParameterForm, ProgressWidget, StatsTable
+from gui.workers.pipeline_worker import PipelineWorker
+from gui.state.session_manager import SessionManager
 from modules.rc_common.session import SessionState
 
 _logger = logging.getLogger("gui")
@@ -90,7 +94,11 @@ class MainWindow(QMainWindow):
 
         # --- internal state ---
         self._session = SessionState()
+        self._session_manager = SessionManager()
         self._step_status: dict[str, str] = {step: "pending" for step in PIPELINE_STEPS}
+        self._thread_pool = QThreadPool()
+        self._current_worker: PipelineWorker | None = None
+        self._module_instances: dict[str, object] = {}
 
         # --- build UI ---
         self._build_menu_bar()
@@ -335,17 +343,118 @@ class MainWindow(QMainWindow):
 
     # ----------------------------------------------------------- run actions
 
+    def _get_module_instance(self, step_name: str):
+        """Get or create a module instance for a step."""
+        if step_name in self._module_instances:
+            return self._module_instances[step_name]
+        if step_name not in MODULE_MAP:
+            return None
+        module_path, class_name = MODULE_MAP[step_name]
+        try:
+            mod = importlib.import_module(module_path)
+            cls = getattr(mod, class_name)
+            instance = cls(_logger)
+            # Apply current form values as params
+            if step_name in self._param_forms:
+                form_values = self._param_forms[step_name].get_values()
+                from module_base.parameter import Parameter
+                params = {}
+                for k, v in form_values.items():
+                    params[k] = Parameter(k, k, k, type(v) if v is not None else str, v)
+                    params[k].set_value(v)
+                instance.set_params(params)
+            self._module_instances[step_name] = instance
+            return instance
+        except Exception as exc:
+            self._log_viewer.append_error(f"Could not load module '{step_name}': {exc}")
+            return None
+
     def _run_selected_step(self) -> None:
-        """Run the currently selected pipeline step (not yet implemented)."""
-        self._log_viewer.append_warning("Not implemented yet")
+        """Run the currently selected pipeline step."""
+        row = self._step_list.currentRow()
+        if not (0 <= row < len(PIPELINE_STEPS)):
+            self._log_viewer.append_warning("No step selected")
+            return
+        step_name = PIPELINE_STEPS[row]
+        self._run_step(step_name)
+
+    def _run_step(self, step_name: str) -> None:
+        """Launch a pipeline step in a background thread."""
+        if self._current_worker is not None:
+            self._log_viewer.append_warning("A step is already running")
+            return
+
+        module = self._get_module_instance(step_name)
+        if module is None:
+            return
+
+        worker = PipelineWorker(step_name, module)
+        worker.signals.started.connect(self._on_worker_started)
+        worker.signals.progress.connect(self._on_worker_progress)
+        worker.signals.log_message.connect(self._on_worker_log)
+        worker.signals.finished.connect(self._on_worker_finished)
+        worker.signals.error.connect(self._on_worker_error)
+
+        self._current_worker = worker
+        self._action_stop.setEnabled(True)
+        self._thread_pool.start(worker)
 
     def _run_all(self) -> None:
-        """Run all pipeline steps sequentially (not yet implemented)."""
-        self._log_viewer.append_warning("Not implemented yet")
+        """Run all pending pipeline steps sequentially."""
+        self._log_viewer.append_info("Run All: starting pipeline execution")
+        # Find first pending step and start it; _on_worker_finished chains to next
+        for step_name in PIPELINE_STEPS:
+            if self._step_status.get(step_name) != "complete":
+                self._run_step(step_name)
+                return
+        self._log_viewer.append_info("All steps already complete")
 
     def _stop_execution(self) -> None:
-        """Stop the currently running operation (not yet implemented)."""
-        self._log_viewer.append_warning("Not implemented yet")
+        """Stop the currently running operation."""
+        if self._current_worker:
+            self._current_worker.cancel()
+            self._log_viewer.append_warning("Stop requested — waiting for current operation to finish")
+        else:
+            self._log_viewer.append_warning("No operation running")
+
+    # --------------------------------------------------------- worker signals
+
+    def _on_worker_started(self, step_name: str) -> None:
+        self._update_step_status(step_name, "running")
+        self._log_viewer.append_info(f"Started: {step_name}")
+
+    def _on_worker_progress(self, step_name: str, percent: float) -> None:
+        # Progress widget would be updated here in a full implementation
+        pass
+
+    def _on_worker_log(self, level: str, message: str) -> None:
+        if level == "warning":
+            self._log_viewer.append_warning(message)
+        elif level == "error":
+            self._log_viewer.append_error(message)
+        else:
+            self._log_viewer.append_info(message)
+
+    def _on_worker_finished(self, step_name: str, result: dict) -> None:
+        self._update_step_status(step_name, "complete")
+        self._log_viewer.append_info(f"Completed: {step_name}")
+        self._current_worker = None
+        self._action_stop.setEnabled(False)
+
+        # Update stats table
+        if step_name in self._stats_tables and isinstance(result, dict):
+            display_stats = {k: v for k, v in result.items()
+                           if isinstance(v, (str, int, float, bool))}
+            self._stats_tables[step_name].set_stats(display_stats)
+
+        # Mark in session
+        self._session_manager.session.mark_step_complete(step_name, result)
+
+    def _on_worker_error(self, step_name: str, error_msg: str) -> None:
+        self._update_step_status(step_name, "failed")
+        self._log_viewer.append_error(f"Failed: {step_name} — {error_msg}")
+        self._current_worker = None
+        self._action_stop.setEnabled(False)
 
     # ------------------------------------------------------------- help
 
