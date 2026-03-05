@@ -5,28 +5,6 @@ import sys
 import logging
 import argparse
 import os
-import inquirer
-import os
-import csv
-from datetime import datetime, timedelta
-from PIL import Image
-import utm
-import math
-import os
-import shutil
-import numpy as np
-import pandas as pd
-import geopandas as gpd
-from sklearn.cluster import KMeans
-from sklearn.neighbors import KernelDensity
-from scipy.spatial import cKDTree, ConvexHull
-from shapely.geometry import Point
-from sklearn.preprocessing import StandardScaler
-import matplotlib
-import matplotlib.pyplot as plt
-import seaborn as sns
-import warnings
-import glob
 from typing import Optional, List
 
 from module_base.parameter import Parameter
@@ -35,6 +13,12 @@ from modules.extract_images.extract_images import ExtractImages
 from modules.georeference.georeference_images import GeoreferenceImages
 from modules.image_batcher.batch_directory import BatchDirectory
 from modules.realitycapture_interface.realitycapture_interface import RealityCaptureAlignment
+from modules.image_enhancement.image_enhancement import ImageEnhancement
+from modules.camera_setup.camera_setup import CameraSetup
+from modules.component_export.component_export import ComponentExportModule as ComponentExport
+from modules.model_generation.model_generation import ModelGeneration
+from modules.rc_common.session import SessionState
+from modules.rc_common.progress import ProgressReporter, TqdmBackend, LogBackend
 
 def initialize_logger() -> logging.Logger:
     logging.basicConfig(level=logging.INFO)
@@ -50,9 +34,13 @@ def initialize_modules(logger) -> dict[str, RCModule]:
     """
     available_modules: dict[str, RCModule] = {
         'Extract Images': ExtractImages(logger),
+        'Enhance Images': ImageEnhancement(logger),
         'Georeference Images': GeoreferenceImages(logger),
         'Batch Directory': BatchDirectory(logger),
-        'RealityCapture Alignment': RealityCaptureAlignment(logger)
+        'Camera Setup': CameraSetup(logger),
+        'RealityCapture Alignment': RealityCaptureAlignment(logger),
+        'Component Export': ComponentExport(logger),
+        'Model Generation': ModelGeneration(logger),
     }
 
     # Non-interactive selection via environment
@@ -138,6 +126,59 @@ def initialize_parameters(modules) -> dict[str, Parameter]:
         prompt_user=True
     )
 
+    # Shared RC parameters (used by Camera Setup, Alignment, Component Export, Model Generation)
+    params['rc_executable_path'] = Parameter(
+        name='RealityScan Executable Path',
+        cli_short='rc_exe',
+        cli_long='rc_executable_path',
+        type=str,
+        default_value=None,
+        description='Path to RealityScan.exe (auto-detected if not set)',
+        parameter_group='RealityCapture',
+        file_filter='*.exe',
+    )
+
+    params['rc_instance_name'] = Parameter(
+        name='RC Instance Name',
+        cli_short='rc_inst',
+        cli_long='rc_instance_name',
+        type=str,
+        default_value='*',
+        description='RealityScan instance name for delegation (* = any)',
+        parameter_group='RealityCapture',
+    )
+
+    params['camera_profiles_path'] = Parameter(
+        name='Camera Profiles Path',
+        cli_short='cam_prof',
+        cli_long='camera_profiles_path',
+        type=str,
+        default_value='config/camera_profiles.json',
+        description='Path to camera profiles JSON file',
+        parameter_group='RealityCapture',
+        file_filter='*.json',
+    )
+
+    params['session_file'] = Parameter(
+        name='Session File',
+        cli_short='sess',
+        cli_long='session_file',
+        type=str,
+        default_value=None,
+        description='Path to session file for save/resume (auto-generated if not set)',
+        parameter_group='General',
+    )
+
+    params['rc_checkpoint_dir'] = Parameter(
+        name='Checkpoint Directory',
+        cli_short='ckpt',
+        cli_long='rc_checkpoint_dir',
+        type=str,
+        default_value=None,
+        description='Directory for operation checkpoints (default: output_dir/.checkpoints)',
+        parameter_group='General',
+    )
+
     # Module-specific parameters
     for module in modules.values():
         for pname, p in module.get_parameters().items():
@@ -190,7 +231,9 @@ def parse_arguments(argv, params, logger) -> None:
                 # Strip surrounding quotes if present
                 if inp and inp[0] in ('"', "'") and inp[-1] == inp[0]:
                     inp = inp[1:-1]
-                if p.get_type() is bool:
+                if not inp:
+                    val = p.get_default_value()
+                elif p.get_type() is bool:
                     val = inp.lower() in ('true', 't', 'yes', 'y')
                 else:
                     val = p.get_type()(inp)
@@ -224,6 +267,65 @@ def log_output_data(logger, output_data: dict[str, object], indent: int = 0) -> 
         else:
             logger.info(f'{pad}{key}: {val}')
 
+def _resolve_session_path(params: dict[str, Parameter]) -> str | None:
+    """Determine the session file path from params or auto-generate."""
+    session_file = params.get('session_file')
+    if session_file and session_file.get_value():
+        return session_file.get_value()
+
+    output_dir = params.get('output_dir')
+    if output_dir and output_dir.get_value():
+        expedition = params.get('expedition_name')
+        dive = params.get('dive_name')
+        exp_str = expedition.get_value() if expedition and expedition.get_value() else "session"
+        dive_str = dive.get_value() if dive and dive.get_value() else ""
+        parts = [exp_str]
+        if dive_str:
+            parts.append(dive_str)
+        name = "_".join(parts)
+        return os.path.join(output_dir.get_value(), f"{name}_session.json")
+
+    return None
+
+
+def _load_or_create_session(params: dict[str, Parameter], logger: logging.Logger) -> SessionState:
+    """Load existing session or create a new one from params."""
+    session = SessionState()
+
+    session_path = _resolve_session_path(params)
+    if session_path and os.path.exists(session_path):
+        try:
+            session.load(session_path)
+            logger.info("Resumed session from %s (completed: %s)", session_path, session.completed_steps)
+            return session
+        except Exception as e:
+            logger.warning("Could not load session %s: %s — starting fresh", session_path, e)
+
+    # Populate from current params
+    exp = params.get('expedition_name')
+    dive = params.get('dive_name')
+    session.expedition = exp.get_value() if exp and exp.get_value() else ""
+    session.dive = dive.get_value() if dive and dive.get_value() else ""
+
+    # Serialize param values for session
+    for name, p in params.items():
+        val = p.get_value()
+        if val is not None:
+            session.parameters[name] = str(val) if not isinstance(val, (int, float, bool)) else val
+
+    return session
+
+
+def _save_session(session: SessionState, params: dict[str, Parameter], logger: logging.Logger) -> None:
+    """Save session state to file."""
+    session_path = _resolve_session_path(params)
+    if session_path:
+        try:
+            session.save(session_path)
+        except Exception as e:
+            logger.warning("Could not save session: %s", e)
+
+
 def main(argv) -> None:
     logger = initialize_logger()
     modules = initialize_modules(logger)
@@ -239,33 +341,64 @@ def main(argv) -> None:
     if 'output_dir' in params:
         output_dir = params['output_dir'].get_value()
         if output_dir:
-            # Try to create output directory if it doesn't exist
             try:
                 os.makedirs(output_dir, exist_ok=True)
             except Exception as e:
                 logger.error(f"Cannot create output directory {output_dir}: {e}")
                 return
 
-            # Verify it's writable
             if not os.access(output_dir, os.W_OK):
                 logger.error(f"Output directory {output_dir} is not writable")
                 return
 
             logger.info(f"Output directory validated: {output_dir}")
 
+    # Initialize session state
+    session = _load_or_create_session(params, logger)
+
+    # Set up progress reporter with tqdm + log backends
+    progress_backends = [TqdmBackend()]
+    output_dir_val = params.get('output_dir')
+    if output_dir_val and output_dir_val.get_value():
+        log_dir = os.path.join(output_dir_val.get_value(), "logs")
+        os.makedirs(log_dir, exist_ok=True)
+        progress_backends.append(LogBackend(logging.getLogger("progress")))
+    progress_reporter = ProgressReporter(progress_backends)
+
+    # Inject session + progress into modules
+    for mod in modules.values():
+        if hasattr(mod, 'set_session_state'):
+            mod.set_session_state(session)
+        if hasattr(mod, 'set_progress_reporter'):
+            mod.set_progress_reporter(progress_reporter)
+
     overall_data: dict[str, object] = {}
-    for idx, mod in enumerate(modules.values()):
+    module_names = list(modules.keys())
+
+    for idx, (name, mod) in enumerate(modules.items()):
+        # Skip already-completed steps if resuming session
+        if session.is_step_complete(name):
+            logger.info(f"Skipping completed step: {name}")
+            prev_output = session.get_step_output(name)
+            if prev_output:
+                overall_data[name] = prev_output
+            continue
+
         ok, msg = mod.validate_parameters()
         if not ok:
             logger.error(f"Module {mod.get_name()} validation failed: {msg}")
+            _save_session(session, params, logger)
             return
 
+        session.set_current_step(name)
         logger.info(f'Running module: {mod.get_name()}')
+
         try:
             out = mod.run()
         except Exception as e:
             logger.error(f"Module {mod.get_name()} failed with exception: {e}")
             mod.finish()
+            _save_session(session, params, logger)
             return
 
         mod.finish()
@@ -274,19 +407,34 @@ def main(argv) -> None:
         # Check for module failure
         if out is None:
             logger.error(f"Module {mod.get_name()} returned None - treating as failure")
+            _save_session(session, params, logger)
             return
 
-        if isinstance(out, dict) and out.get('Success') == False:
+        if isinstance(out, dict) and out.get('Success') is False:
             logger.error(f"Module {mod.get_name()} reported failure")
+            _save_session(session, params, logger)
             return
 
-        overall_data[mod.get_name()] = out
+        overall_data[name] = out
 
-        if not params['continue_automatically'].get_value() and idx < len(modules) - 1:
+        # Serialize output for session (filter non-serializable values)
+        serializable_out = {}
+        if isinstance(out, dict):
+            for k, v in out.items():
+                if isinstance(v, (str, int, float, bool, list, dict, type(None))):
+                    serializable_out[k] = v
+                else:
+                    serializable_out[k] = str(v)
+        session.mark_step_complete(name, serializable_out)
+        _save_session(session, params, logger)
+
+        no_interactive = os.environ.get('RC_NO_INTERACTIVE', '').strip().lower() in ('1', 'true', 'yes', 'y')
+        if not no_interactive and not params['continue_automatically'].get_value() and idx < len(module_names) - 1:
             input("Press enter to continue...")
 
     logger.info("Output Data:")
     log_output_data(logger, overall_data)
+    logger.info("Pipeline complete.")
 
 if __name__ == '__main__':
     main(sys.argv)

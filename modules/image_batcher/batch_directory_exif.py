@@ -405,7 +405,7 @@ class BatchDirectory(RCModule):
 		nearest_idx = None
 
 		for idx, other_zone in enumerate(other_zones):
-			if other_zone is zone_gdf:
+			if other_zone is zone_gdf or (len(other_zone) == len(zone_gdf) and other_zone.equals(zone_gdf)):
 				continue
 			other_centroid = np.array([other_zone.geometry.x.mean(), other_zone.geometry.y.mean()])
 			dist = np.linalg.norm(zone_centroid - other_centroid)

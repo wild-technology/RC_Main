@@ -1,0 +1,56 @@
+{
+  "cameras": [
+    {
+      "name": "CamLower",
+      "keywords": ["camlower"],
+      "make": "ZCAM",
+      "model": "F6 16-35mm III Lower",
+      "focal_length_mm": 18,
+      "calibration_group": 1,
+      "lens_group": 1,
+      "distortion_model": "Brown3",
+      "position_offsets": {"forward_m": 1.0, "lateral_m": 0.0, "down_m": 1.0},
+      "accuracy": {"x_m": 10.0, "y_m": 10.0, "alt_m": 1.0, "yaw_deg": 3.0, "pitch_deg": 5.0, "roll_deg": 3.0},
+      "pitch_offset_deg": 10
+    },
+    {
+      "name": "CamMid",
+      "keywords": ["cammid"],
+      "make": "ZCAM",
+      "model": "F6 16-35mm III Mid",
+      "focal_length_mm": 14,
+      "calibration_group": 2,
+      "lens_group": 2,
+      "distortion_model": "Brown3WithTangential2",
+      "position_offsets": {"forward_m": 1.0, "lateral_m": 0.0, "down_m": 1.0},
+      "accuracy": {"x_m": 10.0, "y_m": 10.0, "alt_m": 1.0, "yaw_deg": 3.0, "pitch_deg": 10.0, "roll_deg": 3.0},
+      "pitch_offset_deg": 20
+    },
+    {
+      "name": "CamUpper",
+      "keywords": ["camupper"],
+      "make": "ZCAM",
+      "model": "F6 16-35mm III Upper",
+      "focal_length_mm": 12,
+      "calibration_group": 3,
+      "lens_group": 3,
+      "distortion_model": "Brown3WithTangential2",
+      "position_offsets": {"forward_m": 1.0, "lateral_m": 0.0, "down_m": 1.0},
+      "accuracy": {"x_m": 10.0, "y_m": 10.0, "alt_m": 1.0, "yaw_deg": 3.0, "pitch_deg": 10.0, "roll_deg": 3.0},
+      "pitch_offset_deg": 70
+    },
+    {
+      "name": "Zeuss",
+      "keywords": ["zeuss", "HERC", "hercules"],
+      "make": "FLIR",
+      "model": "Blackfly S BFS-PGE-161S7C-C Zeuss",
+      "focal_length_mm": 28,
+      "calibration_group": 4,
+      "lens_group": 4,
+      "distortion_model": "Brown3",
+      "position_offsets": {"forward_m": 0.0, "lateral_m": 0.0, "down_m": 0.0},
+      "accuracy": {"x_m": 10.0, "y_m": 10.0, "alt_m": 1.0, "yaw_deg": 3.0, "pitch_deg": 30.0, "roll_deg": 3.0},
+      "pitch_offset_deg": 0
+    }
+  ]
+}
