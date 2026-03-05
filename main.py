@@ -35,6 +35,7 @@ from modules.extract_images.extract_images import ExtractImages
 from modules.georeference.georeference_images import GeoreferenceImages
 from modules.image_batcher.batch_directory import BatchDirectory
 from modules.realitycapture_interface.realitycapture_interface import RealityCaptureAlignment
+from modules.image_enhancement.image_enhancement import ImageEnhancement
 
 def initialize_logger() -> logging.Logger:
     logging.basicConfig(level=logging.INFO)
@@ -50,6 +51,7 @@ def initialize_modules(logger) -> dict[str, RCModule]:
     """
     available_modules: dict[str, RCModule] = {
         'Extract Images': ExtractImages(logger),
+        'Enhance Images': ImageEnhancement(logger),
         'Georeference Images': GeoreferenceImages(logger),
         'Batch Directory': BatchDirectory(logger),
         'RealityCapture Alignment': RealityCaptureAlignment(logger)

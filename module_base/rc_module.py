@@ -58,7 +58,7 @@ class RCModule(abc.ABC):
     @abc.abstractmethod
     def run(self) -> dict[str, object] | None:
         """
-        Execute the module’s main logic.
+        Execute the module's main logic.
         """
         ...
 
@@ -80,7 +80,7 @@ class RCModule(abc.ABC):
         then add their own validation.
         """
         for param in self.params.values():
-            if hasattr(param, ‘validate’):
+            if hasattr(param, 'validate'):
                 valid, msg = param.validate()
                 if not valid:
                     return False, msg
