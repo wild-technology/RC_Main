@@ -12,6 +12,9 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional
 from ..file_metadata_parser import parse_timestamp, parse_timestamp_str, parse_frame_number, parse_frame_number_str
+from modules.rc_common.rc_delegation import RCDelegationClient
+from modules.rc_common.session import CheckpointManager
+from modules.rc_common.naming import generate_filename
 
 
 class RealityCaptureAlignment(RCModule):
@@ -141,6 +144,36 @@ class RealityCaptureAlignment(RCModule):
             default_value=400,
             description='Minimum number of images required in a component to keep it',
             prompt_user=False
+        )
+
+        additional_params['rc_use_delegation'] = Parameter(
+            name='Use Delegation Mode',
+            cli_short='r_del',
+            cli_long='r_use_delegation',
+            type=bool,
+            default_value=False,
+            description='Use delegation to a running RealityScan instance instead of direct CLI',
+            parameter_group='Alignment',
+        )
+
+        additional_params['rc_instance_name'] = Parameter(
+            name='RC Instance Name',
+            cli_short='r_inst',
+            cli_long='r_instance_name',
+            type=str,
+            default_value='*',
+            description='RealityScan instance name for delegation (default: first available)',
+            parameter_group='Alignment',
+        )
+
+        additional_params['rc_checkpoint_dir'] = Parameter(
+            name='Checkpoint Directory',
+            cli_short='r_ckpt',
+            cli_long='r_checkpoint_dir',
+            type=str,
+            default_value=None,
+            description='Directory for alignment checkpoints (enables resume on failure)',
+            parameter_group='Alignment',
         )
 
         return {**super().get_parameters(), **additional_params}
@@ -675,6 +708,227 @@ class RealityCaptureAlignment(RCModule):
         zone_name = os.path.basename(zone_folder)
         return zone_name
 
+    def _run_delegation_mode(
+        self,
+        realityscan_exe: Path,
+        process_data: list[dict],
+        expedition: str,
+        dive: str,
+        output_dir: str,
+        timestamp: str,
+    ) -> dict:
+        """Run alignment via delegation to a running RealityScan instance.
+
+        This mode delegates commands to an already-running RC instance using
+        two-phase idle detection for robust operation monitoring.
+        """
+        instance_name = self.params.get('rc_instance_name', Parameter('', '', '', str, '*')).get_value() or '*'
+
+        client = RCDelegationClient(
+            rc_exe=realityscan_exe,
+            instance_name=instance_name,
+            poll_interval=2.0,
+            logger=self.logger,
+        )
+
+        # Set up progress callback
+        if self._progress_reporter:
+            client.on_progress = lambda op, pct, elapsed, eta: self._report_progress(
+                op, pct, elapsed, eta,
+            )
+
+        # Clear any stale queue
+        client.clear_queue()
+
+        # Verify connection
+        if not client.verify_connection():
+            self.logger.error("Cannot connect to RealityScan instance '%s'", instance_name)
+            return {'Success': False, 'Error': f'Cannot connect to RC instance: {instance_name}'}
+
+        self.logger.info("Connected to RealityScan instance: %s", instance_name)
+
+        # Set up checkpoint manager
+        ckpt_dir = None
+        if self.params.get('rc_checkpoint_dir') and self.params['rc_checkpoint_dir'].get_value():
+            ckpt_dir = self.params['rc_checkpoint_dir'].get_value()
+        elif self.params.get('output_dir') and self.params['output_dir'].get_value():
+            ckpt_dir = os.path.join(self.params['output_dir'].get_value(), '.checkpoints')
+
+        checkpoint = CheckpointManager(ckpt_dir) if ckpt_dir else None
+        completed_zones = checkpoint.get_completed_items("alignment") if checkpoint else []
+
+        output_data = {
+            'Success': True,
+            'Output Directory': output_dir,
+            'Expedition': expedition,
+            'Dive': dive,
+            'Timestamp': timestamp,
+            'Zone Count': len(process_data),
+            'Zones': {},
+            'Total XMP Deleted': 0,
+            'Total XMP Created': 0,
+            'Mode': 'delegation',
+        }
+
+        bar = self._initialize_loading_bar(len(process_data), "Aligning Zones (Delegation)")
+        zone_summary = []
+
+        for data in process_data:
+            zone_name = data['zone_name']
+            input_folder = data['input_folder']
+            flight_log_path = data.get('flight_log_path')
+
+            # Check checkpoint — skip completed zones
+            if zone_name in completed_zones:
+                self.logger.info("[%s] Skipping (already completed per checkpoint)", zone_name)
+                zone_summary.append({'zone': zone_name, 'components': 0, 'status': 'SKIPPED'})
+                self._update_loading_bar(bar, 1)
+                continue
+
+            self.logger.info("[%s] Starting delegation alignment for: %s", zone_name, input_folder)
+
+            try:
+                # Delete existing XMP files
+                input_path = Path(input_folder)
+                deleted_xmp = self._RealityCaptureAlignment__delete_existing_xmp_files(input_path)
+
+                # Step 1: New scene
+                self.logger.info("[%s] Creating new scene", zone_name)
+                client.run_quick("New Scene", "-newScene")
+
+                # Step 2: Add images
+                self.logger.info("[%s] Adding images from %s", zone_name, input_folder)
+                client.delegate("-addFolder", input_folder)
+                client.wait_idle_two_phase("Add Images")
+
+                # Step 3: Import flight log
+                if flight_log_path and os.path.isfile(flight_log_path):
+                    self.logger.info("[%s] Importing flight log: %s", zone_name, flight_log_path)
+                    self._RealityCaptureAlignment__validate_flight_log(flight_log_path, input_folder)
+                    client.run_quick("Import Flight Log", "-importFlightLog", flight_log_path)
+                else:
+                    self.logger.warning("[%s] No flight log available", zone_name)
+
+                # Step 4: Align (the long operation — no timeout)
+                self.logger.info("[%s] Starting alignment (this may take hours)...", zone_name)
+                client.delegate("-align")
+                client.wait_idle_two_phase("Alignment")
+
+                # Step 5: Export XMP sidecars
+                self.logger.info("[%s] Exporting XMP sidecars", zone_name)
+                for xmp_cmd in [
+                    ("-set", "xmpCamera=3"),
+                    ("-set", "xmpMerge=true"),
+                    ("-set", "xmpRig=true"),
+                    ("-set", "xmpCalibGroups=true"),
+                    ("-set", "xmpFlags=true"),
+                    ("-set", "xmpExGps=true"),
+                ]:
+                    client.run_quick("Set XMP", *xmp_cmd)
+                client.run_quick("Export XMP", "-exportXMP")
+
+                xmp_count = self._RealityCaptureAlignment__count_xmp_files(input_path)
+
+                # Step 6: Export components
+                min_component_size = self.params.get('rc_min_component_size', Parameter('', '', '', int, 100)).get_value()
+                self.logger.info("[%s] Exporting components (min size: %d)", zone_name, min_component_size)
+
+                Path(output_dir).mkdir(parents=True, exist_ok=True)
+                client.run_quick("Set Min Component", "-setMinComponentSize", str(min_component_size))
+
+                export_path = output_dir + os.sep
+                client.delegate("-exportLatestComponents", export_path)
+                client.wait_idle_two_phase("Export Components")
+
+                # Wait for files to stabilize
+                try:
+                    stable_files = client.wait_for_stable_files(
+                        output_dir, "Component*.rsalign",
+                        min_stable_sec=5.0, timeout=120.0,
+                    )
+                except TimeoutError:
+                    stable_files = sorted(Path(output_dir).glob("Component*.rsalign"))
+
+                # Step 7: Rename components
+                utm_zone = self._RealityCaptureAlignment__detect_utm_zone_from_flight_log(
+                    flight_log_path
+                ) if flight_log_path else None
+
+                renamed_count = 0
+                for counter, comp_file in enumerate(sorted(Path(output_dir).glob("Component*.rsalign")), 1):
+                    if utm_zone:
+                        new_name = generate_filename(
+                            expedition, dive, utm_zone,
+                            zone_number=int(zone_name.replace('zone_', '')) if zone_name.startswith('zone_') else None,
+                            component=f"comp{counter:02d}",
+                            timestamp=datetime.now(),
+                            extension=".rsalign",
+                        )
+                    else:
+                        new_name = f"{expedition}_{dive}_{zone_name}_{timestamp}_{counter}.rsalign"
+
+                    new_path = Path(output_dir) / new_name
+                    if new_path.exists():
+                        new_path.unlink()
+                    comp_file.rename(new_path)
+                    renamed_count += 1
+                    self.logger.info("[%s] Renamed: %s -> %s", zone_name, comp_file.name, new_name)
+
+                # Save checkpoint
+                if checkpoint:
+                    completed_zones.append(zone_name)
+                    checkpoint.save_checkpoint("alignment", completed_zones, {
+                        "expedition": expedition,
+                        "dive": dive,
+                        "output_dir": output_dir,
+                    })
+
+                result = {
+                    'Success': True,
+                    'Component Count': renamed_count,
+                    'XMP Count': xmp_count,
+                    'XMP Deleted': deleted_xmp,
+                    'Zone': zone_name,
+                }
+                output_data['Zones'][zone_name] = result
+                output_data['Total XMP Deleted'] += deleted_xmp
+                output_data['Total XMP Created'] += xmp_count
+                zone_summary.append({
+                    'zone': zone_name,
+                    'components': renamed_count,
+                    'status': 'SUCCESS',
+                })
+
+            except TimeoutError as e:
+                self.logger.error("[%s] Timeout: %s", zone_name, e)
+                output_data['Zones'][zone_name] = {'Success': False, 'Error': str(e)}
+                zone_summary.append({'zone': zone_name, 'components': 0, 'status': 'TIMEOUT'})
+            except Exception as e:
+                self.logger.error("[%s] Error: %s", zone_name, e)
+                output_data['Zones'][zone_name] = {'Success': False, 'Error': str(e)}
+                zone_summary.append({'zone': zone_name, 'components': 0, 'status': 'FAILED'})
+
+            self._update_loading_bar(bar, 1)
+
+        # Summary
+        total_components = sum(z.get('Component Count', 0) for z in output_data['Zones'].values())
+        output_data['Total Components'] = total_components
+
+        self.logger.info("=" * 80)
+        self.logger.info("ALIGNMENT SUMMARY (Delegation Mode)")
+        self.logger.info("=" * 80)
+        self.logger.info("Expedition: %s | Dive: %s", expedition, dive)
+        header = f"{'Zone':<30} {'Components':<15} {'Status':<10}"
+        self.logger.info(header)
+        self.logger.info("-" * 60)
+        for item in zone_summary:
+            self.logger.info(f"{item['zone']:<30} {item['components']:<15} {item['status']:<10}")
+        self.logger.info("-" * 60)
+        self.logger.info(f"{'TOTAL':<30} {total_components:<15}")
+        self.logger.info("=" * 80)
+
+        return output_data
+
     def run(self):
         success, message = self.validate_parameters()
         if not success:
@@ -784,6 +1038,13 @@ class RealityCaptureAlignment(RCModule):
             'Total XMP Deleted': 0,
             'Total XMP Created': 0
         }
+
+        # Check for delegation mode
+        use_delegation = self.params.get('rc_use_delegation')
+        if use_delegation and use_delegation.get_value():
+            return self._run_delegation_mode(
+                realityscan_exe, process_data, expedition, dive, output_dir, timestamp,
+            )
 
         bar = self._initialize_loading_bar(len(process_data), "Aligning Zones")
 
