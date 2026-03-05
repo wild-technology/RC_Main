@@ -21,7 +21,7 @@ def load_camera_profiles(config_path: Optional[str | Path] = None) -> dict:
     path = Path(config_path) if config_path else _DEFAULT_PROFILES_PATH
     if not path.exists():
         raise FileNotFoundError(f"Camera profiles not found: {path}")
-    with open(path, "r") as f:
+    with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
     _log.info("Loaded %d camera profiles from %s", len(data.get("cameras", [])), path)
     return data
@@ -37,7 +37,9 @@ def detect_camera_type(filename: str) -> str:
     - Filenames containing 'HERC' or 'hercules' (case-insensitive) → 'zeuss'
     - Everything else → 'unknown'
     """
-    basename = Path(filename).stem.lower()
+    # Use PureWindowsPath to handle both Unix and Windows path separators
+    from pathlib import PureWindowsPath
+    basename = PureWindowsPath(filename).stem.lower()
 
     if basename.startswith("camupper"):
         return "camupper"

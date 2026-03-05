@@ -102,7 +102,7 @@ class RCDelegationClient:
                 timeout=timeout,
             )
             return result
-        except subprocess.SubprocessError as exc:
+        except (subprocess.SubprocessError, OSError) as exc:
             self._log.warning("Subprocess error for '%s': %s", cmd_str, exc)
             return subprocess.CompletedProcess(
                 args=cmd,
@@ -159,7 +159,8 @@ class RCDelegationClient:
         try:
             status = self.get_status()
             return bool(status.get("raw"))
-        except Exception:
+        except Exception as exc:
+            self._log.debug("verify_connection failed: %s", exc)
             return False
 
     def clear_queue(self) -> None:
@@ -187,7 +188,12 @@ class RCDelegationClient:
         (e.g. ``-selectComponent``, ``-renameSelectedModel``).
         """
         self._log.info("[%s] delegating: %s", operation_name, " ".join(args))
-        self.delegate(*args)
+        delegate_result = self.delegate(*args)
+        if delegate_result.returncode != 0:
+            self._log.warning(
+                "[%s] delegate command returned rc=%d: %s",
+                operation_name, delegate_result.returncode, delegate_result.stderr,
+            )
         result = self.wait_completed()
         self._log.info("[%s] completed (rc=%d)", operation_name, result.returncode)
         return result

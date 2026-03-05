@@ -123,8 +123,13 @@ class LogBackend(ProgressBackend):
 (file {index}/{total}) — {message}
     """
 
-    def __init__(self, log_level: int = logging.INFO) -> None:
-        self._log_level = log_level
+    def __init__(self, log_level_or_logger: int | logging.Logger = logging.INFO) -> None:
+        if isinstance(log_level_or_logger, logging.Logger):
+            self._logger = log_level_or_logger
+            self._log_level = logging.INFO
+        else:
+            self._logger = logger  # module-level logger
+            self._log_level = log_level_or_logger
         self._operation_name: str = ""
         self._total_steps: int = 0
         self._completed: int = 0
@@ -138,7 +143,7 @@ class LogBackend(ProgressBackend):
                 index_part = f" (file {event.file_index}/{event.file_total})"
             file_info = f" Processing: {event.current_file}{index_part}"
 
-        logger.log(
+        self._logger.log(
             self._log_level,
             "[%s] [%s]%s — %s",
             timestamp,
@@ -151,7 +156,7 @@ class LogBackend(ProgressBackend):
         self._operation_name = name
         self._total_steps = total_steps
         self._completed = 0
-        logger.log(
+        self._logger.log(
             self._log_level,
             "[%s] Starting operation: %s (%d steps)",
             time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -161,7 +166,7 @@ class LogBackend(ProgressBackend):
 
     def update(self, increment: int = 1) -> None:
         self._completed += increment
-        logger.log(
+        self._logger.log(
             self._log_level,
             "[%s] [%s] Step %d/%d",
             time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -171,7 +176,7 @@ class LogBackend(ProgressBackend):
         )
 
     def finish(self) -> None:
-        logger.log(
+        self._logger.log(
             self._log_level,
             "[%s] Finished operation: %s",
             time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -265,6 +270,12 @@ class ProgressReporter:
             self._completed += increment
             for backend in self._backends:
                 backend.update(increment)
+
+    def report_event(self, event: ProgressEvent) -> None:
+        """Fan out a pre-built :class:`ProgressEvent` directly to all backends."""
+        with self._lock:
+            for backend in self._backends:
+                backend.report(event)
 
     def report(self, message: str = "") -> None:
         """Build a :class:`ProgressEvent` from internal state and fan out."""

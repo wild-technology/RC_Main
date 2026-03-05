@@ -64,7 +64,7 @@ class SessionState:
             "step_outputs": self.step_outputs,
             "timestamp": datetime.now().isoformat(),
         }
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, default=str)
         _log.info("Session saved to %s", path)
 
@@ -73,7 +73,7 @@ class SessionState:
         path = Path(path)
         if not path.exists():
             raise FileNotFoundError(f"Session file not found: {path}")
-        with open(path, "r") as f:
+        with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         self.expedition = data.get("expedition", "")
         self.dive = data.get("dive", "")
@@ -116,7 +116,7 @@ class CheckpointManager:
             "metadata": metadata or {},
             "timestamp": datetime.now().isoformat(),
         }
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, default=str)
         _log.debug("Checkpoint saved for '%s': %d items", operation, len(completed_items))
 
@@ -125,7 +125,7 @@ class CheckpointManager:
         path = self._checkpoint_path(operation)
         if not path.exists():
             return None
-        with open(path, "r") as f:
+        with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         _log.info(
             "Checkpoint loaded for '%s': %d completed items",

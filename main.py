@@ -5,28 +5,6 @@ import sys
 import logging
 import argparse
 import os
-import inquirer
-import os
-import csv
-from datetime import datetime, timedelta
-from PIL import Image
-import utm
-import math
-import os
-import shutil
-import numpy as np
-import pandas as pd
-import geopandas as gpd
-from sklearn.cluster import KMeans
-from sklearn.neighbors import KernelDensity
-from scipy.spatial import cKDTree, ConvexHull
-from shapely.geometry import Point
-from sklearn.preprocessing import StandardScaler
-import matplotlib
-import matplotlib.pyplot as plt
-import seaborn as sns
-import warnings
-import glob
 from typing import Optional, List
 
 from module_base.parameter import Parameter
@@ -253,7 +231,9 @@ def parse_arguments(argv, params, logger) -> None:
                 # Strip surrounding quotes if present
                 if inp and inp[0] in ('"', "'") and inp[-1] == inp[0]:
                     inp = inp[1:-1]
-                if p.get_type() is bool:
+                if not inp:
+                    val = p.get_default_value()
+                elif p.get_type() is bool:
                     val = inp.lower() in ('true', 't', 'yes', 'y')
                 else:
                     val = p.get_type()(inp)
@@ -430,7 +410,7 @@ def main(argv) -> None:
             _save_session(session, params, logger)
             return
 
-        if isinstance(out, dict) and out.get('Success') == False:
+        if isinstance(out, dict) and out.get('Success') is False:
             logger.error(f"Module {mod.get_name()} reported failure")
             _save_session(session, params, logger)
             return
@@ -448,7 +428,8 @@ def main(argv) -> None:
         session.mark_step_complete(name, serializable_out)
         _save_session(session, params, logger)
 
-        if not params['continue_automatically'].get_value() and idx < len(module_names) - 1:
+        no_interactive = os.environ.get('RC_NO_INTERACTIVE', '').strip().lower() in ('1', 'true', 'yes', 'y')
+        if not no_interactive and not params['continue_automatically'].get_value() and idx < len(module_names) - 1:
             input("Press enter to continue...")
 
     logger.info("Output Data:")

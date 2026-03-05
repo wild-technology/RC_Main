@@ -75,11 +75,14 @@ class RCModule(abc.ABC):
 
     def validate_parameters(self) -> tuple[bool, str | None]:
         """
-        Validate all parameters with constraints (min/max, choices).
+        Validate this module's own parameters with constraints (min/max, choices).
         Subclasses should call super().validate_parameters() first,
         then add their own validation.
         """
-        for param in self.params.values():
+        own_param_names = set(self.get_parameters().keys())
+        for name, param in self.params.items():
+            if name not in own_param_names:
+                continue
             if hasattr(param, 'validate'):
                 valid, msg = param.validate()
                 if not valid:
@@ -115,7 +118,7 @@ class RCModule(abc.ABC):
                 file_index=file_index,
                 file_total=file_total,
             )
-            self._progress_reporter.report(event)
+            self._progress_reporter.report_event(event)
 
     def _log_file_processing(
         self,
@@ -159,5 +162,6 @@ class RCModule(abc.ABC):
     def get_progress(self) -> float:
         if not self.loading_bars:
             return 0.0
-        total = sum(bar.n / bar.total for bar in self.loading_bars)
-        return total / len(self.loading_bars)
+        total = sum(bar.n / bar.total for bar in self.loading_bars if bar.total > 0)
+        active_bars = sum(1 for bar in self.loading_bars if bar.total > 0)
+        return total / active_bars if active_bars > 0 else 0.0
