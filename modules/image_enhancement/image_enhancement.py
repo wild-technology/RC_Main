@@ -25,7 +25,6 @@ import numpy as np
 
 from module_base.parameter import Parameter
 from module_base.rc_module import RCModule
-from modules.rc_common.naming import generate_filename
 
 _log = logging.getLogger(__name__)
 

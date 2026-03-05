@@ -910,3 +910,93 @@ class TestResourceSafety:
         s2 = SessionState()
         s2.load(path)
         assert s2.expedition == "original"
+
+
+# ---------------------------------------------------------------------------
+# Precomputed alignment import tests
+# ---------------------------------------------------------------------------
+
+
+class TestPrecomputedAlignmentImport:
+    """Tests for the optional precomputed .rsalign import feature."""
+
+    def _make_module(self):
+        from modules.realitycapture_interface.realitycapture_interface import RealityCaptureAlignment
+        mod = RealityCaptureAlignment(logging.getLogger("test_precomputed"))
+        return mod
+
+    def test_import_finds_matching_files(self, tmp_path):
+        """When .rsalign files exist in precomputed dir, they are copied to output."""
+        mod = self._make_module()
+        pre_dir = tmp_path / "precomputed"
+        pre_dir.mkdir()
+        out_dir = tmp_path / "output"
+
+        # Create fake .rsalign files
+        (pre_dir / "zone_1_comp1.rsalign").write_text("alignment data 1")
+        (pre_dir / "zone_1_comp2.rsalign").write_text("alignment data 2")
+        (pre_dir / "unrelated.rsalign").write_text("other data")
+
+        result = mod._RealityCaptureAlignment__import_precomputed_alignments(
+            str(pre_dir), "zone_1", str(out_dir), "EX2501", "H001", "20250705_1200",
+        )
+
+        assert result is not None
+        assert result['Success'] is True
+        assert result['Precomputed'] is True
+        assert result['Component Count'] == 2  # Only zone_1 matches
+        assert (out_dir / "EX2501_H001_zone_1_20250705_1200_1.rsalign").exists()
+        assert (out_dir / "EX2501_H001_zone_1_20250705_1200_2.rsalign").exists()
+
+    def test_import_returns_none_when_no_match(self, tmp_path):
+        """When no .rsalign files match the zone, returns None (proceed with alignment)."""
+        mod = self._make_module()
+        pre_dir = tmp_path / "precomputed"
+        pre_dir.mkdir()
+
+        # No .rsalign files at all
+        result = mod._RealityCaptureAlignment__import_precomputed_alignments(
+            str(pre_dir), "zone_1", str(tmp_path / "out"), "EX", "D", "ts",
+        )
+        assert result is None
+
+    def test_import_returns_none_for_nonexistent_dir(self, tmp_path):
+        """Returns None when precomputed dir doesn't exist."""
+        mod = self._make_module()
+        result = mod._RealityCaptureAlignment__import_precomputed_alignments(
+            str(tmp_path / "nonexistent"), "zone_1", str(tmp_path / "out"), "EX", "D", "ts",
+        )
+        assert result is None
+
+    def test_import_uses_subdirectory_match(self, tmp_path):
+        """When a subdirectory matches the zone name, use files from it."""
+        mod = self._make_module()
+        pre_dir = tmp_path / "precomputed"
+        zone_sub = pre_dir / "zone_3"
+        zone_sub.mkdir(parents=True)
+
+        (zone_sub / "Component_001.rsalign").write_text("data")
+        (zone_sub / "Component_002.rsalign").write_text("data")
+
+        result = mod._RealityCaptureAlignment__import_precomputed_alignments(
+            str(pre_dir), "zone_3", str(tmp_path / "output"), "EX", "D", "ts",
+        )
+
+        assert result is not None
+        assert result['Component Count'] == 2
+
+    def test_import_fallback_all_files(self, tmp_path):
+        """When no zone match, all .rsalign files are used as fallback."""
+        mod = self._make_module()
+        pre_dir = tmp_path / "precomputed"
+        pre_dir.mkdir()
+
+        (pre_dir / "Component_001.rsalign").write_text("data")
+        (pre_dir / "Component_002.rsalign").write_text("data")
+
+        result = mod._RealityCaptureAlignment__import_precomputed_alignments(
+            str(pre_dir), "some_zone", str(tmp_path / "output"), "EX", "D", "ts",
+        )
+
+        assert result is not None
+        assert result['Component Count'] == 2

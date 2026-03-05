@@ -13,8 +13,7 @@ RC_Main is a Python pipeline for ROV (Remotely Operated Vehicle) underwater phot
 - **module_base/parameter.py** — Parameter system with CLI args, types, defaults, prompts.
 - **modules/** — Individual pipeline modules (each is an RCModule subclass).
 - **modules/rc_common/** — Shared infrastructure: delegation client, status parser, progress system, camera utilities.
-- **StandaloneUtilities/** — Legacy standalone scripts being integrated into main codestack.
-- **AlignmentBatcher/** — Evolved standalone alignment/model generation scripts.
+- **legacy/** — Archived standalone scripts (predecessors to current modules, kept for reference).
 - **config/** — Configuration files (camera profiles, XML parameter templates).
 - **gui/** — PySide6 GUI (planned).
 - **tests/** — Test suite with fixtures.
