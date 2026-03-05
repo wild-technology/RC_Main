@@ -38,6 +38,7 @@ from modules.realitycapture_interface.realitycapture_interface import RealityCap
 from modules.image_enhancement.image_enhancement import ImageEnhancement
 from modules.camera_setup.camera_setup import CameraSetup
 from modules.component_export.component_export import ComponentExport
+from modules.model_generation.model_generation import ModelGeneration
 
 def initialize_logger() -> logging.Logger:
     logging.basicConfig(level=logging.INFO)
@@ -59,6 +60,7 @@ def initialize_modules(logger) -> dict[str, RCModule]:
         'Camera Setup': CameraSetup(logger),
         'RealityCapture Alignment': RealityCaptureAlignment(logger),
         'Component Export': ComponentExport(logger),
+        'Model Generation': ModelGeneration(logger),
     }
 
     # Non-interactive selection via environment
