@@ -42,6 +42,12 @@ class StatsTable(QWidget):
             self._table.setItem(row, 0, QTableWidgetItem(str(key)))
             self._table.setItem(row, 1, QTableWidgetItem(str(value)))
 
+    # Alias for backward compatibility
+    set_stats = set_data
+
     def clear_data(self) -> None:
         """Clear all rows."""
         self._table.setRowCount(0)
+
+    # Alias for backward compatibility
+    clear_stats = clear_data
