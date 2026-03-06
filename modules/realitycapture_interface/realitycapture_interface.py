@@ -363,34 +363,31 @@ class RealityCaptureAlignment(RCModule):
         """
         Detect UTM zone / hemisphere from flight log filename.
 
-        Supports both naming conventions:
-            - New: flight_log_{expedition}_{dive}_{N|S}.txt  → hemisphere only (e.g. "N")
-            - Legacy: flight_log_{zone}{band}_UTM.txt        → zone + hemisphere (e.g. "57N")
+        Supports naming conventions:
+            - Current: flight_log_{exp}_{dive}_UTM{zone}{N|S}.txt  → e.g. "57N"
+            - Legacy:  flight_log_{zone}{band}_UTM.txt             → e.g. "57N"
 
         Returns:
-            Hemisphere or zone string (e.g., "N", "S", "17S", "57N") or None
+            Zone+hemisphere string (e.g., "57N", "17S") or None
         """
         filename = os.path.basename(flight_log_path)
-        stem = os.path.splitext(filename)[0]  # e.g. "flight_log_NA173_H2102_N"
 
-        # New naming: last part of stem is exactly "N" or "S"
-        last_part = stem.rsplit('_', 1)[-1] if '_' in stem else ''
-        if last_part in ('N', 'S'):
-            self.logger.info(f"Detected hemisphere from filename: {last_part}")
-            return last_part
+        # Current naming: ...UTM{zone}{hemisphere}.txt  e.g. flight_log_NA173_H2103a_UTM57N.txt
+        match = re.search(r'UTM(\d{1,2})([NS])', filename, re.IGNORECASE)
+        if match:
+            zone_num = match.group(1)
+            hemisphere = match.group(2).upper()
+            zone_str = f"{zone_num}{hemisphere}"
+            self.logger.info(f"Detected UTM zone from filename: {zone_str}")
+            return zone_str
 
-        # Legacy naming: flight_log_{zone}{band}_UTM
-        match = re.search(r'flight_log_(\d{1,2})([A-Z])_UTM', filename, re.IGNORECASE)
-        if not match:
-            match = re.search(r'(\d{1,2})([A-Z])_UTM', filename, re.IGNORECASE)
-
+        # Legacy naming: flight_log_{zone}{band}_UTM  e.g. flight_log_57L_UTM.txt
+        match = re.search(r'(\d{1,2})([A-Z])_UTM', filename, re.IGNORECASE)
         if match:
             zone_num = match.group(1)
             band_letter = match.group(2).upper()
-
             hemisphere = 'S' if band_letter < 'N' else 'N'
             zone_str = f"{zone_num}{hemisphere}"
-
             self.logger.info(
                 f"Detected UTM zone from filename: {zone_str} "
                 f"(zone {zone_num}, latitude band {band_letter})"
@@ -399,7 +396,7 @@ class RealityCaptureAlignment(RCModule):
 
         self.logger.warning(
             f"Could not detect UTM zone from filename: {filename}. "
-            f"Expected format: flight_log_{{exp}}_{{dive}}_{{N|S}}.txt or flight_log_<ZONE><BAND>_UTM.txt"
+            f"Expected: ..._UTM<zone><N|S>.txt or ..._<zone><band>_UTM.txt"
         )
         return None
 

@@ -101,6 +101,18 @@ class GeoreferenceImages(RCModule):
         zone_letter = self.utm_zone[-1].upper()
         return "N" if zone_letter >= "N" else "S"
 
+    def _get_utm_suffix(self) -> str | None:
+        """Return a UTM suffix like 'UTM57N' from the detected zone.
+
+        Combines the zone number with the hemisphere letter.
+        Returns None if no UTM zone has been detected yet.
+        """
+        if not self.utm_zone:
+            return None
+        zone_number = self.utm_zone[:-1]
+        hemisphere = self._get_hemisphere()
+        return f"UTM{zone_number}{hemisphere}"
+
     @staticmethod
     def _wrap180(angle_deg: float) -> float:
         """Wrap angle to [-180, 180] range."""
@@ -811,15 +823,15 @@ class GeoreferenceImages(RCModule):
                     "FOCAL_LENGTH": focal_length
                 })
 
-            # Generate output path with expedition_dive_hemisphere naming
+            # Generate output path with expedition_dive_UTM{zone}{hemisphere} naming
             project_title = self.__get_project_title()
-            hemisphere = self._get_hemisphere()
-            if project_title and hemisphere:
-                output_path = os.path.join(input_dir, f"flight_log_{project_title}_{hemisphere}.txt")
+            utm_suffix = self._get_utm_suffix()
+            if project_title and utm_suffix:
+                output_path = os.path.join(input_dir, f"flight_log_{project_title}_{utm_suffix}.txt")
             elif project_title:
                 output_path = os.path.join(input_dir, f"flight_log_{project_title}.txt")
-            elif hemisphere:
-                output_path = os.path.join(input_dir, f"flight_log_{hemisphere}.txt")
+            elif utm_suffix:
+                output_path = os.path.join(input_dir, f"flight_log_{utm_suffix}.txt")
             else:
                 output_path = os.path.join(input_dir, "flight_log.txt")
 
