@@ -699,7 +699,7 @@ class GeoreferenceImages(RCModule):
         with open(output_path, 'w', encoding='utf-8') as f:
             # Write header
             f.write(
-                "filename;X (East);Y (North);Alt;X Accuracy;Y Accuracy;Alt Accuracy;Yaw;Pitch;Roll;Yaw Accuracy;Pitch Accuracy;Roll Accuracy;FocalLength\n")
+                "filename;X (East);Y (North);Alt;X Accuracy;Y Accuracy;Alt Accuracy;Yaw;Pitch;Roll;Yaw Accuracy;Pitch Accuracy;Roll Accuracy\n")
 
             # Write data for all accepted images
             for image in accepted_images:
@@ -728,10 +728,7 @@ class GeoreferenceImages(RCModule):
                 pitch_acc = image.get("PITCH_ACC", 5.0)
                 roll_acc = image.get("ROLL_ACC", 3.0)
 
-                # Extract focal length
-                focal_length = image.get("FOCAL_LENGTH", 15.0)
-
-                # Build line
+                # Build line (13 columns matching RC format GUID {B438A617...})
                 line = ";".join([
                     flight_log_name,
                     fmt(utm_x),
@@ -745,8 +742,7 @@ class GeoreferenceImages(RCModule):
                     fmt(rc_roll),
                     fmt(yaw_acc),
                     fmt(pitch_acc),
-                    fmt(roll_acc),
-                    fmt(focal_length)
+                    fmt(roll_acc)
                 ])
 
                 f.write(line + "\n")

@@ -8,6 +8,7 @@ import os
 import shutil
 import re
 import csv
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
@@ -400,6 +401,67 @@ class RealityCaptureAlignment(RCModule):
         )
         return None
 
+    def __get_flight_log_params_xml(self) -> Optional[str]:
+        """Return path to FlightLogParams.xml in the RC_CLI/Metadata directory."""
+        module_dir = os.path.dirname(os.path.abspath(__file__))
+        xml_path = os.path.join(module_dir, "RC_CLI", "Metadata", "FlightLogParams.xml")
+        if os.path.isfile(xml_path):
+            return xml_path
+        return None
+
+    def __update_flight_log_params_xml(self, utm_zone_str: str) -> Optional[str]:
+        """
+        Rewrite FlightLogParams.xml with the correct UTM zone PROJ string.
+
+        Args:
+            utm_zone_str: Zone+hemisphere string, e.g. "57N" or "17S"
+
+        Returns:
+            Path to the updated XML, or None on failure
+        """
+        xml_path = self.__get_flight_log_params_xml()
+        if not xml_path:
+            self.logger.warning("FlightLogParams.xml not found, skipping coordinate system update")
+            return None
+
+        try:
+            # Parse zone number and hemisphere from e.g. "57N"
+            match = re.match(r'^(\d{1,2})([NS])$', utm_zone_str)
+            if not match:
+                self.logger.warning(f"Cannot parse UTM zone string '{utm_zone_str}', skipping XML update")
+                return None
+
+            zone_number = int(match.group(1))
+            hemisphere = match.group(2)
+
+            # Build PROJ4 string
+            proj_str = f"+proj=utm +zone={zone_number} +datum=WGS84 +units=m +no_defs"
+            if hemisphere == 'S':
+                proj_str = f"+proj=utm +zone={zone_number} +south +datum=WGS84 +units=m +no_defs"
+
+            # Build EPSG code and description
+            epsg_code = (32600 + zone_number) if hemisphere == 'N' else (32700 + zone_number)
+            epsg_str = f"epsg:{epsg_code} - WGS 84 / UTM zone {zone_number}{hemisphere}"
+
+            # Update XML
+            tree = ET.parse(xml_path)
+            root = tree.getroot()
+            for entry in root.findall("entry"):
+                key = entry.get("key")
+                if key == "CoordinateSystemFlightLog":
+                    entry.set("value", proj_str)
+                elif key == "CoordinateSystemFlightLogType":
+                    entry.set("value", epsg_str)
+
+            tree.write(xml_path, encoding="unicode", xml_declaration=False)
+
+            self.logger.info(f"Updated FlightLogParams.xml: {epsg_str}")
+            return xml_path
+
+        except Exception as e:
+            self.logger.error(f"Failed to update FlightLogParams.xml: {e}")
+            return None
+
     def __get_flight_log_path(self, zone_path: Optional[str] = None) -> Optional[str]:
         """
         Resolve the most appropriate flight log path.
@@ -600,8 +662,14 @@ class RealityCaptureAlignment(RCModule):
             utm_zone = self.__detect_utm_zone_from_flight_log(flight_log_path)
             if utm_zone:
                 self.logger.info(f"  UTM Zone: {utm_zone}")
+                params_xml = self.__update_flight_log_params_xml(utm_zone)
+            else:
+                params_xml = self.__get_flight_log_params_xml()
 
-            command.extend(["-importFlightLog", flight_log_path])
+            import_args = ["-importFlightLog", flight_log_path]
+            if params_xml:
+                import_args.append(params_xml)
+            command.extend(import_args)
         else:
             self.logger.warning("  No flight log - alignment will use image metadata only")
 
@@ -911,7 +979,17 @@ class RealityCaptureAlignment(RCModule):
                 if flight_log_path and os.path.isfile(flight_log_path):
                     self.logger.info("[%s] Importing flight log: %s", zone_name, flight_log_path)
                     self._RealityCaptureAlignment__validate_flight_log(flight_log_path, input_folder)
-                    client.run_quick("Import Flight Log", "-importFlightLog", flight_log_path)
+
+                    utm_zone_deleg = self._RealityCaptureAlignment__detect_utm_zone_from_flight_log(flight_log_path)
+                    if utm_zone_deleg:
+                        params_xml = self._RealityCaptureAlignment__update_flight_log_params_xml(utm_zone_deleg)
+                    else:
+                        params_xml = self._RealityCaptureAlignment__get_flight_log_params_xml()
+
+                    import_args = ["-importFlightLog", flight_log_path]
+                    if params_xml:
+                        import_args.append(params_xml)
+                    client.run_quick("Import Flight Log", *import_args)
                 else:
                     self.logger.warning("[%s] No flight log available", zone_name)
 
