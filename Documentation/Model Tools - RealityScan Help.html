@@ -1,0 +1,1990 @@
+<!DOCTYPE html>
+<!-- saved from url=(0069)https://rshelp.capturingreality.com/en-US/tutorials/commandline_3.htm -->
+<html lang="en" class="epic-wf"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	    <script>
+            window._epicEnableCookieGuard = true;
+            window._epicTrackingCookieDomainId = "7c727b26-cedc-4409-87d1-5077acb3298b";
+            window.__tracking_base = "https://tracking.epicgames.com";
+        </script>
+        <script src="./Model Tools - RealityScan Help_files/tracking.js.download" async=""></script>
+		<script type="module" crossorigin="anonymous" src="./Model Tools - RealityScan Help_files/realitycapture-navigation.mjs"></script>
+        <script src="./Model Tools - RealityScan Help_files/realitycapture-footer.mjs" async="true" type="module" crossorigin="anonymous" data-nscript="afterInteractive"></script>
+    <title>Model Tools - RealityScan Help</title>
+    
+    <meta name="author" content="Epic Games Slovakia s.r.o.">
+    <meta http-equiv="X-UA-Compatible" content="IE=10">
+    <link type="text/css" rel="stylesheet" href="./Model Tools - RealityScan Help_files/style.css">
+    <link type="text/css" rel="stylesheet" href="./Model Tools - RealityScan Help_files/colors.css">
+    <link type="text/css" rel="stylesheet" href="./Model Tools - RealityScan Help_files/flagStyles.css">
+    <script src="./Model Tools - RealityScan Help_files/textVars.js.download" type="text/javascript"></script>
+    <script src="./Model Tools - RealityScan Help_files/localization.js.download" type="text/javascript"></script>
+    <script src="./Model Tools - RealityScan Help_files/main.js.download" type="text/javascript"></script>
+</head>
+    <body>
+        <realitycapture-navigation id="header" disablelocale="true" disablesearch="true" displayname="" isloggedin="false" domain="https://www.realityscan.com" locale="en-US" signinlinkhref="https://www.capturingreality.com/my" signoutlinkhref="https://www.capturingreality.com/auth.sign.out" sticky=""><template shadowrootmode="open"><!---->
+			<!--?lit$181435105$--><link rel="preload" fetchpriority="high" as="image" href="https://cms-assets.unrealengine.com/AVzjeqAbLRKi3W5jq0CAvz/cmb81xhqb3trt07mz6d8e3ktp">
+			<!--?lit$181435105$-->
+
+			<header data-mobile-drawer-has-opened="false" data-mobile-drawer-has-closed="true" id="global-header" class="global-header " data-dropdown-open="false" data-flyout-open="false" data-mobile-cta-hidden="false" data-mobile-top-cta="false" data-mobile-drawer-open="false" data-mobile-subdrawer-open="false" data-search-open="false" data-property-logo-valid="true" data-property-logo-icon-valid="true" style="">
+				<div class="bg-filter"></div>
+				<!--?lit$181435105$-->
+		<div class="global-header__flyout-wrapper hide-in-drawer">
+			<epic-wf-nav-flyout-menu active="false"><template shadowrootmode="open"><!---->
+			<button aria-controls="nav-flyout-menu" aria-haspopup="true" id="nav-flyout-toggle" aria-expanded="false" aria-label="Epic Ecosystem Dropdown" class="nav-flyout-toggle ">
+				<epic-wf-shield aria-hidden="true"><template shadowrootmode="open"><!----> <!--?lit$250123881$--><svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" fill="none" viewBox="0 0 32 32">
+  <path fill="#fff" d="M26.439 1.25c1.712 0 2.336.623 2.336 2.31v20.56c0 .265-.047.74-.133.944-.087.205-.167.371-.327.52-.164.153-.45.312-.587.375l-11.067 4.657a1.686 1.686 0 0 1-1.322 0L4.273 25.961a2.624 2.624 0 0 1-.586-.376c-.16-.149-.24-.315-.327-.519-.086-.203-.133-.68-.133-.944V3.56c0-1.687.624-2.31 2.336-2.31h20.875ZM11.845 26.07a.097.097 0 0 0-.029.019.096.096 0 0 0-.02.028.103.103 0 0 0-.007.035.09.09 0 0 0 .007.037.098.098 0 0 0 .049.046l4.007 1.7a.358.358 0 0 0 .28 0l4.038-1.7a.08.08 0 0 0 .028-.018.093.093 0 0 0 .02-.028.106.106 0 0 0 .007-.037.087.087 0 0 0-.027-.063.083.083 0 0 0-.063-.026H11.88a.089.089 0 0 0-.035.006ZM8.7 18.901c-.267 0-.516.046-.745.137-.23.092-.427.218-.593.38a1.79 1.79 0 0 0-.388.565c-.095.215-.141.45-.141.7v.011c0 .258.047.496.143.712.095.217.228.404.396.56.17.158.368.28.598.368.23.088.48.132.75.132.318 0 .602-.051.853-.152a2.54 2.54 0 0 0 .654-.378v-1.543H8.632v.698h.683v.416a.998.998 0 0 1-.554.141.992.992 0 0 1-.38-.07.874.874 0 0 1-.492-.498 1.03 1.03 0 0 1-.07-.382v-.01a.973.973 0 0 1 .257-.666.837.837 0 0 1 .629-.274c.172 0 .324.027.454.083.13.055.259.135.384.24l.565-.67a2.195 2.195 0 0 0-.612-.368 2.178 2.178 0 0 0-.796-.132Zm14.96.007a1.83 1.83 0 0 0-.561.081 1.281 1.281 0 0 0-.423.229.978.978 0 0 0-.268.347 1.054 1.054 0 0 0-.092.44v.012c0 .175.034.324.102.443.068.119.16.219.278.299.118.08.256.145.414.196.158.05.33.096.515.139.12.026.215.051.29.076.073.024.133.05.178.076a.254.254 0 0 1 .092.08c.016.027.025.06.025.096v.01a.193.193 0 0 1-.103.173.574.574 0 0 1-.293.062c-.404 0-.779-.138-1.125-.412l-.536.633c.215.189.463.33.742.425.278.095.573.142.883.142.212 0 .404-.024.576-.075.172-.051.319-.125.44-.22.123-.097.218-.214.286-.351.068-.137.102-.295.102-.471v-.01a.89.89 0 0 0-.09-.414.826.826 0 0 0-.257-.297 1.658 1.658 0 0 0-.41-.208 4.235 4.235 0 0 0-.537-.15 3.63 3.63 0 0 1-.294-.075 1.016 1.016 0 0 1-.184-.074.25.25 0 0 1-.095-.08.19.19 0 0 1-.027-.102v-.011c0-.062.03-.114.087-.156a.441.441 0 0 1 .26-.065c.155 0 .316.03.483.087.167.058.33.14.488.252l.48-.67a2.007 2.007 0 0 0-.63-.342 2.524 2.524 0 0 0-.797-.115Zm-13.127 3.486h1.012l.248-.614h1.338l.253.614h1.031l-1.477-3.455h-.927l-1.478 3.454Zm4.219 0h.941v-1.96l.883 1.332h.02l.887-1.342v1.97h.956v-3.43h-1.015l-.83 1.328-.826-1.327h-1.016v3.428Zm4.33 0h2.814v-.808h-1.863v-.544h1.665v-.75h-1.665v-.519h1.84v-.808h-2.791v3.428Zm-6.23-1.353h-.778l.39-.975.388.975Zm9.275-16.19c-1.42 0-2.123.695-2.123 2.101v7.305c0 1.406.703 2.1 2.124 2.1h.865c1.42 0 2.123-.695 2.123-2.1v-2.635h-1.715v2.554c0 .452-.212.662-.653.662h-.326c-.457 0-.67-.21-.67-.662V7.034c0-.453.212-.663.67-.663h.294c.44 0 .652.21.652.663v2.213h1.715v-2.31c0-1.406-.686-2.085-2.106-2.085h-.85Zm-15.21 11.41h3.919v-1.568H8.664v-3.409h2.058V9.717H8.664v-3.2h2.139V4.95H6.917v11.312Zm4.763 0h1.747v-4.105h.996c1.42 0 2.123-.694 2.123-2.1V7.05c0-1.407-.702-2.1-2.123-2.1H11.68v11.31ZM17.334 4.95v11.312h1.747V4.95h-1.747Zm-3.19 1.519c.441 0 .654.21.654.662v2.845c0 .452-.212.663-.653.663h-.718v-4.17h.718Z"></path>
+</svg>
+ </template></epic-wf-shield>
+				<!--?lit$250123881$--><span aria-hidden="true" class="icon"><!--?lit$250123881$--><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <path fill-rule="evenodd" d="M19.53 8.97a.75.75 0 0 1 0 1.06L12 17.56l-7.53-7.53a.75.75 0 1 1 1.06-1.06L12 15.44l6.47-6.47a.75.75 0 0 1 1.06 0" clip-rule="evenodd"></path>
+</svg>
+</span>
+			</button>
+			<slot></slot>
+			<div class="nav-flyout-header">
+				<button aria-controls="nav-flyout-menu" class="nav-flyout-toggle nav-flyout-close" id="nav-flyout-close" aria-expanded="false" aria-label="Epic Ecosystem Dropdown">
+					<!--?lit$250123881$--><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <path fill-rule="evenodd" d="M4.47 4.47a.75.75 0 0 1 1.06 0L12 10.94l6.47-6.47a.75.75 0 1 1 1.06 1.06L13.06 12l6.47 6.47a.75.75 0 1 1-1.06 1.06L12 13.06l-6.47 6.47a.75.75 0 0 1-1.06-1.06L10.94 12 4.47 5.53a.75.75 0 0 1 0-1.06" clip-rule="evenodd"></path>
+</svg>
+
+				</button>
+			</div>
+			<ul aria-labelledby="nav-flyout-toggle" id="nav-flyout-menu" role="menu" class="nav-flyout-menu ">
+				<li class="menu-heading"><h2><!--?lit$250123881$-->Epic Games</h2></li>
+				<!--?lit$250123881$--><!---->
+						<li class="nav-flyout-menu__section" role="none" data-flyout-section="0">
+							<h3 class="nav-flyout-menu__headline" id="Play">
+								<!--?lit$250123881$-->Play
+							</h3>
+							<ul class="nav-flyout-menu__list" role="menu" aria-labelledby="Play">
+								<!--?lit$250123881$--><!---->
+										<li class="nav-flyout-menu__list-item" role="none">
+											<a role="menuitem" href="https://www.fortnite.com/?lang=en-US">
+												<div class="logo" style="
+										mask-image: url(https://cms-assets.unrealengine.com/AVzjeqAbLRKi3W5jq0CAvz/cmb81xhrr3wmp07o53dbxkm7q);
+										-webkit-mask-image: url(https://cms-assets.unrealengine.com/AVzjeqAbLRKi3W5jq0CAvz/cmb81xhrr3wmp07o53dbxkm7q);
+									"></div>
+												<span class="label"><!--?lit$250123881$-->Fortnite</span>
+											</a>
+										</li>
+									<!----><!---->
+										<li class="nav-flyout-menu__list-item" role="none">
+											<a role="menuitem" href="https://www.rocketleague.com/?lang=en">
+												<div class="logo" style="
+										mask-image: url(https://cms-assets.unrealengine.com/AVzjeqAbLRKi3W5jq0CAvz/cmb81xhpu3wls07o5g6joe4ag);
+										-webkit-mask-image: url(https://cms-assets.unrealengine.com/AVzjeqAbLRKi3W5jq0CAvz/cmb81xhpu3wls07o5g6joe4ag);
+									"></div>
+												<span class="label"><!--?lit$250123881$-->Rocket League</span>
+											</a>
+										</li>
+									<!----><!---->
+										<li class="nav-flyout-menu__list-item" role="none">
+											<a role="menuitem" href="https://fallguys.com/?lang=en-US">
+												<div class="logo" style="
+										mask-image: url(https://cms-assets.unrealengine.com/AVzjeqAbLRKi3W5jq0CAvz/cmb81xho03tqx07mzwb57nha7);
+										-webkit-mask-image: url(https://cms-assets.unrealengine.com/AVzjeqAbLRKi3W5jq0CAvz/cmb81xho03tqx07mzwb57nha7);
+									"></div>
+												<span class="label"><!--?lit$250123881$-->Fall Guys</span>
+											</a>
+										</li>
+									<!---->
+							</ul>
+						</li>
+					<!----><!---->
+						<li class="nav-flyout-menu__section" role="none" data-flyout-section="1">
+							<h3 class="nav-flyout-menu__headline" id="Discover">
+								<!--?lit$250123881$-->Discover
+							</h3>
+							<ul class="nav-flyout-menu__list" role="menu" aria-labelledby="Discover">
+								<!--?lit$250123881$--><!---->
+										<li class="nav-flyout-menu__list-item" role="none">
+											<a role="menuitem" href="https://store.epicgames.com/en-US/">
+												<div class="logo" style="
+										mask-image: url(https://cms-assets.unrealengine.com/AVzjeqAbLRKi3W5jq0CAvz/cmb81xhxk3ttl07mzk4qbhiy1);
+										-webkit-mask-image: url(https://cms-assets.unrealengine.com/AVzjeqAbLRKi3W5jq0CAvz/cmb81xhxk3ttl07mzk4qbhiy1);
+									"></div>
+												<span class="label"><!--?lit$250123881$-->Epic Games Store</span>
+											</a>
+										</li>
+									<!----><!---->
+										<li class="nav-flyout-menu__list-item" role="none">
+											<a role="menuitem" href="https://www.fab.com/en-US/">
+												<div class="logo" style="
+										mask-image: url(https://cms-assets.unrealengine.com/AVzjeqAbLRKi3W5jq0CAvz/cmb81xhp63wlm07o59mtdawan);
+										-webkit-mask-image: url(https://cms-assets.unrealengine.com/AVzjeqAbLRKi3W5jq0CAvz/cmb81xhp63wlm07o59mtdawan);
+									"></div>
+												<span class="label"><!--?lit$250123881$-->Fab</span>
+											</a>
+										</li>
+									<!----><!---->
+										<li class="nav-flyout-menu__list-item" role="none">
+											<a role="menuitem" href="https://sketchfab.com/">
+												<div class="logo" style="
+										mask-image: url(https://cms-assets.unrealengine.com/AVzjeqAbLRKi3W5jq0CAvz/cmb81xhrd3wm907o5ut7srvf8);
+										-webkit-mask-image: url(https://cms-assets.unrealengine.com/AVzjeqAbLRKi3W5jq0CAvz/cmb81xhrd3wm907o5ut7srvf8);
+									"></div>
+												<span class="label"><!--?lit$250123881$-->Sketchfab</span>
+											</a>
+										</li>
+									<!----><!---->
+										<li class="nav-flyout-menu__list-item" role="none">
+											<a role="menuitem" href="https://www.artstation.com/">
+												<div class="logo" style="
+										mask-image: url(https://cms-assets.unrealengine.com/AVzjeqAbLRKi3W5jq0CAvz/cmb81xhv53tta07mziqwq81xo);
+										-webkit-mask-image: url(https://cms-assets.unrealengine.com/AVzjeqAbLRKi3W5jq0CAvz/cmb81xhv53tta07mziqwq81xo);
+									"></div>
+												<span class="label"><!--?lit$250123881$-->ArtStation</span>
+											</a>
+										</li>
+									<!---->
+							</ul>
+						</li>
+					<!----><!---->
+						<li class="nav-flyout-menu__section" role="none" data-flyout-section="2">
+							<h3 class="nav-flyout-menu__headline" id="Create">
+								<!--?lit$250123881$-->Create
+							</h3>
+							<ul class="nav-flyout-menu__list" role="menu" aria-labelledby="Create">
+								<!--?lit$250123881$--><!---->
+										<li class="nav-flyout-menu__list-item" role="none">
+											<a role="menuitem" href="https://www.unrealengine.com/?lang=en-US">
+												<div class="logo" style="
+										mask-image: url(https://cms-assets.unrealengine.com/AVzjeqAbLRKi3W5jq0CAvz/cmb81xhrq3wmn07o5xiqxc9fk);
+										-webkit-mask-image: url(https://cms-assets.unrealengine.com/AVzjeqAbLRKi3W5jq0CAvz/cmb81xhrq3wmn07o5xiqxc9fk);
+									"></div>
+												<span class="label"><!--?lit$250123881$-->Unreal Engine</span>
+											</a>
+										</li>
+									<!----><!---->
+										<li class="nav-flyout-menu__list-item" role="none">
+											<a role="menuitem" href="https://create.fortnite.com/welcome?team=personal&amp;lang=en-US">
+												<div class="logo" style="
+										mask-image: url(https://cms-assets.unrealengine.com/AVzjeqAbLRKi3W5jq0CAvz/cmb81xhrr3wmp07o53dbxkm7q);
+										-webkit-mask-image: url(https://cms-assets.unrealengine.com/AVzjeqAbLRKi3W5jq0CAvz/cmb81xhrr3wmp07o53dbxkm7q);
+									"></div>
+												<span class="label"><!--?lit$250123881$-->Create in Fortnite</span>
+											</a>
+										</li>
+									<!----><!---->
+										<li class="nav-flyout-menu__list-item" role="none">
+											<a role="menuitem" href="https://www.metahuman.com/?lang=en-US">
+												<div class="logo" style="
+										mask-image: url(https://cms-assets.unrealengine.com/AVzjeqAbLRKi3W5jq0CAvz/cmb81xhug3tsy07mzvdqx61yp);
+										-webkit-mask-image: url(https://cms-assets.unrealengine.com/AVzjeqAbLRKi3W5jq0CAvz/cmb81xhug3tsy07mzvdqx61yp);
+									"></div>
+												<span class="label"><!--?lit$250123881$-->MetaHuman</span>
+											</a>
+										</li>
+									<!----><!---->
+										<li class="nav-flyout-menu__list-item" role="none">
+											<a role="menuitem" href="https://www.twinmotion.com/?lang=en-US">
+												<div class="logo" style="
+										mask-image: url(https://cms-assets.unrealengine.com/AVzjeqAbLRKi3W5jq0CAvz/cmb81xhu83wn807o5swbsaol6);
+										-webkit-mask-image: url(https://cms-assets.unrealengine.com/AVzjeqAbLRKi3W5jq0CAvz/cmb81xhu83wn807o5swbsaol6);
+									"></div>
+												<span class="label"><!--?lit$250123881$-->Twinmotion</span>
+											</a>
+										</li>
+									<!----><!---->
+										<li class="nav-flyout-menu__list-item" role="none">
+											<a role="menuitem" href="https://www.realityscan.com/en-US">
+												<div class="logo" style="
+										mask-image: url(https://cms-assets.unrealengine.com/AVzjeqAbLRKi3W5jq0CAvz/cmb81xho33tqz07mz0sqvsu4j);
+										-webkit-mask-image: url(https://cms-assets.unrealengine.com/AVzjeqAbLRKi3W5jq0CAvz/cmb81xho33tqz07mz0sqvsu4j);
+									"></div>
+												<span class="label"><!--?lit$250123881$-->RealityScan</span>
+											</a>
+										</li>
+									<!----><!---->
+										<li class="nav-flyout-menu__list-item" role="none">
+											<a role="menuitem" href="https://dev.epicgames.com/en-US/services">
+												<div class="logo" style="
+										mask-image: url(https://cms-assets.unrealengine.com/AVzjeqAbLRKi3W5jq0CAvz/cmb81xhxk3ttl07mzk4qbhiy1);
+										-webkit-mask-image: url(https://cms-assets.unrealengine.com/AVzjeqAbLRKi3W5jq0CAvz/cmb81xhxk3ttl07mzk4qbhiy1);
+									"></div>
+												<span class="label"><!--?lit$250123881$-->Epic Online Services</span>
+											</a>
+										</li>
+									<!----><!---->
+										<li class="nav-flyout-menu__list-item" role="none">
+											<a role="menuitem" href="http://store.epicgames.com/en-US/distribution">
+												<div class="logo" style="
+										mask-image: url(https://cms-assets.unrealengine.com/AVzjeqAbLRKi3W5jq0CAvz/cmb81xhxk3ttl07mzk4qbhiy1);
+										-webkit-mask-image: url(https://cms-assets.unrealengine.com/AVzjeqAbLRKi3W5jq0CAvz/cmb81xhxk3ttl07mzk4qbhiy1);
+									"></div>
+												<span class="label"><!--?lit$250123881$-->Publish on Epic Games Store</span>
+											</a>
+										</li>
+									<!----><!---->
+										<li class="nav-flyout-menu__list-item" role="none">
+											<a role="menuitem" href="https://www.kidswebservices.com/en-US">
+												<div class="logo" style="
+										mask-image: url(https://cms-assets.unrealengine.com/AVzjeqAbLRKi3W5jq0CAvz/cmb81xhoq3tra07mzkzedd1td);
+										-webkit-mask-image: url(https://cms-assets.unrealengine.com/AVzjeqAbLRKi3W5jq0CAvz/cmb81xhoq3tra07mzkzedd1td);
+									"></div>
+												<span class="label"><!--?lit$250123881$-->Kids Web Services</span>
+											</a>
+										</li>
+									<!----><!---->
+										<li class="nav-flyout-menu__list-item" role="none">
+											<a role="menuitem" href="https://dev.epicgames.com/community?locale=en-us">
+												<div class="logo" style="
+										mask-image: url(https://cms-assets.unrealengine.com/AVzjeqAbLRKi3W5jq0CAvz/cmb81xhxk3ttl07mzk4qbhiy1);
+										-webkit-mask-image: url(https://cms-assets.unrealengine.com/AVzjeqAbLRKi3W5jq0CAvz/cmb81xhxk3ttl07mzk4qbhiy1);
+									"></div>
+												<span class="label"><!--?lit$250123881$-->Developer Community</span>
+											</a>
+										</li>
+									<!---->
+							</ul>
+						</li>
+					<!---->
+			</ul>
+		</template>
+				<div class="friendly-box"></div>
+			</epic-wf-nav-flyout-menu>
+		</div>
+	
+
+				<nav class="global-header__nav" aria-label="RealityCapture Navigation">
+					<!--?lit$181435105$-->
+								<epic-wf-property-logo logoalt="RealityScan logo" hreftemplate="{domain}/" locale="en-US" width="204" domain="https://www.realityscan.com"><template shadowrootmode="open"><!----><a href="https://www.realityscan.com/" class="logo logo--has-icon "><!--?lit$250123881$-->
+					<img class="logo__img" fetchpriority="high" height="32" alt="RealityScan logo" src="https://cms-assets.unrealengine.com/AVzjeqAbLRKi3W5jq0CAvz/cmb81xhqb3trt07mz6d8e3ktp" width="204">
+				<!--?lit$250123881$-->
+					<img class="logo__img logo__img--icon" height="32" width="32" alt="RealityScan logo" src="https://cms-assets.unrealengine.com/AVzjeqAbLRKi3W5jq0CAvz/cmb81xho33tqz07mz0sqvsu4j">
+				</a></template></epic-wf-property-logo>
+							
+
+					<div class="mobile-toolbar">
+						<!--?lit$181435105$-->
+						<!--?lit$181435105$-->
+
+						<button aria-controls="mobile-drawer" class="menu-toggle" id="mobile-drawer-toggle" aria-expanded="false" aria-label="Menu">
+							<!--?lit$181435105$--><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <path fill-rule="evenodd" d="M2.25 5A.75.75 0 0 1 3 4.25h18a.75.75 0 0 1 0 1.5H3A.75.75 0 0 1 2.25 5m0 7a.75.75 0 0 1 .75-.75h18a.75.75 0 0 1 0 1.5H3a.75.75 0 0 1-.75-.75m0 7a.75.75 0 0 1 .75-.75h18a.75.75 0 0 1 0 1.5H3a.75.75 0 0 1-.75-.75" clip-rule="evenodd"></path>
+</svg>
+
+						</button>
+					</div>
+					<div class="global-header__drawer" id="mobile-drawer">
+						<div class="main-nav items-visible-7 normal-search" data-search-open="false" style="--items-visible:7">
+							<!--?lit$181435105$--><epic-wf-nav-main-menu><template shadowrootmode="open"><!----><slot name="list"></slot></template>
+		<ul class="main-nav__list" slot="list">
+			<li class="menu-heading"><h2><!--?lit$181435105$-->Menu</h2></li>
+			<!--?lit$181435105$--><!---->
+		<li class="main-nav__list-item" id="epic-wf-nav-main-link-0" data-key="overview-parent">
+			<epic-wf-main-link active="false" hasmenu="true" hreftemplate="{domain}/{locale}/home" key="overview-parent" label="Overview" locale="en-US" domain="https://www.realityscan.com" owner="mw-rs"><template shadowrootmode="open"><!---->
+				<a aria-expanded="false" class="main-link  parent" href="https://www.realityscan.com/en-US/home">
+					<!--?lit$250123881$--><span class="label"><!--?lit$250123881$-->Overview</span> <!--?lit$250123881$-->
+			<span aria-hidden="true" class="icon-wrapper chevron "><!--?lit$250123881$--><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <path fill-rule="evenodd" d="M19.53 8.97a.75.75 0 0 1 0 1.06L12 17.56l-7.53-7.53a.75.75 0 1 1 1.06-1.06L12 15.44l6.47-6.47a.75.75 0 0 1 1.06 0" clip-rule="evenodd"></path>
+</svg>
+</span>
+		<!--?-->
+				</a>
+				<slot></slot>
+			</template>
+				<!--?lit$181435105$--><div class="friendly-box"></div>
+			</epic-wf-main-link>
+			<!--?lit$181435105$--><!--?lit$181435105$-->
+		<epic-wf-simple-menu><template shadowrootmode="open"><!----> <slot> </slot> </template>
+			<div class="menu-heading"><h2><!--?lit$181435105$-->Overview</h2></div>
+			<div class="menu-wrap" role="list">
+				<!--?lit$181435105$--><!---->
+						<epic-wf-menu-item role="listitem" hreftemplate="{domain}/{locale}/home" locale="en-US" label="RealityScan " domain="https://www.realityscan.com" endicon=""><template shadowrootmode="open"><!----><a class="menu-item   " href="https://www.realityscan.com/en-US/home"><!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<div class="menu-item__content">
+				<!--?lit$250123881$-->
+				<slot name="pre-label"></slot>
+				<span class="label"><!--?lit$250123881$-->RealityScan </span>
+				<slot name="post-label"></slot>
+				<!--?lit$250123881$-->
+			</div>
+		</a> </template></epic-wf-menu-item>
+					<!----><!---->
+						<epic-wf-menu-item role="listitem" hreftemplate="{domain}/{locale}/features" locale="en-US" label="Features" domain="https://www.realityscan.com" endicon=""><template shadowrootmode="open"><!----><a class="menu-item   " href="https://www.realityscan.com/en-US/features"><!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<div class="menu-item__content">
+				<!--?lit$250123881$-->
+				<slot name="pre-label"></slot>
+				<span class="label"><!--?lit$250123881$-->Features</span>
+				<slot name="post-label"></slot>
+				<!--?lit$250123881$-->
+			</div>
+		</a> </template></epic-wf-menu-item>
+					<!----><!---->
+						<epic-wf-menu-item role="listitem" hreftemplate="{domain}/{locale}/license" locale="en-US" label="Licensing" domain="https://www.realityscan.com" endicon=""><template shadowrootmode="open"><!----><a class="menu-item   " href="https://www.realityscan.com/en-US/license"><!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<div class="menu-item__content">
+				<!--?lit$250123881$-->
+				<slot name="pre-label"></slot>
+				<span class="label"><!--?lit$250123881$-->Licensing</span>
+				<slot name="post-label"></slot>
+				<!--?lit$250123881$-->
+			</div>
+		</a> </template></epic-wf-menu-item>
+					<!----><!---->
+						<epic-wf-menu-item role="listitem" hreftemplate="{domain}/{locale}/faq" locale="en-US" label="FAQ" domain="https://www.realityscan.com" endicon=""><template shadowrootmode="open"><!----><a class="menu-item   " href="https://www.realityscan.com/en-US/faq"><!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<div class="menu-item__content">
+				<!--?lit$250123881$-->
+				<slot name="pre-label"></slot>
+				<span class="label"><!--?lit$250123881$-->FAQ</span>
+				<slot name="post-label"></slot>
+				<!--?lit$250123881$-->
+			</div>
+		</a> </template></epic-wf-menu-item>
+					<!----><!---->
+						<epic-wf-menu-item role="listitem" hreftemplate="{domain}/{locale}/support" locale="en-US" label="Support" domain="https://www.realityscan.com" endicon=""><template shadowrootmode="open"><!----><a class="menu-item   " href="https://www.realityscan.com/en-US/support"><!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<div class="menu-item__content">
+				<!--?lit$250123881$-->
+				<slot name="pre-label"></slot>
+				<span class="label"><!--?lit$250123881$-->Support</span>
+				<slot name="post-label"></slot>
+				<!--?lit$250123881$-->
+			</div>
+		</a> </template></epic-wf-menu-item>
+					<!---->
+			</div>
+		</epic-wf-simple-menu>
+	<!--?-->
+		</li>
+	<!----><!---->
+		<li class="main-nav__list-item" id="epic-wf-nav-main-link-1" data-key="">
+			<epic-wf-main-link active="false" hasmenu="false" hreftemplate="{domain}/{locale}/mobile" key="" label="Mobile" locale="en-US" domain="https://www.realityscan.com" owner="mw-rs"><template shadowrootmode="open"><!---->
+				<a class="main-link  parent" href="https://www.realityscan.com/en-US/mobile">
+					<!--?lit$250123881$--><span class="label"><!--?lit$250123881$-->Mobile</span> <!--?lit$250123881$--><!--?-->
+				</a>
+				<slot></slot>
+			</template>
+				<!--?lit$181435105$-->
+			</epic-wf-main-link>
+			<!--?lit$181435105$-->
+		</li>
+	<!----><!---->
+		<li class="main-nav__list-item" id="epic-wf-nav-main-link-2" data-key="uses">
+			<epic-wf-main-link active="false" hasmenu="false" hreftemplate="{domain}/{locale}/uses" key="uses" label="Uses" locale="en-US" domain="https://www.realityscan.com" owner="mw-rs"><template shadowrootmode="open"><!---->
+				<a class="main-link  parent" href="https://www.realityscan.com/en-US/uses">
+					<!--?lit$250123881$--><span class="label"><!--?lit$250123881$-->Uses</span> <!--?lit$250123881$--><!--?-->
+				</a>
+				<slot></slot>
+			</template>
+				<!--?lit$181435105$-->
+			</epic-wf-main-link>
+			<!--?lit$181435105$-->
+		</li>
+	<!----><!---->
+		<li class="main-nav__list-item" id="epic-wf-nav-main-link-3" data-key="">
+			<epic-wf-main-link active="false" hasmenu="false" hreftemplate="{domain}/{locale}/news" key="" label="News" locale="en-US" domain="https://www.realityscan.com" owner="mw-rs"><template shadowrootmode="open"><!---->
+				<a class="main-link  parent" href="https://www.realityscan.com/en-US/news">
+					<!--?lit$250123881$--><span class="label"><!--?lit$250123881$-->News</span> <!--?lit$250123881$--><!--?-->
+				</a>
+				<slot></slot>
+			</template>
+				<!--?lit$181435105$-->
+			</epic-wf-main-link>
+			<!--?lit$181435105$-->
+		</li>
+	<!----><!---->
+		<li class="main-nav__list-item" id="epic-wf-nav-main-link-4" data-key="forums">
+			<epic-wf-main-link active="false" hasmenu="false" hreftemplate="https://forums.unrealengine.com/categories?tag=capturing-reality" key="forums" label="Forums" locale="en-US" domain="https://www.realityscan.com" owner="edc"><template shadowrootmode="open"><!---->
+				<a class="main-link  parent" href="https://forums.unrealengine.com/categories?tag=capturing-reality">
+					<!--?lit$250123881$--><span class="label"><!--?lit$250123881$-->Forums</span> <!--?lit$250123881$--><!--?-->
+				</a>
+				<slot></slot>
+			</template>
+				<!--?lit$181435105$-->
+			</epic-wf-main-link>
+			<!--?lit$181435105$-->
+		</li>
+	<!----><!---->
+		<li class="main-nav__list-item" id="epic-wf-nav-main-link-5" data-key="">
+			<epic-wf-main-link active="false" hasmenu="true" hreftemplate="https://dev.epicgames.com/community/realityscan/learning" key="" label="Learning" locale="en-US" domain="https://www.realityscan.com" owner="edc"><template shadowrootmode="open"><!---->
+				<a aria-expanded="false" class="main-link  parent" href="https://dev.epicgames.com/community/realityscan/learning">
+					<!--?lit$250123881$--><span class="label"><!--?lit$250123881$-->Learning</span> <!--?lit$250123881$-->
+			<span aria-hidden="true" class="icon-wrapper chevron "><!--?lit$250123881$--><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <path fill-rule="evenodd" d="M19.53 8.97a.75.75 0 0 1 0 1.06L12 17.56l-7.53-7.53a.75.75 0 1 1 1.06-1.06L12 15.44l6.47-6.47a.75.75 0 0 1 1.06 0" clip-rule="evenodd"></path>
+</svg>
+</span>
+		<!--?-->
+				</a>
+				<slot></slot>
+			</template>
+				<!--?lit$181435105$--><div class="friendly-box"></div>
+			</epic-wf-main-link>
+			<!--?lit$181435105$--><!--?lit$181435105$-->
+		<epic-wf-simple-menu><template shadowrootmode="open"><!----> <slot> </slot> </template>
+			<div class="menu-heading"><h2><!--?lit$181435105$-->Learning</h2></div>
+			<div class="menu-wrap" role="list">
+				<!--?lit$181435105$--><!---->
+						<epic-wf-menu-item role="listitem" hreftemplate="https://dev.epicgames.com/community/realityscan/learning" locale="en-US" label="Learning library" domain="https://www.realityscan.com" endicon=""><template shadowrootmode="open"><!----><a class="menu-item   " href="https://dev.epicgames.com/community/realityscan/learning"><!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<div class="menu-item__content">
+				<!--?lit$250123881$-->
+				<slot name="pre-label"></slot>
+				<span class="label"><!--?lit$250123881$-->Learning library</span>
+				<slot name="post-label"></slot>
+				<!--?lit$250123881$-->
+			</div>
+		</a> </template></epic-wf-menu-item>
+					<!----><!---->
+						<epic-wf-menu-item role="listitem" hreftemplate="https://dev.epicgames.com/community/realityscan/getting-started/realityscan" locale="en-US" label="Getting started" domain="https://www.realityscan.com" endicon=""><template shadowrootmode="open"><!----><a class="menu-item   " href="https://dev.epicgames.com/community/realityscan/getting-started/realityscan"><!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<div class="menu-item__content">
+				<!--?lit$250123881$-->
+				<slot name="pre-label"></slot>
+				<span class="label"><!--?lit$250123881$-->Getting started</span>
+				<slot name="post-label"></slot>
+				<!--?lit$250123881$-->
+			</div>
+		</a> </template></epic-wf-menu-item>
+					<!---->
+			</div>
+		</epic-wf-simple-menu>
+	<!--?-->
+		</li>
+	<!----><!---->
+		<li class="main-nav__list-item" id="epic-wf-nav-main-link-6" data-key="resellers">
+			<epic-wf-main-link active="false" hasmenu="false" hreftemplate="{domain}/{locale}/resellers" key="resellers" label="Resellers" locale="en-US" domain="https://www.realityscan.com" owner="mw-rs"><template shadowrootmode="open"><!---->
+				<a class="main-link  parent" href="https://www.realityscan.com/en-US/resellers">
+					<!--?lit$250123881$--><span class="label"><!--?lit$250123881$-->Resellers</span> <!--?lit$250123881$--><!--?-->
+				</a>
+				<slot></slot>
+			</template>
+				<!--?lit$181435105$-->
+			</epic-wf-main-link>
+			<!--?lit$181435105$-->
+		</li>
+	<!---->
+			<!--?lit$181435105$-->
+		<li class="main-nav__list-item main-nav__list-item--condensed hidden">
+			<epic-wf-main-link active="false" hasmenu="true" label="More" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<button aria-expanded="false" class="main-link  parent"><!--?lit$250123881$--><span class="label"><!--?lit$250123881$-->More</span> <!--?lit$250123881$-->
+			<span aria-hidden="true" class="icon-wrapper chevron "><!--?lit$250123881$--><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <path fill-rule="evenodd" d="M19.53 8.97a.75.75 0 0 1 0 1.06L12 17.56l-7.53-7.53a.75.75 0 1 1 1.06-1.06L12 15.44l6.47-6.47a.75.75 0 0 1 1.06 0" clip-rule="evenodd"></path>
+</svg>
+</span>
+		<!--?--></button>
+			<slot></slot>
+		</template>
+				<div class="friendly-box"></div>
+			</epic-wf-main-link>
+			<epic-wf-condensed-menu domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<ul class="condensed-menu ">
+				<li class="bg-filter"></li>
+				<!--?lit$250123881$--><!---->
+						<li active="false" aria-hidden="true" class="condensed-menu__item has-submenu hidden" label="Overview" data-key="overview-parent">
+							<!--?lit$250123881$-->
+						<a class="condensed-menu__link" aria-expanded="false" data-key="overview-parent" href="https://www.realityscan.com/en-US/home">
+							<span class="label"><!--?lit$250123881$-->Overview</span>
+							<!--?lit$250123881$-->
+						<span aria-hidden="true" class="icon-wrapper">
+							<!--?lit$250123881$--><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <path fill-rule="evenodd" d="M8.97 4.47a.75.75 0 0 1 1.06 0L17.56 12l-7.53 7.53a.75.75 0 1 1-1.06-1.06L15.44 12 8.97 5.53a.75.75 0 0 1 0-1.06" clip-rule="evenodd"></path>
+</svg>
+
+						</span>
+						<div class="friendly-box friendly-box--inline-end"></div>
+					
+						</a>
+					 <!--?lit$250123881$-->
+		<epic-wf-simple-menu><template shadowrootmode="open"><!----> <slot> </slot> </template>
+			<div class="menu-heading"><h2><!--?lit$250123881$--></h2></div>
+			<div class="menu-wrap" role="list">
+				<!--?lit$250123881$--><!---->
+						<epic-wf-menu-item role="listitem" hreftemplate="{domain}/{locale}/home" locale="en" label="RealityScan " endicon="" domain="https://www.realityscan.com"><template shadowrootmode="open"><!----><a class="menu-item   " href="https://www.realityscan.com/en/home"><!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<div class="menu-item__content">
+				<!--?lit$250123881$-->
+				<slot name="pre-label"></slot>
+				<span class="label"><!--?lit$250123881$-->RealityScan </span>
+				<slot name="post-label"></slot>
+				<!--?lit$250123881$-->
+			</div>
+		</a> </template></epic-wf-menu-item>
+					<!----><!---->
+						<epic-wf-menu-item role="listitem" hreftemplate="{domain}/{locale}/features" locale="en" label="Features" endicon="" domain="https://www.realityscan.com"><template shadowrootmode="open"><!----><a class="menu-item   " href="https://www.realityscan.com/en/features"><!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<div class="menu-item__content">
+				<!--?lit$250123881$-->
+				<slot name="pre-label"></slot>
+				<span class="label"><!--?lit$250123881$-->Features</span>
+				<slot name="post-label"></slot>
+				<!--?lit$250123881$-->
+			</div>
+		</a> </template></epic-wf-menu-item>
+					<!----><!---->
+						<epic-wf-menu-item role="listitem" hreftemplate="{domain}/{locale}/license" locale="en" label="Licensing" endicon="" domain="https://www.realityscan.com"><template shadowrootmode="open"><!----><a class="menu-item   " href="https://www.realityscan.com/en/license"><!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<div class="menu-item__content">
+				<!--?lit$250123881$-->
+				<slot name="pre-label"></slot>
+				<span class="label"><!--?lit$250123881$-->Licensing</span>
+				<slot name="post-label"></slot>
+				<!--?lit$250123881$-->
+			</div>
+		</a> </template></epic-wf-menu-item>
+					<!----><!---->
+						<epic-wf-menu-item role="listitem" hreftemplate="{domain}/{locale}/faq" locale="en" label="FAQ" endicon="" domain="https://www.realityscan.com"><template shadowrootmode="open"><!----><a class="menu-item   " href="https://www.realityscan.com/en/faq"><!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<div class="menu-item__content">
+				<!--?lit$250123881$-->
+				<slot name="pre-label"></slot>
+				<span class="label"><!--?lit$250123881$-->FAQ</span>
+				<slot name="post-label"></slot>
+				<!--?lit$250123881$-->
+			</div>
+		</a> </template></epic-wf-menu-item>
+					<!----><!---->
+						<epic-wf-menu-item role="listitem" hreftemplate="{domain}/{locale}/support" locale="en" label="Support" endicon="" domain="https://www.realityscan.com"><template shadowrootmode="open"><!----><a class="menu-item   " href="https://www.realityscan.com/en/support"><!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<div class="menu-item__content">
+				<!--?lit$250123881$-->
+				<slot name="pre-label"></slot>
+				<span class="label"><!--?lit$250123881$-->Support</span>
+				<slot name="post-label"></slot>
+				<!--?lit$250123881$-->
+			</div>
+		</a> </template></epic-wf-menu-item>
+					<!---->
+			</div>
+		</epic-wf-simple-menu>
+	
+						</li>
+					<!----><!---->
+						<li active="false" aria-hidden="true" class="condensed-menu__item  hidden" label="Mobile" data-key="">
+							<!--?lit$250123881$-->
+						<a class="condensed-menu__link" data-key="" href="https://www.realityscan.com/en-US/mobile">
+							<span class="label"><!--?lit$250123881$-->Mobile</span>
+						</a>
+					 <!--?lit$250123881$-->
+						</li>
+					<!----><!---->
+						<li active="false" aria-hidden="true" class="condensed-menu__item  hidden" label="Uses" data-key="uses">
+							<!--?lit$250123881$-->
+						<a class="condensed-menu__link" data-key="uses" href="https://www.realityscan.com/en-US/uses">
+							<span class="label"><!--?lit$250123881$-->Uses</span>
+						</a>
+					 <!--?lit$250123881$-->
+						</li>
+					<!----><!---->
+						<li active="false" aria-hidden="true" class="condensed-menu__item  hidden" label="News" data-key="">
+							<!--?lit$250123881$-->
+						<a class="condensed-menu__link" data-key="" href="https://www.realityscan.com/en-US/news">
+							<span class="label"><!--?lit$250123881$-->News</span>
+						</a>
+					 <!--?lit$250123881$-->
+						</li>
+					<!----><!---->
+						<li active="false" aria-hidden="true" class="condensed-menu__item  hidden" label="Forums" data-key="forums">
+							<!--?lit$250123881$-->
+						<a class="condensed-menu__link" data-key="forums" href="https://forums.unrealengine.com/categories?tag=capturing-reality">
+							<span class="label"><!--?lit$250123881$-->Forums</span>
+						</a>
+					 <!--?lit$250123881$-->
+						</li>
+					<!----><!---->
+						<li active="false" aria-hidden="true" class="condensed-menu__item has-submenu hidden" label="Learning" data-key="">
+							<!--?lit$250123881$-->
+						<a class="condensed-menu__link" aria-expanded="false" data-key="" href="https://dev.epicgames.com/community/realityscan/learning">
+							<span class="label"><!--?lit$250123881$-->Learning</span>
+							<!--?lit$250123881$-->
+						<span aria-hidden="true" class="icon-wrapper">
+							<!--?lit$250123881$--><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <path fill-rule="evenodd" d="M8.97 4.47a.75.75 0 0 1 1.06 0L17.56 12l-7.53 7.53a.75.75 0 1 1-1.06-1.06L15.44 12 8.97 5.53a.75.75 0 0 1 0-1.06" clip-rule="evenodd"></path>
+</svg>
+
+						</span>
+						<div class="friendly-box friendly-box--inline-end"></div>
+					
+						</a>
+					 <!--?lit$250123881$-->
+		<epic-wf-simple-menu><template shadowrootmode="open"><!----> <slot> </slot> </template>
+			<div class="menu-heading"><h2><!--?lit$250123881$--></h2></div>
+			<div class="menu-wrap" role="list">
+				<!--?lit$250123881$--><!---->
+						<epic-wf-menu-item role="listitem" hreftemplate="https://dev.epicgames.com/community/realityscan/learning" locale="en" label="Learning library" endicon="" domain="https://www.realityscan.com"><template shadowrootmode="open"><!----><a class="menu-item   " href="https://dev.epicgames.com/community/realityscan/learning"><!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<div class="menu-item__content">
+				<!--?lit$250123881$-->
+				<slot name="pre-label"></slot>
+				<span class="label"><!--?lit$250123881$-->Learning library</span>
+				<slot name="post-label"></slot>
+				<!--?lit$250123881$-->
+			</div>
+		</a> </template></epic-wf-menu-item>
+					<!----><!---->
+						<epic-wf-menu-item role="listitem" hreftemplate="https://dev.epicgames.com/community/realityscan/getting-started/realityscan" locale="en" label="Getting started" endicon="" domain="https://www.realityscan.com"><template shadowrootmode="open"><!----><a class="menu-item   " href="https://dev.epicgames.com/community/realityscan/getting-started/realityscan"><!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<!--?lit$250123881$-->
+			<div class="menu-item__content">
+				<!--?lit$250123881$-->
+				<slot name="pre-label"></slot>
+				<span class="label"><!--?lit$250123881$-->Getting started</span>
+				<slot name="post-label"></slot>
+				<!--?lit$250123881$-->
+			</div>
+		</a> </template></epic-wf-menu-item>
+					<!---->
+			</div>
+		</epic-wf-simple-menu>
+	
+						</li>
+					<!----><!---->
+						<li active="false" aria-hidden="true" class="condensed-menu__item  hidden" label="Resellers" data-key="resellers">
+							<!--?lit$250123881$-->
+						<a class="condensed-menu__link" data-key="resellers" href="https://www.realityscan.com/en-US/resellers">
+							<span class="label"><!--?lit$250123881$-->Resellers</span>
+						</a>
+					 <!--?lit$250123881$-->
+						</li>
+					<!---->
+			</ul>
+		</template></epic-wf-condensed-menu>
+		</li>
+	
+			<li class="main-nav__list-filler"><epic-wf-nav-main-menu-filler><template shadowrootmode="open"><!----><span></span></template></epic-wf-nav-main-menu-filler></li>
+		</ul>
+	</epic-wf-nav-main-menu>
+						</div>
+
+						<div class="toolbar">
+							<!--?lit$181435105$-->
+		<div class="tools">
+			<!--?lit$181435105$--> <!--?lit$181435105$-->
+			<!--?lit$181435105$-->
+			<!--?lit$181435105$-->
+			<!--?lit$181435105$-->
+		<div class="dropdown dropdown--account ">
+			<!--?lit$181435105$-->
+		<a class="dropdown__button secondary-cta" href="https://www.capturingreality.com/my" aria-label="Sign in">
+			<span class="label"><!--?lit$181435105$-->Sign in</span>
+		</a>
+	
+		</div>
+	
+		</div>
+	
+
+							<div class="toolbar__back-wrapper">
+								<button class="back-button" aria-label="Back to main menu">
+									<span aria-hidden="true" class="icon-wrapper">
+										<!--?lit$181435105$--><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <path fill-rule="evenodd" d="M15.03 4.47a.75.75 0 0 1 0 1.06L8.562 12l6.47 6.47a.75.75 0 1 1-1.06 1.06L6.44 12l7.53-7.53a.75.75 0 0 1 1.06 0" clip-rule="evenodd"></path>
+</svg>
+
+									</span>
+									<span class="label"><!--?lit$181435105$-->Back</span>
+								</button>
+							</div>
+						</div>
+
+						<!--?lit$181435105$-->
+								<div class="main-cta">
+									<epic-wf-cta-button domain="https://www.realityscan.com" href="https://www.realityscan.com/en-US/download" label="Download" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="cta-button " href="https://www.realityscan.com/en-US/download" target="">
+				<span class="label"><!--?lit$250123881$-->Download</span>
+			</a>
+		</template></epic-wf-cta-button>
+								</div>
+							
+					</div>
+				</nav>
+				<lit-media-query><template shadowrootmode="open"><!---->
+      <style>
+        :host {
+          display: none;
+        }
+      </style>
+    </template></lit-media-query>
+				<lit-media-query><template shadowrootmode="open"><!---->
+      <style>
+        :host {
+          display: none;
+        }
+      </style>
+    </template></lit-media-query>
+				<lit-media-query><template shadowrootmode="open"><!---->
+      <style>
+        :host {
+          display: none;
+        }
+      </style>
+    </template></lit-media-query>
+				<lit-media-query><template shadowrootmode="open"><!---->
+      <style>
+        :host {
+          display: none;
+        }
+      </style>
+    </template></lit-media-query>
+			</header>
+		</template></realitycapture-navigation>
+
+    <div data-id="div_cs" class="content_slide">
+
+    <!-- content slide -->
+    <script type="text/javascript">RenderToolNavigation();</script><div class="navigation">
+    <a href="javascript:RCGoBack()"><div class="goback">Go Back</div></a>
+    <a href="javascript:RCOpenInBrowser()" class="openInBrowser RCOnly"></a>
+</div>
+
+
+        <div data-id="div_head" class="head">
+
+            <h1 data-id="h1" data-vn="1">Model Tools</h1>
+            <p data-id="p_h1_1" data-vn="2">
+                When you have successfully created a model, you can use these tools to colorize your model, create textures, and do some post-processing on your models.
+            </p>
+            <table class="tableofcommands">
+                <thead>
+                    <tr data-id="tr_moto_name" data-vn="1">
+                        <th>Command Name</th>
+                        <th>Required Parameter</th>
+                        <th>Optional Parameter</th>
+                        <th>Description</th>
+                    </tr>
+                </thead>
+                <tbody><tr data-id="tr_moto_semo" data-vn="1">
+                    <td class="command">selectModel</td>
+                    <td class="parameter">modelName</td>
+                    <td class="parameter"></td>
+                    <td>Select a model with the specified name (modelName).</td>
+                </tr>
+                <tr data-id="tr_moto_desm" data-vn="1">
+                    <td class="command">deleteSelectedModel</td>
+                    <td class="parameter"></td>
+                    <td class="parameter"></td>
+                    <td>Delete the currently selected model.</td>
+                </tr>
+                <tr data-id="tr_moto_dusm" data-vn="1">
+                    <td class="command">duplicateSelectedModel</td>
+                    <td class="parameter"></td>
+                    <td class="parameter"></td>
+                    <td>Duplicate the selected model (including textures).</td>
+                </tr>
+                <tr data-id="tr_moto_resm" data-vn="1">
+                    <td class="command">renameSelectedModel</td>
+                    <td class="parameter">newModelName</td>
+                    <td class="parameter"></td>
+                    <td>Rename the currently selected model.</td>
+                </tr>
+                <tr data-id="tr_moto_coco" data-vn="1">
+                    <td class="command">correctColors</td>
+                    <td class="parameter"></td>
+                    <td class="parameter">layerName</td>
+                    <td>Run color correction for all layers or a specified layer (layerName) in the selected component.</td>
+                </tr>
+                <tr data-id="tr_moto_unwr" data-vn="1">
+                    <td class="command">unwrap</td>
+                    <td class="parameter"></td>
+                    <td class="parameter">params.xml</td>
+                    <td>
+                        Calculate unwrap of a model using the current settings or the settings from the params.xml (optional parameter).
+                        You can export these settings using the <span class="appribbonbutton">Unwrap</span> tool in the application.
+                    </td>
+                </tr>
+                <tr data-id="tr_moto_cate" data-vn="1">
+                    <td class="command">calculateTexture</td>
+                    <td class="parameter"></td>
+                    <td class="parameter"></td>
+                    <td>Calculate texture using the current settings.</td>
+                </tr>
+                <tr data-id="tr_moto_qtex" data-vn="2">
+                    <td class="command">calculateQualityTexture</td>
+                    <td class="parameter"></td>
+                    <td class="parameter"></td>
+                    <td>Calculate texture using mesh quality values which can be calculated using the <span class="apptool">Quality Analysis</span> tool. The values don't have to be calculated prior to using this command.</td>
+                </tr>
+                
+                
+                <tr data-id="tr_moto_rete" data-vn="1">
+                    <td class="command">reprojectTexture</td>
+                    <td class="parameter">sourceModel resultModel</td>
+                    <td class="parameter">params.xml</td>
+                    <td>
+                        Reproject texture from a textured model (sourceModel) to an unwrapped model (resultModel) using the current settings or the settings from the params.xml file (optional parameter).
+                        sourceModel and resultModel are model names from the application.
+                        You can export these settings from the <span class="appribbonbutton">Texture Reprojection</span> tool in the application.
+                    </td>
+                </tr>
+                <tr data-id="tr_moto_cavc" data-vn="1">
+                    <td class="command">calculateVertexColors</td>
+                    <td class="parameter"></td>
+                    <td class="parameter"></td>
+                    <td>Calculate coloring using the current settings.</td>
+                </tr>
+                <tr data-id="tr_moto_cpvc" data-vn="1">
+                    <td class="command">calculatePreviewVertexColors</td>
+                    <td class="parameter"></td>
+                    <td class="parameter"></td>
+                    <td>Calculate draft coloring using the current settings.</td>
+                </tr>
+                <tr data-id="tr_moto_qvcl" data-vn="2">
+                    <td class="command">calculateQualityColors</td>
+                    <td class="parameter"></td>
+                    <td class="parameter"></td>
+                    <td>Calculate vertex colors using mesh quality values which can be calculated using the <span class="apptool">Quality Analysis</span> tool. The values don't have to be calculated prior to using this command.</td>
+                </tr>
+                <tr data-id="tr_moto_simp" data-vn="1">
+                    <td class="command">simplify</td>
+                    <td class="parameter"></td>
+                    <td class="parameter">targetTriangleCount or params.xml</td>
+                    <td>
+                        Simplify a selected model using the current settings (use it without any parameters) to the selected triangle count (targetTriangleCount) or using the settings from the params.xml file.
+                        You can export these settings using the <span class="appribbonbutton">Simplify Tool</span> in the application.
+                    </td>
+                </tr>
+                <tr data-id="tr_moto_smoo" data-vn="1">
+                    <td class="command">smooth</td>
+                    <td class="parameter"></td>
+                    <td class="parameter">params.xml</td>
+                    <td>
+                        Smooth a selected model using the current settings or the settings from the params.xml file.
+                        You can export these settings from the <span class="appribbonbutton">Smoothing Tool</span> in the application.
+                    </td>
+                </tr>
+                <tr data-id="tr_moto_clho" data-vn="1">
+                    <td class="command">closeHoles</td>
+                    <td class="parameter"></td>
+                    <td class="parameter">maxEdgesCount</td>
+                    <td>Close model holes using the current settings or using a specified maximal number of edges (maxEdgesCount).</td>
+                </tr>
+                <tr data-id="tr_moto_clem" data-vn="1">
+                    <td class="command">cleanModel</td>
+                    <td class="parameter"></td>
+                    <td class="parameter"></td>
+                    <td>Clean the selected model: remove non-manifold edges and vertices, close small holes, etc.</td>
+                </tr>
+                <tr data-id="tr_moto_stin" data-vn="1">
+                    <td class="command">selectTrianglesInsideReconReg</td>
+                    <td class="parameter"></td>
+                    <td class="parameter"></td>
+                    <td>Select triangles inside the reconstruction region.</td>
+                </tr>
+                <tr data-id="tr_moto_stou" data-vn="1">
+                    <td class="command">selectTrianglesOutsideReconReg</td>
+                    <td class="parameter"></td>
+                    <td class="parameter"></td>
+                    <td>Select triangles outside the reconstruction region.</td>
+                </tr>
+                <tr data-id="tr_moto_semt" data-vn="1">
+                    <td class="command">selectMarginalTriangles</td>
+                    <td class="parameter"></td>
+                    <td class="parameter"></td>
+                    <td>Select triangles that are enclosing the volume but are not part of the current reconstruction.</td>
+                </tr>
+                <tr data-id="tr_moto_slta" data-vn="1">
+                    <td class="command">selectLargeTrianglesAbs</td>
+                    <td class="parameter">edgeSizeThreshold</td>
+                    <td class="parameter"></td>
+                    <td>Select triangles with an edge length larger than the threshold (edgeSizeThreshold).</td>
+                </tr>
+                <tr data-id="tr_moto_sltr" data-vn="1">
+                    <td class="command">selectLargeTrianglesRel</td>
+                    <td class="parameter">edgeSizeThreshold</td>
+                    <td class="parameter"></td>
+                    <td>Select triangles with an edge length larger than the threshold (edgeSizeThreshold) multiplied by average edge length.</td>
+                </tr>
+                <tr data-id="tr_moto_sltc" data-vn="1">
+                    <td class="command">selectLargestModelComponent</td>
+                    <td class="parameter"></td>
+                    <td class="parameter"></td>
+                    <td>Select triangles that belong to the largest connected component of the model.</td>
+                </tr>
+                <tr data-id="tr_moto_itse" data-vn="1">
+                    <td class="command">invertTrianglesSelection</td>
+                    <td class="parameter"></td>
+                    <td class="parameter"></td>
+                    <td>Invert a selection of triangles.</td>
+                </tr>
+                <tr data-id="tr_moto_demt" data-vn="1">
+                    <td class="command">deselectModelTriangles</td>
+                    <td class="parameter"></td>
+                    <td class="parameter"></td>
+                    <td>Deselect all model triangles.</td>
+                </tr>
+                <tr data-id="tr_moto_rest" data-vn="1">
+                    <td class="command">removeSelectedTriangles</td>
+                    <td class="parameter"></td>
+                    <td class="parameter"></td>
+                    <td>Create a new model with selected triangles left out (the same behavior as with the <span class="appribbonbutton">Filter Selection</span> tool).</td>
+                </tr>
+                <tr data-id="tr_moto_cbbox" data-vn="1">
+                    <td class="command">cutByBox</td>
+                    <td class="parameter">inner|outer</td>
+                    <td class="parameter">fillHoles</td>
+                    <td>Filter out the triangles inside or outside of the reconstruction region. The required parameter defines which triangles will be filtered out, and the optional parameter <span class="appproperty">fillHoles</span> determines if the cut holes will be filled (can be set to <span class="appproperty">true</span> or <span class="appproperty">false</span> which correspond to the <span class="appproperty">Yes</span> and <span class="appproperty">No</span> values). If the optional parameter is not chosen, the default value will be used (<span class="appproperty">Yes</span>).  This tool creates a new model..</td>
+                </tr>
+                <tr data-id="tr_moto_exmo" data-vn="2">
+                    <td class="command">exportModel</td>
+                    <td class="parameter">modelName fileName</td>
+                    <td class="parameter">params.xml</td>
+                    <td>
+                        Export a model (modelName from the project) as a file (fileName including the path and file extension) using the current settings or the settings from the params.xml (optional parameter). 
+                        You can export this file from the <span class="apppanel">Export model</span> dialog.
+                    </td>
+                </tr>
+                <tr data-id="tr_moto_exsm" data-vn="2">
+                    <td class="command">exportSelectedModel</td>
+                    <td class="parameter">fileName</td>
+                    <td class="parameter">params.xml</td>
+                    <td>
+                        Export the selected model as a file (fileName including the path and file extension) using the current settings or the settings from the params.xml (optional parameter).
+                        You can export the file from the <span class="apppanel">Export model</span> dialog.
+                    </td>
+                </tr>
+                <tr data-id="tr_moto_immo" data-vn="1">
+                    <td class="command">importModel</td>
+                    <td class="parameter">fileName</td>
+                    <td class="parameter"></td>
+                    <td>Import a model from a file (fileName including the path and file extension).</td>
+                </tr>
+                <tr data-id="tr_moto_caop" data-vn="1">
+                    <td class="command">calculateOrthoProjection</td>
+                    <td class="parameter">params.rcortho</td>
+                    <td class="parameter"></td>
+                    <td>Calculate an orthographic projection using settings from the params.rcortho file. Instructions on how to obtain the file can be found <a href="https://rshelp.capturingreality.com/en-US/tools/xmlparamsfiles.htm">here</a>.</td>
+                </tr>
+                <tr data-id="tr_moto_seop" data-vn="1">
+                    <td class="command">selectOrthoProjection</td>
+                    <td class="parameter">orthoName</td>
+                    <td class="parameter"></td>
+                    <td>Select an orthographic projection with the specified name (orthoName).</td>
+                </tr>
+                <tr data-id="tr_moto_editorthoselect" data-vn="1">
+                    <td class="command">editOrthoProjectionSelection</td>
+                    <td class="parameter">"key=value"</td>
+                    <td class="parameter"></td>
+                    <td data-id="td_moto_editorthoselect" data-vn="1">
+                        Edit the settings/parameters of the selected ortho projections based on the value in the <span class="apppanel">Selected ortho photo(s)</span> panel or its key. More information can be found <a href="https://rshelp.capturingreality.com/en-US/tutorials/editselectioncommand.htm">here</a>.
+                     </td>
+                </tr>
+                
+                <tr data-id="tr_moto_exop" data-vn="2">
+                    <td class="command">exportOrthoProjection</td>
+                    <td class="parameter">fileName params.xml</td>
+                    <td class="parameter"></td>
+                    <td>
+                        Export selected orthographic projection (image, DSM or DTM) into a file (fileName including the path and the file extension) 
+                        using settings from the params.xml file. You can export the parameters file from the <span class="apppanel">Export Ortho Photo, Export Digital Surface Model</span> and <span class="apppanel">Export Digital Terrain Model</span> dialog.
+                    </td>
+                </tr>
+                <tr data-id="tr_moto_exre" data-vn="2">
+                    <td class="command">exportReport</td>
+                    <td class="parameter">outputFileName templateFileName</td>
+                    <td class="parameter">true|false</td>
+                    <td>
+                        Export a report into a file (outputFileName including the path and the .html extension) using a template (templateFileName including the path). The default templates are stored in the installation folder\Reports. Use the optional boolean paramater (true or false) to export a file with reports found in the specified template.
+                    </td>
+                </tr>
+                <tr data-id="tr_moto_printreport" data-vn="2">
+                        <td class="command">printReport</td>
+                        <td class="parameter">reportString</td>
+                        <td class="parameter"></td>
+                        <td>
+                            Write out report texts in the Command Prompt. This command can be used when RealityScan is run with a batch file. It does not work with delegation. Learn more about report customization <a href="https://rshelp.capturingreality.com/en-US/appbasics/reports_functions_and_variables.htm">here</a>.
+                        </td>
+                </tr>
+                <tr data-id="tr_moto_mame" data-vn="2">
+                        <td class="command">generateMaskFromMesh</td>
+                        <td class="parameter"></td>
+                        <td class="parameter"></td>
+                        <td>
+                            Generate mask images out of the existing camera views (images) and selected model. Everything around the model as seen from the camera will be masked out.
+                        </td>
+                </tr>
+                <tr data-id="tr_moto_exdm" data-vn="1">
+                    <td class="command">exportDepthAndMask</td>
+                    <td class="parameter"></td>
+                    <td class="parameter">folderName params.xml</td>
+                    <td>
+                        Export depth maps and/or masks for selected images. If folderName and params.xml are not specified, results are stored along with the original images
+                        using the current settings. You can export the settings file from the application in the <span class="apppanel">Export Depth Maps and Masks</span> dialog.
+                    </td>
+                </tr>
+                <tr data-id="tr_moto_exlod" data-vn="1">
+                    <td class="command">exportLod</td>
+                    <td class="parameter">fileName</td>
+                    <td class="parameter">params.xml</td>
+                    <td>
+                        Export the selected model as a linear Level-of-Detail model into a file (fileName including the path and file extension) using the current settings or the settings from the params.xml (optional parameter). 
+                        You can export this file from the <span class="apppanel">Export LoD</span> dialog. For export to Cesium 3D Tiles (.json) file format use command <span class="command">export3dTiles</span>.
+                    </td>
+                </tr>
+                <tr data-id="tr_moto_ex3dT" data-vn="1">
+                    <td class="command">export3dTiles</td>
+                    <td class="parameter">fileName</td>
+                    <td class="parameter">params.xml</td>
+                    <td>
+                        Export the selected model as a hierarchical Level-of-Detail model into a .json file (fileName including the path and file extension) using the current settings or the settings from the params.xml (optional parameter). 
+                        You can export this file from the <span class="apppanel">Export LoD</span> dialog after selecting Cesium 3D Tiles (.json) file format.
+                    </td>
+                </tr>
+				<tr data-id="tr_moto_rypr" data-vn="2">
+                        <td class="command">renderMeshFromCustomPositionYPR</td>
+                        <td class="parameter">fileName params.xml|width height focalLength x y z yaw pitch roll
+						</td>
+                        <td class="parameter"></td>
+                        <td>
+                            Export a render of the model from a camera position using yaw, pitch, and roll orientation.
+							<br>
+						  Example for a view from above a model at 0,0,0 in local Euclidean space:
+                      <div class="codeSample">
+                          RealityScan.exe -renderMeshFromCustomPositionYPR "C:/images/image.png" 1280 720 100 0 0 150 0 0 0
+                        </div>
+                      </td>
+                    </tr>
+					<tr data-id="tr_moto_rlat" data-vn="2">
+                        <td class="command">renderMeshFromCustomPositionLookAt</td>
+                        <td class="parameter">fileName params.xml|width height focalLength x y z atX atY atZ
+					</td>
+                        <td class="parameter">upX upY upZ</td>
+                        <td>
+                            Export a render of the model from a camera position, which looks at another XYZ coordinate, with an option to add another XYZ coordinate to determine which direction the vertical axis ascends to.
+							<br>
+					Example for a side view of a model at 0,0,0 in local Euclidean space, using the up option:
+                        <div class="codeSample">
+					RealityScan.exe -renderMeshFromCustomPositionLookAt "C:/images/image.png" 1280 720 50 0 -100 0 0 0 10 0 0 1
+                        </div>
+                     </td>
+                </tr>
+                <tr data-id="tr_model_rgridypr" data-vn="1">
+                        <td class="command">renderMeshFromCustomGridPositionYPR</td>
+                        <td class="parameter">fileName params.xml|fileName width height focalLength x y z yaw pitch roll
+						</td>
+                        <td class="parameter"></td>
+                        <td>
+                            Export a render of the model from a custom grid position, with the viewpoint defined by yaw, pitch, and roll orientation.
+                        </td>
+                    </tr>
+                    <tr data-id="tr_model_rgridla" data-vn="1">
+                        <td class="command">renderMeshFromCustomGridPositionLookAt</td>
+                        <td class="parameter">fileName params.xml|fileName width height focalLength x y z atX atY atZ
+						</td>
+                        <td class="parameter">upX upY upZ</td>
+                        <td>
+                            Export a model render from a custom grid position, with the viewpoint directed toward a defined target, and the option to specify the vertical axis.
+                        </td>
+                    </tr> 
+				<tr data-id="tr_moto_utsketch" data-vn="1">
+                    <td class="command">uploadToSketchfab</td>
+                    <td class="parameter">APIToken</td>
+                    <td class="parameter"></td>
+                    <td>
+                        Upload your model to Sketchfab. The required parameter is the Sketchfab API token and it can be found in the account settings of your Sketchfab account.
+                        </td>
+                </tr>	
+            </tbody></table>
+            
+            <h3 data-id="h3_classcomm" data-vn="1">Classification Commands</h3>
+                <p data-id="p_h3_classcomm" data-vn="1">Use these settings to create and adjust classifications.</p>
+                    
+                <table class="tableofcommands">
+                    <thead>
+                        <tr data-id="tr_classcomm_head" data-vn="1">
+                            <th>Command Name</th>
+                            <th>Required Parameter</th>
+                            <th>Optional Parameter</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody><tr data-id="tr_model_dtmclassify" data-vn="1">
+                        <td class="command">dtmClassify</td>
+                        <td class="parameter"></td>
+                        <td class="parameter">params.xml</td>
+                        <td>
+                            Classify vertices of the selected model into pre-defined classes using the current settings or the settings from the params.xml file (optional parameter).
+                            You can export these settings from the <span class="apppanel">AI Classify tool</span> in the application.
+                        </td>
+                    </tr>   
+                    <tr data-id="tr_model_selectclassf" data-vn="1">
+                        <td class="command">selectClassification</td>
+                        <td class="parameter">classificationName</td>
+                        <td class="parameter"></td>
+                        <td>
+                            Select a classification using its specified name (classificationName parameter).
+                        </td>
+                    </tr>
+                    <tr data-id="tr_model_renameclassf" data-vn="1">
+                        <td class="command">renameSelectedClassification</td>
+                        <td class="parameter">newClassificationName</td>
+                        <td class="parameter"></td>
+                        <td>
+                            Rename the selected classification to the specified new name (newClassificationName).
+                        </td>
+                    </tr>
+                    <tr data-id="transferclassf" data-vn="1">
+                        <td class="command">transferClassification</td>
+                        <td class="parameter"></td>
+                        <td class="parameter">params.xml</td>
+                        <td>
+                            Transfer classification from the labels layer images. A file with parameters exported from the <span class="apppanel">AI Classify tool</span> panel can be used as an optional parameter.
+                        </td>
+                    </tr>
+                    <tr data-id="tr_model_expclassset" data-vn="1">
+                        <td class="command">exportClassificationSettings</td>
+                        <td class="parameter">XMLfilePath</td>
+                        <td class="parameter"></td>
+                        <td>
+                            Export settings from the <span class="apppanel">AI Classify tool</span> panel. For the required parameter (XMLfilePath) specify the full path for export, including the file name and format extension (.xml).
+                        </td>
+                    </tr>
+                    <tr data-id="tr_model_impclassset" data-vn="1">
+                        <td class="command">importClassificationSettings</td>
+                        <td class="parameter">XMLfilePath</td>
+                        <td class="parameter"></td>
+                        <td>
+                            Import settings to the <span class="apppanel">AI Classify tool</span> panel. For the required parameter (XMLfilePath) specify the full path for import, including the file name and format extension (.xml).
+                        </td>
+                    </tr>
+                    <tr data-id="tr_model_oververt" data-vn="1">
+                        <td class="command">overrideSelectedVertices</td>
+                        <td class="parameter"></td>
+                        <td class="parameter">className</td>
+                        <td>Override the selected vertices and change their class to the currently selected class, or to the class specified by name (optional).
+                        </td>
+                    </tr>
+                    <tr data-id="tr_model_slctclass" data-vn="1">
+                        <td class="command">selectClass</td>
+                        <td class="parameter">className</td>
+                        <td class="parameter"></td>
+                        <td>Select a class from the selected classification using the specified class name.
+                        </td>
+                    </tr>
+                    <tr data-id="tr_model_dsltclass" data-vn="1">
+                        <td class="command">deselectClass</td>
+                        <td class="parameter"></td>
+                        <td class="parameter"></td>
+                        <td>Deselect all selected classes.
+                        </td>
+                    </tr>
+                    <tr data-id="tr_model_rnmselcl" data-vn="1">
+                        <td class="command">renameSelectedClass</td>
+                        <td class="parameter">newClassName</td>
+                        <td class="parameter"></td>
+                        <td>Change the name of the selected class to the specified new class name (newClassName).
+                        </td>
+                    </tr>
+                    <tr data-id="tr_model_sscldtm" data-vn="1">
+                        <td class="command">setSelectedClassAsGroundForDTM</td>
+                        <td class="parameter">true OR false</td>
+                        <td class="parameter"></td>
+                        <td>Change the <span class="appproperty">Use as ground for DTM</span> setting in the <span class="apppanel">Selected Class</span> panel for the selected class. Set to <span class="appproperty">true</span> to use it as ground for DTM, or <span class="appproperty">false</span> to exclude it.
+                        </td>
+                    </tr>
+                    <tr data-id="tr_model_ssclexp" data-vn="1">
+                        <td class="command">setSelectedClassAsGroundForExport</td>
+                        <td class="parameter"></td>
+                        <td class="parameter"></td>
+                        <td>Change the <span class="appproperty">Export class LAS</span> setting in the <span class="apppanel">Selected Class</span> panel to <span class="appproperty">Ground (2)</span>.
+                        </td>
+                    </tr>
+                    <tr data-id="tr_model_ssclas" data-vn="1">
+                        <td class="command">setSelectedClassLasFormat</td>
+                        <td class="parameter">0 - 12</td>
+                        <td class="parameter"></td>
+                        <td>Change the <span class="appproperty">Export class LAS</span> setting to a value corresponding to a number from 0 to 12. 
+                        </td>
+                    </tr>
+                    <tr data-id="tr_model_svrtsc" data-vn="1">
+                        <td class="command">selectVerticesOfSelectedClass</td>
+                        <td class="parameter"></td>
+                        <td class="parameter">Select model vertices based on the selected class.</td>
+                        <td>Select model vertices based on the selected class.
+                        </td>
+                    </tr>
+                    <tr data-id="tr_model_selclfr" data-vn="1">
+                        <td class="command">selectClassificationFormat</td>
+                        <td class="parameter">classificationFormatName</td>
+                        <td class="parameter"></td>
+                        <td>Select the classification format based on the specified classification format name.
+                        </td>
+                    </tr>
+                    <tr data-id="tr_model_rscfr" data-vn="1">
+                        <td class="command">renameSelectedClassificationFormat</td>
+                        <td class="parameter">newClassificationFormatName</td>
+                        <td class="parameter"></td>
+                        <td>Rename the selected classification format to the specified new classification format name.
+                        </td>
+                    </tr>
+                    <tr data-id="tr_model_expscfr" data-vn="1">
+                        <td class="command">exportSelectedClassificationFormat</td>
+                        <td class="parameter">classificationFormatName filePath</td>
+                        <td class="parameter"></td>
+                        <td>Export the selected classification format by specifying its name and the full path, including the file name and the .cfd extension.
+                        </td>
+                    </tr>
+                    <tr data-id="tr_model_impcfr" data-vn="1">
+                        <td class="command">importClassificationFormat</td>
+                        <td class="parameter">filePath</td>
+                        <td class="parameter"></td>
+                        <td>Import the classification format by specifying its full path and name, including the .cfd extension.
+                        </td>
+                    </tr>
+                    <tr data-id="tr_model_colscl" data-vn="1">
+                        <td class="command">colorModelBySelectedClassification</td>
+                        <td class="parameter"></td>
+                        <td class="parameter"></td>
+                        <td>Colorize the model according to the classes in the selected classification.
+                        </td>
+                    </tr>
+                    <tr data-id="tr_model_delscl" data-vn="1">
+                        <td class="command">deleteSelectedClassification</td>
+                        <td class="parameter"></td>
+                        <td class="parameter"></td>
+                        <td>Delete the selected classification.
+                        </td>
+                    </tr>  
+                </tbody></table>
+
+        </div>
+        
+        <div class="clear splitSpacing">
+            <!-- clear -->
+        </div>
+
+        <div data-id="div_sb_mtex" data-vn="2" class="slideblock">
+
+            <h2 data-id="h2_mtex" data-vn="1">Model Tools Examples</h2>
+            <p data-id="p_h2_mtex" data-vn="1">These are some examples of the model tools, import and export usage.</p>
+
+            <h3 data-id="h3_mtex_sste" data-vn="1">Simplify, smooth, texture and export a model</h3>
+            <p data-id="p_h3_sste" data-vn="1">
+                This piece of code will calculate a model in a normal detail, simplify it to 100k triangles, smooth, texture and then export the result.
+            </p>
+            <div class="codeSample">
+                RealityScan.exe .... -calculateNormalModel -simplify 100000 -smooth -calculateTexture -exportModel "Model 3" %MyPath%\Object.obj %MyPath%\objParams.xml -save %Mypath%\NewProject.rsproj -quit
+            </div>
+            <p data-id="p_sste_parf" data-vn="1">
+                NOTE: You can obtain the parameters file from the <span class="apppanel">Export Model</span> dialog.
+                <br><br>
+                The project now contains three models: the first one is a normal model, the second one is simplified, and the third one is simplified, smoothed and textured at the same time. 
+                By default, the last created model is selected for the next processing.<br>
+                You can now select a model by its name using the command <span class="command">-selectModel</span> and then export this model using the command <span class="command">-exportSelectedModel</span>. 
+                This piece of code will calculate a model in a normal detail, simplify it to 100k triangles, smooth, texture but export the second model:
+            </p>
+            <div class="codeSample">
+                RealityScan.exe .... -calculateNormalModel -simplify 100000 -smooth -calculateTexture -selectModel “Model 2” -exportSelectedModel %MyPath%\Object.obj %MyPath%\objParams.xml -save %Mypath%\NewProject.rsproj -quit 
+            </div>
+
+            <h3 data-id="h3_mtex_imtc" data-vn="1">Import models to a component</h3>
+            <p data-id="p_h3_imtc" data-vn="1">
+                Now suppose you have a folder called Models and you want to import all of them to an aligned project (saving it as a new project).
+            </p>
+            <div class="codeSample">
+                RealityScan.exe -load %MyPath%\AlignedProject.rsproj -save %MyPath%\NewProject.rsproj -quit<br>
+                for %%s in (%MyPath%\Models\*.obj) do (<br>
+                <div style="padding-left: 20px">
+                RealityScan.exe -load %MyPath%\NewProject.rsproj -selectMaximalComponent -importModel "%%s" -save %MyPath%\NewProject.rsproj -quit
+                </div>
+                )
+            </div>
+            <p data-id="p_imtc_for" data-vn="1">
+                The For cycle will iterate through all files with the .obj extension and add them to the project.
+            </p>
+
+            <h3 data-id="h3_mtex_caop" data-vn="1">Calculate an orthographic projection</h3>
+            <p data-id="p_h3_caop" data-vn="1">
+                When you create and export an orthographic projection by the command, you have to attach the files which contain all necessary parameters.
+            </p>
+            <div class="codeSample">
+                RealityScan.exe .... -calculateNormalModel -calculateOrthoProjection %MyPath%\params.rcortho -exportOrthoProjection %MyPath%\ortho.tiff exportOrthoParams.xml -save %MyPath%\MyProject.rsproj -quit
+            </div>
+            <p data-id="p_h3_obfi" data-vn="1">
+                You can obtain the <span class="command">params.rcortho</span> file when you export an orthographic projection from the GUI and set <span class="appproperty">Export projection parameters file</span> to <span class="appproperty">True</span>.
+                To learn more about export and import parameter files, visit <a href="https://rshelp.capturingreality.com/en-US/tools/xmlparamsfiles.htm">this page</a>.
+            </p>
+            
+        </div>
+
+        <div class="clear splitSpacing">
+            <!-- clear -->
+        </div>
+
+        <div data-id="div_bc" class="blocksContainer">
+
+            <a href="https://rshelp.capturingreality.com/en-US/tutorials/commandline.htm">
+                <div class="block TileColor1">
+                    <h2 data-id="h2_bc_pric" data-vn="1">Project and Image Commands</h2>
+                    <p data-id="p_h2_bc_pric" data-vn="1">Manage the current project, the application itself and add images via CLI</p>
+                </div>
+            </a>
+
+            <a href="https://rshelp.capturingreality.com/en-US/tutorials/commandline_rccmd.htm">
+                <div class="block TileColor1">
+                    <h2 data-id="h2_bc_out" data-vn="1">Commands Outside Command Prompt</h2>
+                    <p data-id="p_h2_bc_out" data-vn="2">Using CLI with an .rscmd file</p>
+                </div>
+            </a>
+            
+            <a href="https://rshelp.capturingreality.com/en-US/tutorials/commandline_deleg.htm">
+                <div class="block TileColor1">
+                    <h2 data-id="h2_bc_del" data-vn="1">Delegation of Commands</h2>
+                    <p data-id="p_bc_del" data-vn="2">On delegating commands into an opened instance of RealityScan</p>
+                </div>
+            </a>            
+
+            <a href="https://rshelp.capturingreality.com/en-US/tutorials/commandline_1.htm">
+                <div class="block TileColor1">
+                    <h2 data-id="h2_bc_alco" data-vn="1">Alignment Commands</h2>
+                    <p data-id="p_h2_bc_alco" data-vn="1">Commands for alignment and component handling</p>
+                </div>
+            </a>
+
+            <a href="https://rshelp.capturingreality.com/en-US/tutorials/commandline_2.htm">
+                <div class="block TileColor1">
+                    <h2 data-id="h2_bc_reco" data-vn="1">Reconstruction Commands</h2>
+                    <p data-id="p_h2_bc_reco" data-vn="1">Model calculation via the command line</p>
+                </div>
+            </a>
+
+            <a href="https://rshelp.capturingreality.com/en-US/tutorials/commandline_4.htm">
+                <div class="block TileColor2">
+                    <h2 data-id="h2_bc_apse" data-vn="1">Continue</h2>
+                    <p data-id="p_h2_bc_apse" data-vn="1">Application settings and behaviour</p>
+                </div>
+            </a>
+
+            <a href="https://rshelp.capturingreality.com/en-US/tutorials/commandline_5.htm">
+                <div class="block TileColor1">
+                    <h2 data-id="h2_bc_erha" data-vn="1">Error Handling Commands</h2>
+                    <p data-id="p_h2_bc_erha" data-vn="1">Commands for handling potential errors</p>
+                </div>
+            </a>
+
+            <script type="text/javascript">RenderBackToStartTile();</script><a href="https://rshelp.capturingreality.com/en-US/startIndex.htm">
+<div class="block TileColor4">
+    <h2>Back to Start</h2>
+    <p>Return back to the main screen</p>
+</div>
+</a>
+
+
+        </div>
+
+        <div class="clear">
+            <!-- clear -->
+        </div>
+
+        <div data-id="div_sa" class="rowblock">
+            <h3 data-id="h3_sa" data-vn="1">See also:</h3>
+            <ul class="intend">
+                <li data-id="li_sa_moex" data-vn="1">Learn about a model export <a href="https://rshelp.capturingreality.com/en-US/tools/export.htm">click here</a></li>
+                <li data-id="li_sa_moim" data-vn="1">Learn about a model import <a href="https://rshelp.capturingreality.com/en-US/tools/import.htm">click here</a></li>
+                <li data-id="li_sa_optu" data-vn="1">See the orthographic projection tutorial <a href="https://rshelp.capturingreality.com/en-US/tutorials/orthophoto.htm">click here</a></li>
+                <li data-id="li_sa_allc" data-vn="1">See all CLI commands in one page <a href="https://rshelp.capturingreality.com/en-US/appbasics/allcommands.htm">click here</a></li>
+            </ul>
+        </div>
+    <!-- content slide end -->
+
+    </div>
+
+    <script type="text/javascript">RenderCopyrightText();</script>
+
+    <script type="text/javascript">
+        InitializeTutorialMode();
+    </script>
+
+
+
+		<realitycapture-footer domain="https://www.realityscan.com" locale="" countrycode="" class="epicgames-footer"><template shadowrootmode="open"><!---->
+			<footer id="global-footer" class="global-footer " data-property-logo-valid="true" data-property-logo-icon-valid="true">
+				<section class="top flex space-between align-center gap40">
+					<epic-wf-footer-property-logo logoalt="RealityCapture Logo"><template shadowrootmode="open"><!----><span class="logo logo--has-icon"><!--?lit$474547039$-->
+					<img class="logo__img" fetchpriority="high" height="32" alt="RealityCapture Logo" src="https://cms-assets.unrealengine.com/AVzjeqAbLRKi3W5jq0CAvz/cmb81xhqb3trt07mz6d8e3ktp" width="32">
+				<!--?lit$474547039$-->
+					<img class="logo__img logo__img--icon" height="32" width="32" alt="RealityCapture Logo" src="https://cms-assets.unrealengine.com/AVzjeqAbLRKi3W5jq0CAvz/cmb81xho33tqz07mz0sqvsu4j">
+				</span></template></epic-wf-footer-property-logo>
+					<div class="flex gap40 align-center">
+						<epic-wf-footer-social-icons><template shadowrootmode="open"><!---->
+			<ul class="footer-social-icons">
+				<!--?lit$474547039$--><!---->
+						<li>
+							<a target="_blank" href="https://twitter.com/realitycapture_" aria-label="Twitter logo">
+								<epic-wf-eds-icon textcolor="secondary" icon="twitter_x"><template shadowrootmode="open"><!----><!--?lit$181435105$--><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <path d="M13.712 10.622 20.413 3h-1.588l-5.818 6.618L8.36 3H3l7.027 10.007L3 21h1.588l6.144-6.989L15.64 21H21zm-2.174 2.474-.713-.997L5.16 4.17H7.6l4.571 6.4.712.996 5.943 8.319h-2.439z"></path>
+</svg>
+<!--?--></template></epic-wf-eds-icon>
+							</a>
+						</li>
+					<!----><!---->
+						<li>
+							<a target="_blank" href="https://www.facebook.com/RealityScan/" aria-label="Facebook logo">
+								<epic-wf-eds-icon textcolor="secondary" icon="facebook"><template shadowrootmode="open"><!----><!--?lit$181435105$--><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <path d="m17.01 12.25.555-3.62h-3.473V6.282c0-.99.485-1.956 2.04-1.956h1.58V1.245S16.279 1 14.909 1c-2.86 0-4.73 1.734-4.73 4.872V8.63H7v3.62h3.18V21h3.912v-8.75z"></path>
+</svg>
+<!--?--></template></epic-wf-eds-icon>
+							</a>
+						</li>
+					<!----><!---->
+						<li>
+							<a target="_blank" href="https://www.instagram.com/realityscanofficial/" aria-label="Instagram logo">
+								<epic-wf-eds-icon textcolor="secondary" icon="instagram"><template shadowrootmode="open"><!----><!--?lit$181435105$--><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <path d="M12.002 7.385A4.607 4.607 0 0 0 7.388 12a4.607 4.607 0 0 0 4.614 4.615A4.607 4.607 0 0 0 16.616 12a4.607 4.607 0 0 0-4.614-4.615m0 7.615c-1.65 0-3-1.345-3-3s1.346-3 3-3 3 1.345 3 3-1.35 3-3 3m5.879-7.804c0 .599-.482 1.077-1.076 1.077a1.076 1.076 0 1 1 1.076-1.076m3.056 1.093c-.069-1.442-.398-2.72-1.454-3.772-1.052-1.052-2.329-1.381-3.77-1.454-1.486-.084-5.94-.084-7.425 0-1.438.069-2.715.398-3.771 1.45s-1.381 2.33-1.454 3.772c-.084 1.486-.084 5.94 0 7.426.069 1.442.398 2.72 1.454 3.772s2.329 1.381 3.77 1.454c1.486.084 5.94.084 7.425 0 1.442-.069 2.719-.398 3.771-1.454 1.052-1.053 1.381-2.33 1.454-3.772.084-1.486.084-5.936 0-7.422m-1.92 9.017a3.04 3.04 0 0 1-1.71 1.71c-1.185.47-3.996.362-5.305.362-1.31 0-4.124.105-5.305-.361a3.04 3.04 0 0 1-1.71-1.711c-.47-1.185-.362-3.997-.362-5.306s-.104-4.125.362-5.306a3.04 3.04 0 0 1 1.71-1.71c1.185-.47 3.996-.362 5.305-.362 1.31 0 4.124-.105 5.305.361.787.313 1.393.92 1.71 1.711.47 1.185.362 3.997.362 5.306s.108 4.125-.362 5.306"></path>
+</svg>
+<!--?--></template></epic-wf-eds-icon>
+							</a>
+						</li>
+					<!----><!---->
+						<li>
+							<a target="_blank" href="https://www.youtube.com/@RealityScanOfficial" aria-label="YouTube logo">
+								<epic-wf-eds-icon textcolor="secondary" icon="youtube"><template shadowrootmode="open"><!----><!--?lit$181435105$--><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <path d="M21.8 8.035s-.195-1.379-.796-1.984c-.762-.797-1.613-.801-2.004-.848C16.203 5 12.004 5 12.004 5h-.008S7.796 5 5 5.203c-.39.047-1.242.05-2.004.848-.601.605-.793 1.984-.793 1.984S2 9.656 2 11.273v1.516c0 1.617.2 3.238.2 3.238s.195 1.38.792 1.985c.762.797 1.762.77 2.207.855 1.602.152 6.801.2 6.801.2s4.203-.008 7-.208c.39-.047 1.242-.05 2.004-.847.601-.606.797-1.985.797-1.985S22 14.41 22 12.79v-1.516c0-1.617-.2-3.238-.2-3.238M9.935 14.63V9.008l5.402 2.82z"></path>
+</svg>
+<!--?--></template></epic-wf-eds-icon>
+							</a>
+						</li>
+					<!----><!---->
+						<li>
+							<a target="_blank" href="https://www.linkedin.com/company/realityscanofficial/posts/?feedView=all" aria-label="LinkedIn logo">
+								<epic-wf-eds-icon textcolor="secondary" icon="linkedin"><template shadowrootmode="open"><!----><!--?lit$181435105$--><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <path d="M6.477 21H2.33V7.647h4.147zM4.4 5.826C3.075 5.826 2 4.727 2 3.4a2.401 2.401 0 1 1 4.803 0c0 1.326-1.076 2.425-2.402 2.425M21.996 21h-4.138v-6.5c0-1.55-.03-3.536-2.155-3.536-2.156 0-2.487 1.683-2.487 3.424V21H9.074V7.647h3.977v1.821h.058c.554-1.049 1.906-2.156 3.923-2.156 4.197 0 4.968 2.764 4.968 6.353V21z"></path>
+</svg>
+<!--?--></template></epic-wf-eds-icon>
+							</a>
+						</li>
+					<!---->
+			</ul>
+		</template></epic-wf-footer-social-icons>
+						<!--?lit$474547039$--><!--?-->
+					</div>
+				</section>
+
+				<!--?lit$474547039$-->
+		<section class="footer-link-columns-wrapper">
+			<hr>
+			<div class="footer-link-columns">
+				<!--?lit$474547039$--><!---->
+						<epic-wf-footer-link-column heading="Games" domain="https://www.realityscan.com" locale="en-US" countrycode="US"><template shadowrootmode="open"><!---->
+			<div class="footer-link-column">
+				<h3 class="column-heading-desktop"><!--?lit$474547039$-->Games</h3>
+				<button class="column-heading-mobile" id="Games-button" aria-controls="Games-content" aria-expanded="false">
+					<h3><!--?lit$474547039$-->Games</h3>
+					<span aria-hidden="true" class="icon"><!--?lit$474547039$--><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <path fill-rule="evenodd" d="M19.53 8.97a.75.75 0 0 1 0 1.06L12 17.56l-7.53-7.53a.75.75 0 1 1 1.06-1.06L12 15.44l6.47-6.47a.75.75 0 0 1 1.06 0" clip-rule="evenodd"></path>
+</svg>
+</span>
+				</button>
+				<ul id="Games-content" class="collapsed">
+					<!--?lit$474547039$--><!----><li>
+							<epic-wf-footer-link size="md" label="Fortnite" hreftemplate="https://www.fortnite.com/?lang={locale}" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="footer-link md" href="https://www.fortnite.com/?lang=en-US" title="Fortnite">
+				<span class="label"><!--?lit$474547039$-->Fortnite</span>
+			</a>
+			<slot></slot>
+		</template>
+							</epic-wf-footer-link>
+						</li><!----><!----><li>
+							<epic-wf-footer-link size="md" label="Fall Guys" hreftemplate="https://fallguys.com/?lang={locale}" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="footer-link md" href="https://fallguys.com/?lang=en-US" title="Fall Guys">
+				<span class="label"><!--?lit$474547039$-->Fall Guys</span>
+			</a>
+			<slot></slot>
+		</template>
+							</epic-wf-footer-link>
+						</li><!----><!----><li>
+							<epic-wf-footer-link size="md" label="Rocket League" hreftemplate="https://www.rocketleague.com/?lang={locale}" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="footer-link md" href="https://www.rocketleague.com/?lang=en-US" title="Rocket League">
+				<span class="label"><!--?lit$474547039$-->Rocket League</span>
+			</a>
+			<slot></slot>
+		</template>
+							</epic-wf-footer-link>
+						</li><!----><!----><li>
+							<epic-wf-footer-link size="md" label="Unreal Tournament" hreftemplate="https://www.epicgames.com/unrealtournament/?lang={locale}" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="footer-link md" href="https://www.epicgames.com/unrealtournament/?lang=en-US" title="Unreal Tournament">
+				<span class="label"><!--?lit$474547039$-->Unreal Tournament</span>
+			</a>
+			<slot></slot>
+		</template>
+							</epic-wf-footer-link>
+						</li><!----><!----><li>
+							<epic-wf-footer-link size="md" label="Infinity Blade" hreftemplate="https://www.epicgames.com/infinityblade/home/?lang={locale}" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="footer-link md" href="https://www.epicgames.com/infinityblade/home/?lang=en-US" title="Infinity Blade">
+				<span class="label"><!--?lit$474547039$-->Infinity Blade</span>
+			</a>
+			<slot></slot>
+		</template>
+							</epic-wf-footer-link>
+						</li><!----><!----><li>
+							<epic-wf-footer-link size="md" label="Shadow Complex" hreftemplate="https://store.epicgames.com/p/shadow-complex/?lang={locale}" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="footer-link md" href="https://store.epicgames.com/p/shadow-complex/?lang=en-US" title="Shadow Complex">
+				<span class="label"><!--?lit$474547039$-->Shadow Complex</span>
+			</a>
+			<slot></slot>
+		</template>
+							</epic-wf-footer-link>
+						</li><!----><!----><li>
+							<epic-wf-footer-link size="md" label="Robo Recall" hreftemplate="https://www.epicgames.com/roborecall" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="footer-link md" href="https://www.epicgames.com/roborecall" title="Robo Recall">
+				<span class="label"><!--?lit$474547039$-->Robo Recall</span>
+			</a>
+			<slot></slot>
+		</template>
+							</epic-wf-footer-link>
+						</li><!---->
+				</ul>
+			</div>
+		</template></epic-wf-footer-link-column>
+					<!----><!---->
+						<epic-wf-footer-link-column heading="Marketplaces" domain="https://www.realityscan.com" locale="en-US" countrycode="US"><template shadowrootmode="open"><!---->
+			<div class="footer-link-column">
+				<h3 class="column-heading-desktop"><!--?lit$474547039$-->Marketplaces</h3>
+				<button class="column-heading-mobile" id="Marketplaces-button" aria-controls="Marketplaces-content" aria-expanded="false">
+					<h3><!--?lit$474547039$-->Marketplaces</h3>
+					<span aria-hidden="true" class="icon"><!--?lit$474547039$--><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <path fill-rule="evenodd" d="M19.53 8.97a.75.75 0 0 1 0 1.06L12 17.56l-7.53-7.53a.75.75 0 1 1 1.06-1.06L12 15.44l6.47-6.47a.75.75 0 0 1 1.06 0" clip-rule="evenodd"></path>
+</svg>
+</span>
+				</button>
+				<ul id="Marketplaces-content" class="collapsed">
+					<!--?lit$474547039$--><!----><li>
+							<epic-wf-footer-link size="md" label="Epic Games Store" hreftemplate="https://store.epicgames.com/{locale}/" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="footer-link md" href="https://store.epicgames.com/en-US/" title="Epic Games Store">
+				<span class="label"><!--?lit$474547039$-->Epic Games Store</span>
+			</a>
+			<slot></slot>
+		</template>
+							</epic-wf-footer-link>
+						</li><!----><!----><li>
+							<epic-wf-footer-link size="md" label="Fab" hreftemplate="https://www.fab.com" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="footer-link md" href="https://www.fab.com/" title="Fab">
+				<span class="label"><!--?lit$474547039$-->Fab</span>
+			</a>
+			<slot></slot>
+		</template>
+							</epic-wf-footer-link>
+						</li><!----><!----><li>
+							<epic-wf-footer-link size="md" label="Sketchfab" hreftemplate="https://sketchfab.com/store" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="footer-link md" href="https://sketchfab.com/store" title="Sketchfab">
+				<span class="label"><!--?lit$474547039$-->Sketchfab</span>
+			</a>
+			<slot></slot>
+		</template>
+							</epic-wf-footer-link>
+						</li><!----><!----><li>
+							<epic-wf-footer-link size="md" label="ArtStation" hreftemplate="https://www.artstation.com/" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="footer-link md" href="https://www.artstation.com/" title="ArtStation">
+				<span class="label"><!--?lit$474547039$-->ArtStation</span>
+			</a>
+			<slot></slot>
+		</template>
+							</epic-wf-footer-link>
+						</li><!----><!----><li>
+							<epic-wf-footer-link size="md" label="Store Refund Policy" hreftemplate="https://legal.epicgames.com/{locale}/store/refund-policy" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="footer-link md" href="https://legal.epicgames.com/en-US/store/refund-policy" title="Store Refund Policy">
+				<span class="label"><!--?lit$474547039$-->Store Refund Policy</span>
+			</a>
+			<slot></slot>
+		</template>
+							</epic-wf-footer-link>
+						</li><!----><!----><li>
+							<epic-wf-footer-link size="md" label="Store EULA" hreftemplate="https://legal.epicgames.com/{locale}/store/eula" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="footer-link md" href="https://legal.epicgames.com/en-US/store/eula" title="Store EULA">
+				<span class="label"><!--?lit$474547039$-->Store EULA</span>
+			</a>
+			<slot></slot>
+		</template>
+							</epic-wf-footer-link>
+						</li><!----><!----><!---->
+				</ul>
+			</div>
+		</template></epic-wf-footer-link-column>
+					<!----><!---->
+						<epic-wf-footer-link-column heading="Tools" domain="https://www.realityscan.com" locale="en-US" countrycode="US"><template shadowrootmode="open"><!---->
+			<div class="footer-link-column">
+				<h3 class="column-heading-desktop"><!--?lit$474547039$-->Tools</h3>
+				<button class="column-heading-mobile" id="Tools-button" aria-controls="Tools-content" aria-expanded="false">
+					<h3><!--?lit$474547039$-->Tools</h3>
+					<span aria-hidden="true" class="icon"><!--?lit$474547039$--><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <path fill-rule="evenodd" d="M19.53 8.97a.75.75 0 0 1 0 1.06L12 17.56l-7.53-7.53a.75.75 0 1 1 1.06-1.06L12 15.44l6.47-6.47a.75.75 0 0 1 1.06 0" clip-rule="evenodd"></path>
+</svg>
+</span>
+				</button>
+				<ul id="Tools-content" class="collapsed">
+					<!--?lit$474547039$--><!----><li>
+							<epic-wf-footer-link size="md" label="Unreal Engine" hreftemplate="https://www.unrealengine.com/{locale}/" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="footer-link md" href="https://www.unrealengine.com/en-US/" title="Unreal Engine">
+				<span class="label"><!--?lit$474547039$-->Unreal Engine</span>
+			</a>
+			<slot></slot>
+		</template>
+							</epic-wf-footer-link>
+						</li><!----><!----><li>
+							<epic-wf-footer-link size="md" label="UEFN" hreftemplate="https://store.epicgames.com/{locale}/p/fortnite--uefn" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="footer-link md" href="https://store.epicgames.com/en-US/p/fortnite--uefn" title="UEFN">
+				<span class="label"><!--?lit$474547039$-->UEFN</span>
+			</a>
+			<slot></slot>
+		</template>
+							</epic-wf-footer-link>
+						</li><!----><!----><li>
+							<epic-wf-footer-link size="md" label="MetaHuman" hreftemplate="https://www.unrealengine.com/{locale}/metahuman" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="footer-link md" href="https://www.unrealengine.com/en-US/metahuman" title="MetaHuman">
+				<span class="label"><!--?lit$474547039$-->MetaHuman</span>
+			</a>
+			<slot></slot>
+		</template>
+							</epic-wf-footer-link>
+						</li><!----><!----><li>
+							<epic-wf-footer-link size="md" label="Twinmotion" hreftemplate="https://www.twinmotion.com/{locale}/" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="footer-link md" href="https://www.twinmotion.com/en-US/" title="Twinmotion">
+				<span class="label"><!--?lit$474547039$-->Twinmotion</span>
+			</a>
+			<slot></slot>
+		</template>
+							</epic-wf-footer-link>
+						</li><!----><!----><li>
+							<epic-wf-footer-link size="md" label="Megascans" hreftemplate="https://quixel.com/megascans/" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="footer-link md" href="https://quixel.com/megascans/" title="Megascans">
+				<span class="label"><!--?lit$474547039$-->Megascans</span>
+			</a>
+			<slot></slot>
+		</template>
+							</epic-wf-footer-link>
+						</li><!----><!----><li>
+							<epic-wf-footer-link size="md" label="RealityScan" hreftemplate="https://www.realityscan.com/{locale}/" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="footer-link md" href="https://www.realityscan.com/en-US/" title="RealityScan">
+				<span class="label"><!--?lit$474547039$-->RealityScan</span>
+			</a>
+			<slot></slot>
+		</template>
+							</epic-wf-footer-link>
+						</li><!----><!----><li>
+							<epic-wf-footer-link size="md" label="RAD Game Tools" hreftemplate="http://www.radgametools.com/" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="footer-link md" href="http://www.radgametools.com/" title="RAD Game Tools">
+				<span class="label"><!--?lit$474547039$-->RAD Game Tools</span>
+			</a>
+			<slot></slot>
+		</template>
+							</epic-wf-footer-link>
+						</li><!---->
+				</ul>
+			</div>
+		</template></epic-wf-footer-link-column>
+					<!----><!---->
+						<epic-wf-footer-link-column heading="Online Services" domain="https://www.realityscan.com" locale="en-US" countrycode="US"><template shadowrootmode="open"><!---->
+			<div class="footer-link-column">
+				<h3 class="column-heading-desktop"><!--?lit$474547039$-->Online Services</h3>
+				<button class="column-heading-mobile" id="Online Services-button" aria-controls="Online Services-content" aria-expanded="false">
+					<h3><!--?lit$474547039$-->Online Services</h3>
+					<span aria-hidden="true" class="icon"><!--?lit$474547039$--><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <path fill-rule="evenodd" d="M19.53 8.97a.75.75 0 0 1 0 1.06L12 17.56l-7.53-7.53a.75.75 0 1 1 1.06-1.06L12 15.44l6.47-6.47a.75.75 0 0 1 1.06 0" clip-rule="evenodd"></path>
+</svg>
+</span>
+				</button>
+				<ul id="Online Services-content" class="collapsed">
+					<!--?lit$474547039$--><!----><li>
+							<epic-wf-footer-link size="md" label="Epic Online Services" hreftemplate="https://onlineservices.epicgames.com/{locale}/" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="footer-link md" href="https://onlineservices.epicgames.com/en-US/" title="Epic Online Services">
+				<span class="label"><!--?lit$474547039$-->Epic Online Services</span>
+			</a>
+			<slot></slot>
+		</template>
+							</epic-wf-footer-link>
+						</li><!----><!----><li>
+							<epic-wf-footer-link size="md" label="Kids Web Services" hreftemplate="https://www.kidswebservices.com/" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="footer-link md" href="https://www.kidswebservices.com/" title="Kids Web Services">
+				<span class="label"><!--?lit$474547039$-->Kids Web Services</span>
+			</a>
+			<slot></slot>
+		</template>
+							</epic-wf-footer-link>
+						</li><!----><!----><li>
+							<epic-wf-footer-link size="md" label="Services Agreement" hreftemplate="https://onlineservices.epicgames.com/{locale}/services/terms/agreements" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="footer-link md" href="https://onlineservices.epicgames.com/en-US/services/terms/agreements" title="Services Agreement">
+				<span class="label"><!--?lit$474547039$-->Services Agreement</span>
+			</a>
+			<slot></slot>
+		</template>
+							</epic-wf-footer-link>
+						</li><!----><!----><li>
+							<epic-wf-footer-link size="md" label="Acceptable Use Policy" hreftemplate="https://onlineservices.epicgames.com/{locale}/services/terms/aup" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="footer-link md" href="https://onlineservices.epicgames.com/en-US/services/terms/aup" title="Acceptable Use Policy">
+				<span class="label"><!--?lit$474547039$-->Acceptable Use Policy</span>
+			</a>
+			<slot></slot>
+		</template>
+							</epic-wf-footer-link>
+						</li><!----><!----><li>
+							<epic-wf-footer-link size="md" label="Trust Statement" hreftemplate="https://onlineservices.epicgames.com/{locale}/services/terms/trust-statement" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="footer-link md" href="https://onlineservices.epicgames.com/en-US/services/terms/trust-statement" title="Trust Statement">
+				<span class="label"><!--?lit$474547039$-->Trust Statement</span>
+			</a>
+			<slot></slot>
+		</template>
+							</epic-wf-footer-link>
+						</li><!----><!----><li>
+							<epic-wf-footer-link size="md" label="Subprocessor List" hreftemplate="https://onlineservices.epicgames.com/{locale}/services/terms/subprocessors" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="footer-link md" href="https://onlineservices.epicgames.com/en-US/services/terms/subprocessors" title="Subprocessor List">
+				<span class="label"><!--?lit$474547039$-->Subprocessor List</span>
+			</a>
+			<slot></slot>
+		</template>
+							</epic-wf-footer-link>
+						</li><!---->
+				</ul>
+			</div>
+		</template></epic-wf-footer-link-column>
+					<!----><!---->
+						<epic-wf-footer-link-column heading="Company" domain="https://www.realityscan.com" locale="en-US" countrycode="US"><template shadowrootmode="open"><!---->
+			<div class="footer-link-column">
+				<h3 class="column-heading-desktop"><!--?lit$474547039$-->Company</h3>
+				<button class="column-heading-mobile" id="Company-button" aria-controls="Company-content" aria-expanded="false">
+					<h3><!--?lit$474547039$-->Company</h3>
+					<span aria-hidden="true" class="icon"><!--?lit$474547039$--><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <path fill-rule="evenodd" d="M19.53 8.97a.75.75 0 0 1 0 1.06L12 17.56l-7.53-7.53a.75.75 0 1 1 1.06-1.06L12 15.44l6.47-6.47a.75.75 0 0 1 1.06 0" clip-rule="evenodd"></path>
+</svg>
+</span>
+				</button>
+				<ul id="Company-content" class="collapsed">
+					<!--?lit$474547039$--><!----><li>
+							<epic-wf-footer-link size="md" label="About" hreftemplate="https://www.epicgames.com/site/{locale}/about" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="footer-link md" href="https://www.epicgames.com/site/en-US/about" title="About">
+				<span class="label"><!--?lit$474547039$-->About</span>
+			</a>
+			<slot></slot>
+		</template>
+							</epic-wf-footer-link>
+						</li><!----><!----><li>
+							<epic-wf-footer-link size="md" label="Newsroom" hreftemplate="https://www.epicgames.com/site/{locale}/news" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="footer-link md" href="https://www.epicgames.com/site/en-US/news" title="Newsroom">
+				<span class="label"><!--?lit$474547039$-->Newsroom</span>
+			</a>
+			<slot></slot>
+		</template>
+							</epic-wf-footer-link>
+						</li><!----><!----><li>
+							<epic-wf-footer-link size="md" label="Careers" hreftemplate="https://www.epicgames.com/site/{locale}/careers/jobs" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="footer-link md" href="https://www.epicgames.com/site/en-US/careers/jobs" title="Careers">
+				<span class="label"><!--?lit$474547039$-->Careers</span>
+			</a>
+			<slot></slot>
+		</template>
+							</epic-wf-footer-link>
+						</li><!----><!----><li>
+							<epic-wf-footer-link size="md" label="Students" hreftemplate="https://www.epicgames.com/site/{locale}/earlycareers" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="footer-link md" href="https://www.epicgames.com/site/en-US/earlycareers" title="Students">
+				<span class="label"><!--?lit$474547039$-->Students</span>
+			</a>
+			<slot></slot>
+		</template>
+							</epic-wf-footer-link>
+						</li><!----><!----><li>
+							<epic-wf-footer-link size="md" label="UX Research" hreftemplate="https://www.epicgames.com/site/{locale}/ux" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="footer-link md" href="https://www.epicgames.com/site/en-US/ux" title="UX Research">
+				<span class="label"><!--?lit$474547039$-->UX Research</span>
+			</a>
+			<slot></slot>
+		</template>
+							</epic-wf-footer-link>
+						</li><!---->
+				</ul>
+			</div>
+		</template></epic-wf-footer-link-column>
+					<!----><!---->
+						<epic-wf-footer-link-column heading="Resources" domain="https://www.realityscan.com" locale="en-US" countrycode="US"><template shadowrootmode="open"><!---->
+			<div class="footer-link-column">
+				<h3 class="column-heading-desktop"><!--?lit$474547039$-->Resources</h3>
+				<button class="column-heading-mobile" id="Resources-button" aria-controls="Resources-content" aria-expanded="false">
+					<h3><!--?lit$474547039$-->Resources</h3>
+					<span aria-hidden="true" class="icon"><!--?lit$474547039$--><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <path fill-rule="evenodd" d="M19.53 8.97a.75.75 0 0 1 0 1.06L12 17.56l-7.53-7.53a.75.75 0 1 1 1.06-1.06L12 15.44l6.47-6.47a.75.75 0 0 1 1.06 0" clip-rule="evenodd"></path>
+</svg>
+</span>
+				</button>
+				<ul id="Resources-content" class="collapsed">
+					<!--?lit$474547039$--><!----><li>
+							<epic-wf-footer-link size="md" label="Dev Community" hreftemplate="https://dev.epicgames.com/community/" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="footer-link md" href="https://dev.epicgames.com/community/" title="Dev Community">
+				<span class="label"><!--?lit$474547039$-->Dev Community</span>
+			</a>
+			<slot></slot>
+		</template>
+							</epic-wf-footer-link>
+						</li><!----><!----><li>
+							<epic-wf-footer-link size="md" label="MegaGrants" hreftemplate="https://www.unrealengine.com/{locale}/megagrants" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="footer-link md" href="https://www.unrealengine.com/en-US/megagrants" title="MegaGrants">
+				<span class="label"><!--?lit$474547039$-->MegaGrants</span>
+			</a>
+			<slot></slot>
+		</template>
+							</epic-wf-footer-link>
+						</li><!----><!----><li>
+							<epic-wf-footer-link size="md" label="Support-A-Creator" hreftemplate="https://sac.epicgames.com/{locale}/overview" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="footer-link md" href="https://sac.epicgames.com/en-US/overview" title="Support-A-Creator">
+				<span class="label"><!--?lit$474547039$-->Support-A-Creator</span>
+			</a>
+			<slot></slot>
+		</template>
+							</epic-wf-footer-link>
+						</li><!----><!----><li>
+							<epic-wf-footer-link size="md" label="Creator Agreement" hreftemplate="https://legal.epicgames.com/{locale}/fortnite/eula/sac" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="footer-link md" href="https://legal.epicgames.com/en-US/fortnite/eula/sac" title="Creator Agreement">
+				<span class="label"><!--?lit$474547039$-->Creator Agreement</span>
+			</a>
+			<slot></slot>
+		</template>
+							</epic-wf-footer-link>
+						</li><!----><!----><li>
+							<epic-wf-footer-link size="md" label="Distribute on Epic Games" hreftemplate="https://store.epicgames.com/{locale}/distribution" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="footer-link md" href="https://store.epicgames.com/en-US/distribution" title="Distribute on Epic Games">
+				<span class="label"><!--?lit$474547039$-->Distribute on Epic Games</span>
+			</a>
+			<slot></slot>
+		</template>
+							</epic-wf-footer-link>
+						</li><!----><!----><li>
+							<epic-wf-footer-link size="md" label="Unreal Engine Branding Guidelines" hreftemplate="https://www.unrealengine.com/{locale}/branding" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="footer-link md" href="https://www.unrealengine.com/en-US/branding" title="Unreal Engine Branding Guidelines">
+				<span class="label"><!--?lit$474547039$-->Unreal Engine Branding Guidelines</span>
+			</a>
+			<slot></slot>
+		</template>
+							</epic-wf-footer-link>
+						</li><!----><!----><li>
+							<epic-wf-footer-link size="md" label="Fan Art Policy" hreftemplate="https://legal.epicgames.com/{locale}/epicgames/fan-art-policy" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="footer-link md" href="https://legal.epicgames.com/en-US/epicgames/fan-art-policy" title="Fan Art Policy">
+				<span class="label"><!--?lit$474547039$-->Fan Art Policy</span>
+			</a>
+			<slot></slot>
+		</template>
+							</epic-wf-footer-link>
+						</li><!----><!----><li>
+							<epic-wf-footer-link size="md" label="Community Rules" hreftemplate="https://www.epicgames.com/site/{locale}/community-rules" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="footer-link md" href="https://www.epicgames.com/site/en-US/community-rules" title="Community Rules">
+				<span class="label"><!--?lit$474547039$-->Community Rules</span>
+			</a>
+			<slot></slot>
+		</template>
+							</epic-wf-footer-link>
+						</li><!----><!----><li>
+							<epic-wf-footer-link size="md" label="EU Digital Services Act Inquiries" hreftemplate="https://www.epicgames.com/help/contact-us?source=external" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="footer-link md" href="https://www.epicgames.com/help/contact-us?source=external" title="EU Digital Services Act Inquiries">
+				<span class="label"><!--?lit$474547039$-->EU Digital Services Act Inquiries</span>
+			</a>
+			<slot></slot>
+		</template>
+							</epic-wf-footer-link>
+						</li><!----><!----><li>
+							<epic-wf-footer-link size="md" label="Epic Pro Support" hreftemplate="https://udn.unrealengine.com/" domain="https://www.realityscan.com" locale="en-US"><template shadowrootmode="open"><!---->
+			<a class="footer-link md" href="https://udn.unrealengine.com/" title="Epic Pro Support">
+				<span class="label"><!--?lit$474547039$-->Epic Pro Support</span>
+			</a>
+			<slot></slot>
+		</template>
+							</epic-wf-footer-link>
+						</li><!---->
+				</ul>
+			</div>
+		</template></epic-wf-footer-link-column>
+					<!---->
+			</div>
+			<hr>
+		</section>
+	
+
+				<epic-wf-footer-tags-legal locale="en-US"><template shadowrootmode="open"><!----><!--?--></template></epic-wf-footer-tags-legal>
+
+				<section class="bottom flex space-between">
+					<div class="flex column gap40">
+						<epic-wf-footer-copyright text="© {year} Epic Games, Inc. Epic Games, RealityScan, and their respective logos are trademarks or registered trademarks of Epic Games, Inc. in the USA and elsewhere."><template shadowrootmode="open"><!----> <span class="copyright"><!--?lit$474547039$-->© 2025 Epic Games, Inc. Epic Games, RealityScan, and their respective logos are trademarks or registered trademarks of Epic Games, Inc. in the USA and elsewhere.</span> </template></epic-wf-footer-copyright>
+						<ul class="bottom-links">
+							<!--?lit$474547039$--><!----> <li>
+									<epic-wf-footer-link size="xs" label="Terms of service" hreftemplate="https://legal.epicgames.com/{locale}/epicgames/tos" domain="https://www.realityscan.com" locale="en-US" countrycode="US" countrycodeswhitelist=""><template shadowrootmode="open"><!---->
+			<a class="footer-link xs" href="https://legal.epicgames.com/en-US/epicgames/tos" title="Terms of service">
+				<span class="label"><!--?lit$474547039$-->Terms of service</span>
+			</a>
+			<slot></slot>
+		</template>
+									</epic-wf-footer-link>
+								</li><!----><!----> <li>
+									<epic-wf-footer-link size="xs" label="Privacy policy" hreftemplate="https://legal.epicgames.com/{locale}/epicgames/privacy-policy" domain="https://www.realityscan.com" locale="en-US" countrycode="US" countrycodeswhitelist=""><template shadowrootmode="open"><!---->
+			<a class="footer-link xs" href="https://legal.epicgames.com/en-US/epicgames/privacy-policy" title="Privacy policy">
+				<span class="label"><!--?lit$474547039$-->Privacy policy</span>
+			</a>
+			<slot></slot>
+		</template>
+									</epic-wf-footer-link>
+								</li><!----><!----> <li>
+									<epic-wf-footer-link size="xs" label="Safety &amp; security" hreftemplate="https://safety.epicgames.com/{locale}" domain="https://www.realityscan.com" locale="en-US" countrycode="US" countrycodeswhitelist=""><template shadowrootmode="open"><!---->
+			<a class="footer-link xs" href="https://safety.epicgames.com/en-US" title="Safety &amp; security">
+				<span class="label"><!--?lit$474547039$-->Safety &amp; security</span>
+			</a>
+			<slot></slot>
+		</template>
+									</epic-wf-footer-link>
+								</li><!----><!----> <li>
+									<epic-wf-footer-link size="xs" label="RealityScan EULA" hreftemplate="{domain}/{locale}/eula" domain="https://www.realityscan.com" locale="en-US" countrycode="US" countrycodeswhitelist=""><template shadowrootmode="open"><!---->
+			<a class="footer-link xs" href="https://www.realityscan.com/en-US/eula" title="RealityScan EULA">
+				<span class="label"><!--?lit$474547039$-->RealityScan EULA</span>
+			</a>
+			<slot></slot>
+		</template>
+									</epic-wf-footer-link>
+								</li><!---->
+						</ul>
+					</div>
+
+					<epic-wf-footer-button key="backToTopButton" padding="large"><template shadowrootmode="open"><!---->
+				<button type="button" class="footer-button footer-button-variant-secondary footer-button-padding-large">
+					<span class="label"><!--?lit$474547039$-->Back to top</span>
+					<epic-wf-eds-icon textcolor="primary" icon="arrow_up_circle"><template shadowrootmode="open"><!----><!--?lit$181435105$--><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <path d="M11.25 16a.75.75 0 0 0 1.5 0V9.81l2.22 2.22a.75.75 0 1 0 1.06-1.06L12 6.94l-4.03 4.03a.75.75 0 1 0 1.06 1.06l2.22-2.22z"></path>
+  <path fill-rule="evenodd" d="M12 2.25c-5.385 0-9.75 4.365-9.75 9.75s4.365 9.75 9.75 9.75 9.75-4.365 9.75-9.75S17.385 2.25 12 2.25M3.75 12a8.25 8.25 0 1 1 16.5 0 8.25 8.25 0 0 1-16.5 0" clip-rule="evenodd"></path>
+</svg>
+<!--?--></template></epic-wf-eds-icon>
+				</button>
+				<slot></slot>
+			</template></epic-wf-footer-button>
+				</section>
+			</footer>
+		</template></realitycapture-footer>
+    
+<style>
+			.wf-nav-open {
+				height: 100vh;
+				overflow: hidden;
+				position: fixed;
+				width: 100vw;
+			}
+
+			@supports (height: 100dvh) {
+				.wf-nav-open {
+					height: 100dvh;
+				}
+			}
+			
+			.epic-wf {
+				--eg-global-nav-height: 4.5rem;
+			}
+		</style></body></html>

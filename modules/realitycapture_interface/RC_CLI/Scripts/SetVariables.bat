@@ -4,11 +4,15 @@
 @echo off
 REM setlocal EnableDelayedExpansion
 
-:: Path to RealityCapture application.
-set RealityCapture=""C:\Program%20Files\Epic%20Games\RealityScan_2.0\RealityScan.exe"
+:: Path to RealityCapture application - check for RC_EXECUTABLE env var first
+if defined RC_EXECUTABLE (
+    set "RealityCapture=%RC_EXECUTABLE%"
+) else (
+    set "RealityCapture=C:\Program Files\Epic Games\RealityScan_2.0\RealityScan.exe"
+)
 
 :: Root path to work folders where all the datasets are stored 
-set RootFolder=%~dp0\\..\\
+set RootFolder=%~dp0..\
 
 :: Variable storing path to working directory
 set workingDir=%~dp0
@@ -23,8 +27,8 @@ if not exist "%Models%" mkdir "%Models%"
 
 :: A path to the Error folder.
 set ErrorPath=%RootFolder%\Errors
-::creates folder "Models" if it does not exists
-if not exist "%Errors%" mkdir "%Errors%"
+::creates folder "Errors" if it does not exists
+if not exist "%ErrorPath%" mkdir "%ErrorPath%"
 
 :: Variable storing name of file with Error write script.
 set ErrorWriter=%ErrorPath%\ErrorWriter.bat

@@ -5,9 +5,11 @@ import abc
 import logging
 import sys
 import time
+from typing import Optional
 from tqdm import tqdm
 
 from module_base.parameter import Parameter
+
 
 class RCModule(abc.ABC):
     """
@@ -23,6 +25,8 @@ class RCModule(abc.ABC):
         self.logger = logger
         self.params = {}
         self.loading_bars = []
+        self._progress_reporter = None
+        self._session_state = None
 
     @property
     def name(self) -> str:
@@ -37,6 +41,14 @@ class RCModule(abc.ABC):
         """
         self.params = all_params
 
+    def set_progress_reporter(self, reporter) -> None:
+        """Set the ProgressReporter instance for unified progress reporting."""
+        self._progress_reporter = reporter
+
+    def set_session_state(self, session_state) -> None:
+        """Set the SessionState instance for save/checkpoint support."""
+        self._session_state = session_state
+
     def get_parameters(self) -> dict[str, Parameter]:
         """
         Default: no parameters. Subclasses should override if they need any.
@@ -46,23 +58,86 @@ class RCModule(abc.ABC):
     @abc.abstractmethod
     def run(self) -> dict[str, object] | None:
         """
-        Execute the module’s main logic.
+        Execute the module's main logic.
         """
         ...
 
     def finish(self) -> None:
         """
-        Optional hook after run() completes; closes any open loading bars.
+        Optional hook after run() completes; closes any open loading bars
+        and finishes progress reporting.
         """
         for bar in self.loading_bars:
             bar.close()
+        if self._progress_reporter:
+            self._progress_reporter.finish()
         time.sleep(0.2)
 
     def validate_parameters(self) -> tuple[bool, str | None]:
         """
-        Default parameter validation (override if needed).
+        Validate this module's own parameters with constraints (min/max, choices).
+        Subclasses should call super().validate_parameters() first,
+        then add their own validation.
         """
+        own_param_names = set(self.get_parameters().keys())
+        for name, param in self.params.items():
+            if name not in own_param_names:
+                continue
+            if hasattr(param, 'validate'):
+                valid, msg = param.validate()
+                if not valid:
+                    return False, msg
         return True, None
+
+    # ------------------------------------------------------------------ #
+    # Progress reporting helpers
+    # ------------------------------------------------------------------ #
+
+    def _report_progress(
+        self,
+        operation: str,
+        progress_pct: float,
+        elapsed_sec: float = 0.0,
+        eta_sec: float = 0.0,
+        message: str = "",
+        current_file: Optional[str] = None,
+        file_index: Optional[int] = None,
+        file_total: Optional[int] = None,
+    ) -> None:
+        """Report progress through the ProgressReporter if available."""
+        if self._progress_reporter:
+            from modules.rc_common.progress import ProgressEvent
+            event = ProgressEvent(
+                module_name=self._name,
+                operation_name=operation,
+                progress_pct=progress_pct,
+                elapsed_sec=elapsed_sec,
+                eta_sec=eta_sec,
+                message=message,
+                current_file=current_file,
+                file_index=file_index,
+                file_total=file_total,
+            )
+            self._progress_reporter.report_event(event)
+
+    def _log_file_processing(
+        self,
+        operation: str,
+        file_path: str,
+        file_index: int,
+        file_total: int,
+        message: str = "",
+    ) -> None:
+        """Log exact file being processed (cross-cutting requirement)."""
+        status = f" — {message}" if message else ""
+        self.logger.info(
+            "[%s] Processing: %s (file %d/%d)%s",
+            operation, file_path, file_index, file_total, status,
+        )
+
+    # ------------------------------------------------------------------ #
+    # Loading bar helpers (legacy, still supported)
+    # ------------------------------------------------------------------ #
 
     def _initialize_loading_bar(self, total: int, description: str) -> tqdm:
         bar = tqdm(
@@ -87,5 +162,6 @@ class RCModule(abc.ABC):
     def get_progress(self) -> float:
         if not self.loading_bars:
             return 0.0
-        total = sum(bar.n / bar.total for bar in self.loading_bars)
-        return total / len(self.loading_bars)
+        total = sum(bar.n / bar.total for bar in self.loading_bars if bar.total > 0)
+        active_bars = sum(1 for bar in self.loading_bars if bar.total > 0)
+        return total / active_bars if active_bars > 0 else 0.0
