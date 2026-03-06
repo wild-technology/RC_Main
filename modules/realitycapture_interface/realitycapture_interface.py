@@ -361,16 +361,25 @@ class RealityCaptureAlignment(RCModule):
 
     def __detect_utm_zone_from_flight_log(self, flight_log_path: str) -> Optional[str]:
         """
-        Detect UTM zone from flight log filename.
+        Detect UTM zone / hemisphere from flight log filename.
 
-        Args:
-            flight_log_path: Path to flight log file (e.g., flight_log_17S_UTM.txt)
+        Supports both naming conventions:
+            - New: flight_log_{expedition}_{dive}_{N|S}.txt  → hemisphere only (e.g. "N")
+            - Legacy: flight_log_{zone}{band}_UTM.txt        → zone + hemisphere (e.g. "57N")
 
         Returns:
-            UTM zone string with hemisphere (e.g., "17S", "57N") or None
+            Hemisphere or zone string (e.g., "N", "S", "17S", "57N") or None
         """
         filename = os.path.basename(flight_log_path)
+        stem = os.path.splitext(filename)[0]  # e.g. "flight_log_NA173_H2102_N"
 
+        # New naming: last part of stem is exactly "N" or "S"
+        last_part = stem.rsplit('_', 1)[-1] if '_' in stem else ''
+        if last_part in ('N', 'S'):
+            self.logger.info(f"Detected hemisphere from filename: {last_part}")
+            return last_part
+
+        # Legacy naming: flight_log_{zone}{band}_UTM
         match = re.search(r'flight_log_(\d{1,2})([A-Z])_UTM', filename, re.IGNORECASE)
         if not match:
             match = re.search(r'(\d{1,2})([A-Z])_UTM', filename, re.IGNORECASE)
@@ -390,7 +399,7 @@ class RealityCaptureAlignment(RCModule):
 
         self.logger.warning(
             f"Could not detect UTM zone from filename: {filename}. "
-            f"Expected format: flight_log_<ZONE><BAND>_UTM.txt"
+            f"Expected format: flight_log_{{exp}}_{{dive}}_{{N|S}}.txt or flight_log_<ZONE><BAND>_UTM.txt"
         )
         return None
 
@@ -458,7 +467,11 @@ class RealityCaptureAlignment(RCModule):
             with open(flight_log_path, 'r', encoding='utf-8') as f:
                 reader = csv.reader(f, delimiter=';')
                 header = next(reader)
-                flight_log_files = set([row[0] for row in reader if row and row[0]])
+                # Extract bare filenames from flight log (handles both absolute paths and bare names)
+                flight_log_files = set()
+                for row in reader:
+                    if row and row[0]:
+                        flight_log_files.add(os.path.basename(row[0]))
 
             input_images = set()
             for root, dirs, files in os.walk(input_folder):

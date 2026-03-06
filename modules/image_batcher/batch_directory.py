@@ -955,6 +955,14 @@ class BatchDirectory(RCModule):
 				for col in missing:
 					zone_flight_log_df[col] = ""
 
+				# Rewrite filenames as absolute paths to the copied files in this zone
+				abs_path_index = []
+				for bare_name in zone_flight_log_df.index:
+					camera_subfolder = self.__determine_camera_subfolder(bare_name)
+					abs_path = os.path.abspath(os.path.join(batch_folder_dir, camera_subfolder, bare_name))
+					abs_path_index.append(abs_path)
+				zone_flight_log_df.index = abs_path_index
+
 				# Reuse the original flight log filename for per-zone copies
 				if hasattr(self, '_flight_log_stem') and self._flight_log_stem:
 					batch_flight_log_name = f'{self._flight_log_stem}.txt'
@@ -981,6 +989,35 @@ class BatchDirectory(RCModule):
 		self.logger.info(f"  Total files copied: {aggregate_stats['copied']}")
 
 		return aggregate_stats
+
+	def __rewrite_flight_log_with_absolute_paths(self, flight_log_path):
+		"""Rewrite the root flight log so the filename column uses absolute source paths."""
+		if not flight_log_path or not os.path.isfile(flight_log_path):
+			return
+
+		if self._file_index is None:
+			self.logger.warning("File index not built; skipping root flight log rewrite.")
+			return
+
+		try:
+			df = pd.read_csv(flight_log_path, delimiter=';', dtype=str, keep_default_na=False)
+
+			# Determine which column holds filenames (first column)
+			fname_col = df.columns[0]
+			abs_paths = []
+			for bare_name in df[fname_col]:
+				source_path = self._file_index.get(bare_name)
+				if source_path:
+					abs_paths.append(os.path.abspath(source_path))
+				else:
+					# Keep the bare name if source not found
+					abs_paths.append(bare_name)
+			df[fname_col] = abs_paths
+
+			df.to_csv(flight_log_path, sep=';', index=False)
+			self.logger.info(f"Root flight log updated with absolute paths: {flight_log_path}")
+		except Exception as e:
+			self.logger.error(f"Failed to rewrite root flight log: {e}")
 
 	def run(self):
 		success, message = self.validate_parameters()
@@ -1102,6 +1139,9 @@ class BatchDirectory(RCModule):
 
 		try:
 			batch_stats = self.__create_batch_folders(output_dir, final_zones, input_dir, flight_log_path)
+
+			# Rewrite the root flight log with absolute source paths
+			self.__rewrite_flight_log_with_absolute_paths(flight_log_path)
 
 			avg_zone_size = (total_in_batches / len(final_zones)) if final_zones and len(final_zones) > 0 else 0
 
