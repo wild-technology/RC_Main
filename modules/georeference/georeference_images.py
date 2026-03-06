@@ -282,8 +282,14 @@ class GeoreferenceImages(RCModule):
 
         data_rows = []
         try:
-            with open(filename, "r") as csvfile:
-                reader = csv.reader(csvfile, delimiter='\t')
+            with open(filename, "r", newline='') as csvfile:
+                sample = csvfile.read(4096)
+                csvfile.seek(0)
+                try:
+                    dialect = csv.Sniffer().sniff(sample, delimiters=',\t|;')
+                except csv.Error:
+                    dialect = csv.excel_tab  # fallback to tab
+                reader = csv.reader(csvfile, dialect)
 
                 try:
                     header = next(reader)
