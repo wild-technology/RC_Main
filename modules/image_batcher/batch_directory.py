@@ -263,32 +263,46 @@ class BatchDirectory(RCModule):
 		return True, None
 
 	def __get_flight_log_path(self):
+		# Priority 1: Explicit parameter (only present when batch runs standalone)
 		if 'batch_flight_log_path' in self.params:
 			flight_log_path = self.params['batch_flight_log_path'].get_value()
-			# Strip quotes and whitespace from path
 			if flight_log_path:
 				flight_log_path = flight_log_path.strip().strip('"').strip("'")
 			return flight_log_path
+
+		# Priority 2: Auto-detect from georeference output directory
+		if 'geo_input_image_dir' in self.params:
+			search_dir = self.params['geo_input_image_dir'].get_value()
 		else:
-			if 'geo_input_image_dir' in self.params:
-				search_dir = self.params['geo_input_image_dir'].get_value()
-			else:
-				search_dir = self.params['output_dir'].get_value()
+			search_dir = self.params['output_dir'].get_value()
 
-			# Strip quotes from search_dir
-			if search_dir:
-				search_dir = search_dir.strip().strip('"').strip("'")
+		if search_dir:
+			search_dir = search_dir.strip().strip('"').strip("'")
 
-			pattern = os.path.join(search_dir, "flight_log_*_UTM.txt")
-			matches = glob.glob(pattern)
-			if matches:
-				return matches[0]
+		# Search for new naming: flight_log_{expedition}_{dive}_{N|S}.txt
+		new_pattern = os.path.join(search_dir, "flight_log_*_[NS].txt")
+		matches = glob.glob(new_pattern)
+		if matches:
+			return matches[0]
 
-			fallback = os.path.join(search_dir, "flight_log.txt")
-			if os.path.isfile(fallback):
-				return fallback
+		# Legacy naming: flight_log_*_UTM.txt
+		legacy_pattern = os.path.join(search_dir, "flight_log_*_UTM.txt")
+		matches = glob.glob(legacy_pattern)
+		if matches:
+			return matches[0]
 
-			return None
+		# Broadest fallback: any flight_log_*.txt
+		broad_pattern = os.path.join(search_dir, "flight_log_*.txt")
+		matches = glob.glob(broad_pattern)
+		if matches:
+			return matches[0]
+
+		# Final fallback: plain flight_log.txt
+		fallback = os.path.join(search_dir, "flight_log.txt")
+		if os.path.isfile(fallback):
+			return fallback
+
+		return None
 
 	def __read_flight_log_gdf(self, flight_log_path):
 		if flight_log_path is None:
@@ -297,7 +311,12 @@ class BatchDirectory(RCModule):
 		# Strip quotes and whitespace from path
 		flight_log_path = flight_log_path.strip().strip('"').strip("'")
 
+		# Preserve the original flight log filename stem for per-zone naming
 		filename = os.path.basename(flight_log_path)
+		stem = os.path.splitext(filename)[0]  # e.g. "flight_log_NA173_H2102_N"
+		self._flight_log_stem = stem
+
+		# Extract zone suffix for backwards compatibility
 		if "_UTM.txt" in filename:
 			zone_part = filename.replace("flight_log_", "").replace("_UTM.txt", "")
 			self.utm_zone_suffix = f"_{zone_part}"
@@ -936,7 +955,10 @@ class BatchDirectory(RCModule):
 				for col in missing:
 					zone_flight_log_df[col] = ""
 
-				if self.utm_zone_suffix:
+				# Reuse the original flight log filename for per-zone copies
+				if hasattr(self, '_flight_log_stem') and self._flight_log_stem:
+					batch_flight_log_name = f'{self._flight_log_stem}.txt'
+				elif self.utm_zone_suffix:
 					batch_flight_log_name = f'flight_log{self.utm_zone_suffix}_UTM.txt'
 				else:
 					batch_flight_log_name = 'flight_log.txt'

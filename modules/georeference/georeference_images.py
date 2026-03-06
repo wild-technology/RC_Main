@@ -90,6 +90,17 @@ class GeoreferenceImages(RCModule):
             return dive
         return ""
 
+    def _get_hemisphere(self) -> str | None:
+        """Return 'N' or 'S' from the detected UTM zone letter.
+
+        UTM latitude bands C-M are southern hemisphere, N-X are northern.
+        Returns None if no UTM zone has been detected yet.
+        """
+        if not self.utm_zone:
+            return None
+        zone_letter = self.utm_zone[-1].upper()
+        return "N" if zone_letter >= "N" else "S"
+
     @staticmethod
     def _wrap180(angle_deg: float) -> float:
         """Wrap angle to [-180, 180] range."""
@@ -794,9 +805,17 @@ class GeoreferenceImages(RCModule):
                     "FOCAL_LENGTH": focal_length
                 })
 
-            # Generate output path
-            utm_label = self.utm_zone if self.utm_zone else "unknown"
-            output_path = os.path.join(input_dir, f"flight_log_{utm_label}.txt")
+            # Generate output path with expedition_dive_hemisphere naming
+            project_title = self.__get_project_title()
+            hemisphere = self._get_hemisphere()
+            if project_title and hemisphere:
+                output_path = os.path.join(input_dir, f"flight_log_{project_title}_{hemisphere}.txt")
+            elif project_title:
+                output_path = os.path.join(input_dir, f"flight_log_{project_title}.txt")
+            elif hemisphere:
+                output_path = os.path.join(input_dir, f"flight_log_{hemisphere}.txt")
+            else:
+                output_path = os.path.join(input_dir, "flight_log.txt")
 
             # Generate flight log
             try:
