@@ -1,2 +1,0 @@
-filename,X (East),Y (North),Alt,X Accuracy,Y Accuracy,Alt Accuracy,Yaw,Pitch,Roll,Yaw Accuracy,Pitch Accuracy,Roll Accuracy
-camupper_20250705T034843Z.jpg,596196.749819,8999770.671597,-1012.174479,10.000000,10.000000,1.000000,305.019973,19.084443,0.827584,3.000000,10.000000,3.000000

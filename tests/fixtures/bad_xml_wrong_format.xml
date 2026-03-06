@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<settings>
-  <param name="sfmDetectorSensitivity">Ultra</param>
-  <param name="sfmImageDownscaleFactor">1</param>
-</settings>
