@@ -14,6 +14,8 @@
 /modules/camera_setup/__pycache__
 /modules/component_export/__pycache__
 /modules/model_generation/__pycache__
+/modules/prepare_model/__pycache__
+/modules/model_export/__pycache__
 /gui/__pycache__
 /gui/widgets/__pycache__
 /gui/panels/__pycache__
