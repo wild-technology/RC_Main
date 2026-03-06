@@ -591,19 +591,19 @@ class GeoreferenceImages(RCModule):
         self.stats['total_rejected'] = total_rejected
         self.stats['accept_rate_pct'] = (100.0 * matches_made / len(image_data)) if image_data else 0.0
 
-        print("Matching summary:")
-        print(f"  Examined images: {self.stats['examined_images']}")
-        print(f"  Accepted <=2s:    {self.stats['accepted_images']} ({self.stats['accept_rate_pct']:.1f}%)")
-        print(f"  Rejected >2s:    {self.stats['rejected_time']}")
-        print(f"  Rejected no CSV: {self.stats['rejected_no_csv']}")
-        print("  Time-delta buckets (all pairs, pre-threshold):")
-        print(f"    Exact: {self.stats['bucket_exact']}")
-        print(f"    1-4s:  {self.stats['bucket_1_4']}")
-        print(f"    5-15s: {self.stats['bucket_5_15']}")
-        print(f"    >15s:  {self.stats['bucket_gt15']}")
-        print("  Accepted field completeness:")
-        print(f"    Missing UTM:         {self.stats['accepted_missing_utm']}")
-        print(f"    Missing orientation: {self.stats['accepted_missing_orientation']}")
+        self.logger.info("Matching summary:")
+        self.logger.info("  Examined images: %d", self.stats['examined_images'])
+        self.logger.info("  Accepted <=2s:    %d (%.1f%%)", self.stats['accepted_images'], self.stats['accept_rate_pct'])
+        self.logger.info("  Rejected >2s:    %d", self.stats['rejected_time'])
+        self.logger.info("  Rejected no CSV: %d", self.stats['rejected_no_csv'])
+        self.logger.info("  Time-delta buckets (all pairs, pre-threshold):")
+        self.logger.info("    Exact: %d", self.stats['bucket_exact'])
+        self.logger.info("    1-4s:  %d", self.stats['bucket_1_4'])
+        self.logger.info("    5-15s: %d", self.stats['bucket_5_15'])
+        self.logger.info("    >15s:  %d", self.stats['bucket_gt15'])
+        self.logger.info("  Accepted field completeness:")
+        self.logger.info("    Missing UTM:         %d", self.stats['accepted_missing_utm'])
+        self.logger.info("    Missing orientation: %d", self.stats['accepted_missing_orientation'])
 
         return matches_made
 
@@ -674,8 +674,10 @@ class GeoreferenceImages(RCModule):
 
             # Write data for all accepted images
             for image in accepted_images:
-                # Use absolute path instead of filename for zone disambiguation
-                flight_log_name = image.get("ABSOLUTE_PATH", image.get("FILENAME", ""))
+                # Use bare filename — downstream modules (batcher, RC interface) match on filenames
+                flight_log_name = os.path.basename(
+                    image.get("ABSOLUTE_PATH", image.get("FILENAME", ""))
+                )
 
                 # Extract position data
                 utm_x = image.get("UTM_X")

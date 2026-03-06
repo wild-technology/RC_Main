@@ -176,7 +176,85 @@ class RealityCaptureAlignment(RCModule):
             parameter_group='Alignment',
         )
 
+        additional_params['rc_precomputed_alignment_dir'] = Parameter(
+            name='Precomputed Alignment Directory',
+            cli_short='r_pre',
+            cli_long='r_precomputed_alignment',
+            type=str,
+            default_value=None,
+            description='Directory containing pre-existing .rsalign files from a previous RealityScan run. '
+                        'If present, matching zones will skip alignment and import these files directly.',
+            parameter_group='Alignment',
+        )
+
         return {**super().get_parameters(), **additional_params}
+
+    def __import_precomputed_alignments(
+        self,
+        precomputed_dir: str,
+        zone_name: str,
+        output_dir: str,
+        expedition: str,
+        dive: str,
+        timestamp: str,
+    ) -> Optional[dict]:
+        """
+        Check for and import pre-existing .rsalign files from a user-supplied directory.
+
+        Searches for .rsalign files in precomputed_dir that match the zone name.
+        If found, copies them to output_dir with proper naming and returns a result dict.
+        If no matching files are found, returns None (caller should proceed with alignment).
+        """
+        pre_path = Path(precomputed_dir)
+        if not pre_path.is_dir():
+            self.logger.warning("Precomputed alignment dir does not exist: %s", precomputed_dir)
+            return None
+
+        # Look for rsalign files — first try zone-specific match, then all files
+        zone_pattern = f"*{zone_name}*"
+        matching = sorted(pre_path.glob(f"{zone_pattern}.rsalign"))
+        if not matching:
+            # Also check subdirectories named after the zone
+            zone_subdir = pre_path / zone_name
+            if zone_subdir.is_dir():
+                matching = sorted(zone_subdir.glob("*.rsalign"))
+
+        if not matching:
+            # Fall back: if there's only one zone, use all .rsalign files in the dir
+            all_rsalign = sorted(pre_path.glob("*.rsalign"))
+            if all_rsalign:
+                self.logger.info(
+                    "No zone-specific match in %s, found %d .rsalign file(s) — "
+                    "will use all of them for zone '%s'",
+                    precomputed_dir, len(all_rsalign), zone_name,
+                )
+                matching = all_rsalign
+
+        if not matching:
+            return None
+
+        self.logger.info(
+            "Found %d precomputed .rsalign file(s) for zone '%s' in %s",
+            len(matching), zone_name, precomputed_dir,
+        )
+
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+        copied = 0
+        for counter, src in enumerate(matching, 1):
+            new_name = f"{expedition}_{dive}_{zone_name}_{timestamp}_{counter}.rsalign"
+            dest = Path(output_dir) / new_name
+            shutil.copy2(str(src), str(dest))
+            self.logger.info("  Imported: %s -> %s", src.name, new_name)
+            copied += 1
+
+        return {
+            'Success': True,
+            'Component Count': copied,
+            'XMP Count': 0,
+            'XMP Deleted': 0,
+            'Zone': zone_name,
+            'Precomputed': True,
+        }
 
     def __find_realityscan_exe(self) -> Optional[Path]:
         """
@@ -279,7 +357,7 @@ class RealityCaptureAlignment(RCModule):
             return 'zeuss'
 
         else:
-            return 'other'
+            return 'unknown'
 
     def __detect_utm_zone_from_flight_log(self, flight_log_path: str) -> Optional[str]:
         """
@@ -786,6 +864,23 @@ class RealityCaptureAlignment(RCModule):
                 self._update_loading_bar(bar, 1)
                 continue
 
+            # Check for precomputed alignments before running delegation
+            precomputed_param = self.params.get('rc_precomputed_alignment_dir')
+            precomputed_dir = precomputed_param.get_value() if precomputed_param else None
+            if precomputed_dir:
+                precomputed_result = self.__import_precomputed_alignments(
+                    precomputed_dir, zone_name, output_dir, expedition, dive, timestamp,
+                )
+                if precomputed_result:
+                    output_data['Zones'][zone_name] = precomputed_result
+                    zone_summary.append({
+                        'zone': zone_name,
+                        'components': precomputed_result.get('Component Count', 0),
+                        'status': 'IMPORTED',
+                    })
+                    self._update_loading_bar(bar, 1)
+                    continue
+
             self.logger.info("[%s] Starting delegation alignment for: %s", zone_name, input_folder)
 
             try:
@@ -1040,6 +1135,10 @@ class RealityCaptureAlignment(RCModule):
             'Total XMP Created': 0
         }
 
+        # Check for precomputed alignment directory
+        precomputed_param = self.params.get('rc_precomputed_alignment_dir')
+        precomputed_dir = precomputed_param.get_value() if precomputed_param else None
+
         # Check for delegation mode
         use_delegation = self.params.get('rc_use_delegation')
         if use_delegation and use_delegation.get_value():
@@ -1055,6 +1154,21 @@ class RealityCaptureAlignment(RCModule):
             zone_name = data['zone_name']
 
             try:
+                # Check for precomputed alignments before running alignment
+                if precomputed_dir:
+                    precomputed_result = self.__import_precomputed_alignments(
+                        precomputed_dir, zone_name, output_dir, expedition, dive, timestamp,
+                    )
+                    if precomputed_result:
+                        output_data['Zones'][zone_name] = precomputed_result
+                        zone_summary.append({
+                            'zone': zone_name,
+                            'components': precomputed_result.get('Component Count', 0),
+                            'status': 'IMPORTED',
+                        })
+                        self._update_loading_bar(bar, 1)
+                        continue
+
                 if is_dry_run:
                     self.logger.info(
                         f"[DRY RUN] Would align: zone='{zone_name}', "
