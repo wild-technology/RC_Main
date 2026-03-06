@@ -9,20 +9,7 @@
 /modules/georeference/__pycache__
 /modules/image_batcher/__pycache__
 /modules/realitycapture_interface/__pycache__
-/modules/rc_common/__pycache__
-/modules/image_enhancement/__pycache__
-/modules/camera_setup/__pycache__
-/modules/component_export/__pycache__
-/modules/model_generation/__pycache__
-/gui/__pycache__
-/gui/widgets/__pycache__
-/gui/panels/__pycache__
-/gui/workers/__pycache__
-/gui/state/__pycache__
-/tests/__pycache__
-.pytest_cache/
 
 /modules/realitycapture_interface/RC_CLI/Errors/errors.txt
 /modules/realitycapture_interface/RC_CLI/Errors/progress.txt
 main.py.lprof
-/StandaloneUtilities/SetCameraParams.py
