@@ -147,6 +147,16 @@ class ComponentExportModule(RCModule):
                 "exported_files": [],
             }
 
+        # Remind user to clean up small components before exporting.
+        self.logger.warning(
+            "REMINDER: Delete any small/noise components from RealityScan before exporting."
+        )
+        try:
+            input("Press Enter when ready, or Ctrl+C to cancel...")
+        except KeyboardInterrupt:
+            self.logger.info("[ComponentExport] Cancelled by user.")
+            return {"status": "Cancelled", "component_count": 0, "exported_files": []}
+
         # Resolve parameters.
         output_dir = Path(self.params["export_output_dir"].get_value())
         base_name = self.params["export_base_name"].get_value()

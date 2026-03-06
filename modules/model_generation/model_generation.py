@@ -1,28 +1,22 @@
 """Model generation module for the RC pipeline.
 
 Generates textured 3D models from aligned components via RealityScan
-delegation. Supports configurable step ordering, simplification,
-multi-format export, and per-component checkpointing.
+delegation. Per-component checkpointing and signal handling are
+supported.
 
-Based on ModelGenerator.py (two-phase detection, signal handling) and
-MakeModels.py (configurable steps, XML parameter support).
+Mesh cleanup (triangle removal, smoothing, hole closing) has been moved
+to the PrepareModel module.  Simplification has been removed (always
+high-poly).  Export has been moved to the ModelExport module.
 
-Default pipeline per component:
-1. Select component
-2. Set reconstruction region auto + scale 2x
-3. Calculate high model
-4. Select marginal triangles → remove
-5. Select large triangles (threshold) → remove
-6. Select largest component → invert → remove
-7. Clean model
-8. Smooth
-9. Close small holes
-10. Clean model
-11. Calculate texture
-12. (If simplify) Rename _HighPoly → simplify × N → close large holes
-    → rename _LowPoly → unwrap → reproject texture
-13. Save
-14. Export (per format toggles)
+Pipeline per component:
+1. New scene
+2. Import component
+3. Re-apply flight log (if found)
+4. Select component
+5. Set reconstruction region auto + scale 2x
+6. Calculate high model
+7. Calculate texture
+8. Save
 """
 
 from __future__ import annotations
@@ -90,90 +84,10 @@ class ModelGeneration(RCModule):
                 "Process only the first component for testing",
                 parameter_group="Model Generation",
             ),
-            "model_large_triangle_threshold": Parameter(
-                "Large Triangle Threshold", "mg_lt", "model_large_triangle_threshold",
-                float, 2.0,
-                "Relative threshold for large triangle removal (selectLargeTrianglesRel)",
-                parameter_group="Model Generation",
-                min_value=1.0, max_value=10.0,
-            ),
-            "model_small_hole_max_edges": Parameter(
-                "Small Hole Max Edges", "mg_sh", "model_small_hole_max_edges",
-                int, 5000,
-                "Maximum edges for small hole closing",
-                parameter_group="Model Generation",
-                min_value=100, max_value=100000,
-            ),
-            "model_large_hole_max_edges": Parameter(
-                "Large Hole Max Edges", "mg_lh", "model_large_hole_max_edges",
-                int, 600000,
-                "Maximum edges for large hole closing (after simplification)",
-                parameter_group="Model Generation",
-                min_value=1000, max_value=1000000,
-            ),
-            "model_enable_simplify": Parameter(
-                "Enable Simplification", "mg_sim", "model_enable_simplify",
-                bool, True,
-                "Enable mesh simplification (creates LowPoly + HighPoly)",
-                parameter_group="Model Generation",
-            ),
-            "model_simplify_passes": Parameter(
-                "Simplification Passes", "mg_sp", "model_simplify_passes",
-                int, 2,
-                "Number of simplification passes",
-                parameter_group="Model Generation",
-                min_value=1, max_value=5,
-            ),
-            "model_simplify_params": Parameter(
-                "Simplify XML Params", "mg_sxml", "model_simplify_params",
-                str, None,
-                "Path to XML parameter file for simplification (optional)",
-                parameter_group="Model Generation",
-                file_filter="*.xml",
-            ),
-            "model_export_fbx": Parameter(
-                "Export FBX", "mg_fbx", "model_export_fbx",
-                bool, True,
-                "Export model as FBX",
-                parameter_group="Model Generation",
-            ),
-            "model_export_cesium": Parameter(
-                "Export Cesium 3D Tiles", "mg_ces", "model_export_cesium",
-                bool, True,
-                "Export model as Cesium 3D Tiles",
-                parameter_group="Model Generation",
-            ),
-            "model_export_obj": Parameter(
-                "Export OBJ", "mg_obj", "model_export_obj",
-                bool, False,
-                "Export model as OBJ",
-                parameter_group="Model Generation",
-            ),
             "model_texture_params": Parameter(
                 "Texture XML Params", "mg_txml", "model_texture_params",
                 str, None,
                 "Path to XML parameter file for texturing (optional)",
-                parameter_group="Model Generation",
-                file_filter="*.xml",
-            ),
-            "model_smooth_params": Parameter(
-                "Smooth XML Params", "mg_smxml", "model_smooth_params",
-                str, None,
-                "Path to XML parameter file for smoothing (optional)",
-                parameter_group="Model Generation",
-                file_filter="*.xml",
-            ),
-            "model_unwrap_params": Parameter(
-                "Unwrap XML Params", "mg_uxml", "model_unwrap_params",
-                str, None,
-                "Path to XML parameter file for UV unwrapping (optional)",
-                parameter_group="Model Generation",
-                file_filter="*.xml",
-            ),
-            "model_reprojection_params": Parameter(
-                "Reprojection XML Params", "mg_rxml", "model_reprojection_params",
-                str, None,
-                "Path to XML parameter file for texture reprojection (optional)",
                 parameter_group="Model Generation",
                 file_filter="*.xml",
             ),
@@ -260,28 +174,35 @@ class ModelGeneration(RCModule):
         prefix: str,
         component_index: int,
     ) -> dict:
-        """Process a single component through the full model pipeline.
+        """Process a single component: import, model, texture, save.
 
-        Returns a result dict with success, duration, export paths.
+        Mesh cleanup (PrepareModel) and export (ModelExport) are now
+        handled by their own pipeline modules.
+
+        Returns a result dict with success and duration.
         """
         comp_name = component_path.stem
-        model_name = f"{prefix}_{comp_name}"
         start_time = time.time()
 
         self.logger.info("=" * 60)
         self.logger.info("Processing component %d: %s", component_index, comp_name)
         self.logger.info("=" * 60)
 
-        tri_threshold = self._get_param("model_large_triangle_threshold", 2.0)
-        small_holes = self._get_param("model_small_hole_max_edges", 5000)
-        large_holes = self._get_param("model_large_hole_max_edges", 600000)
-        enable_simplify = self._get_param("model_enable_simplify", True)
-        simplify_passes = self._get_param("model_simplify_passes", 2)
-
         try:
-            # Step 1: Load component
+            # Step 1: New scene + import component
             self._quick_step("New Scene", "-newScene")
             self._delegate_step("Import Component", "-importComponent", str(component_path))
+
+            # Re-apply flight log after importing component
+            flight_log_path = self._find_flight_log()
+            if flight_log_path:
+                from modules.rc_common.flight_log_utils import update_flight_log_params_xml
+                utm_zone = self._detect_utm_from_flight_log(flight_log_path)
+                if utm_zone:
+                    xml_path = update_flight_log_params_xml(flight_log_path, utm_zone, self.logger)
+                    if xml_path:
+                        self._delegate_step("Set Flight Log Params", "-setPropertyFromXml", xml_path)
+                self._delegate_step("Import Flight Log", "-importFlightLog", flight_log_path)
 
             # Step 2: Select component
             self._quick_step("Select Component", "-selectComponent", "0")
@@ -296,105 +217,25 @@ class ModelGeneration(RCModule):
             if self._abort_requested:
                 return {"Success": False, "Error": "Aborted by user"}
 
-            # Step 5: Mesh cleanup
-            self._quick_step("Select Marginal", "-selectMarginalTriangles")
-            self._quick_step("Remove Marginal", "-removeSelectedTriangles")
-
-            self._quick_step("Select Large", "-selectLargeTrianglesRel", str(tri_threshold))
-            self._quick_step("Remove Large", "-removeSelectedTriangles")
-
-            self._quick_step("Select Largest", "-selectLargestModelComponent")
-            self._quick_step("Invert Selection", "-invertTrianglesSelection")
-            self._quick_step("Remove Floating", "-removeSelectedTriangles")
-
-            # Step 6: Clean + smooth + close holes
-            self._quick_step("Clean Model", "-cleanModel")
-            self._delegate_step("Smooth", "-smooth", xml_param_key="model_smooth_params")
-            self._quick_step("Close Small Holes", "-closeHoles", str(small_holes))
-            self._quick_step("Clean Model 2", "-cleanModel")
-
-            if self._abort_requested:
-                return {"Success": False, "Error": "Aborted by user"}
-
-            # Step 7: Texture
+            # Step 5: Calculate texture
             self._delegate_step("Calculate Texture", "-calculateTexture", xml_param_key="model_texture_params")
 
             if self._abort_requested:
                 return {"Success": False, "Error": "Aborted by user"}
 
-            # Step 8: Simplification (optional)
-            high_poly_name = f"{model_name}_HighPoly"
-            low_poly_name = f"{model_name}_LowPoly"
-            export_model_name = model_name  # Default: use the single model
-
-            if enable_simplify:
-                self._quick_step("Rename HighPoly", "-renameSelectedModel", high_poly_name)
-
-                for pass_num in range(1, simplify_passes + 1):
-                    self.logger.info("[Simplify Pass %d/%d]", pass_num, simplify_passes)
-                    self._delegate_step(
-                        f"Simplify Pass {pass_num}",
-                        "-simplify",
-                        xml_param_key="model_simplify_params",
-                    )
-
-                # Close large holes after simplification
-                self._quick_step("Close Large Holes", "-closeHoles", str(large_holes))
-                self._quick_step("Clean Simplified", "-cleanModel")
-
-                self._quick_step("Rename LowPoly", "-renameSelectedModel", low_poly_name)
-
-                # Unwrap and reproject texture
-                self._delegate_step("Unwrap", "-unwrap", xml_param_key="model_unwrap_params")
-                self._delegate_step(
-                    "Reproject Texture",
-                    "-reprojectTexture", high_poly_name, low_poly_name,
-                    xml_param_key="model_reprojection_params",
-                )
-                export_model_name = low_poly_name
-
-            # Step 9: Save
+            # Step 6: Save
             self._quick_step("Save", "-save")
-
-            if self._abort_requested:
-                return {"Success": False, "Error": "Aborted by user"}
-
-            # Step 10: Export
-            export_dir.mkdir(parents=True, exist_ok=True)
-            exported_files = []
-
-            if self._get_param("model_export_fbx", True):
-                fbx_path = export_dir / f"{export_model_name}.fbx"
-                self._delegate_step("Export FBX", "-exportModel", export_model_name, str(fbx_path))
-                exported_files.append(str(fbx_path))
-                self.logger.info("Exported FBX: %s", fbx_path)
-
-            if self._get_param("model_export_cesium", True):
-                # Cesium uses high-poly if available, otherwise the single model
-                cesium_model = high_poly_name if enable_simplify else model_name
-                cesium_path = export_dir / f"{cesium_model}_cesium.json"
-                self._quick_step("Select for Cesium", "-selectModel", cesium_model)
-                self._delegate_step("Export Cesium", "-export3dTiles", str(cesium_path))
-                exported_files.append(str(cesium_path))
-                self.logger.info("Exported Cesium 3D Tiles: %s", cesium_path)
-
-            if self._get_param("model_export_obj", False):
-                obj_path = export_dir / f"{export_model_name}.obj"
-                self._delegate_step("Export OBJ", "-exportModel", export_model_name, str(obj_path))
-                exported_files.append(str(obj_path))
-                self.logger.info("Exported OBJ: %s", obj_path)
 
             elapsed = time.time() - start_time
             self.logger.info(
-                "Component %s complete in %.1fs. Exports: %d files",
-                comp_name, elapsed, len(exported_files),
+                "Component %s complete in %.1fs",
+                comp_name, elapsed,
             )
 
             return {
                 "Success": True,
                 "Component": comp_name,
                 "Duration": elapsed,
-                "ExportedFiles": exported_files,
             }
 
         except TimeoutError as e:
@@ -405,6 +246,31 @@ class ModelGeneration(RCModule):
             elapsed = time.time() - start_time
             self.logger.error("Component %s failed after %.1fs: %s", comp_name, elapsed, e)
             return {"Success": False, "Component": comp_name, "Duration": elapsed, "Error": str(e)}
+
+    def _find_flight_log(self) -> str | None:
+        """Find flight log in base directory via glob pattern."""
+        import glob
+        base_dir = self._get_param("model_alignment_dir")
+        if not base_dir:
+            return None
+        # Look for {expedition}_{dive}_UTM*.txt pattern
+        exp = self.params.get("expedition_name") and self.params["expedition_name"].get_value()
+        dive = self.params.get("dive_name") and self.params["dive_name"].get_value()
+        if exp and dive:
+            pattern = os.path.join(base_dir, f"{exp}_{dive}_UTM*.txt")
+            matches = glob.glob(pattern)
+            if matches:
+                return matches[0]
+        # Fallback: any flight log in base dir
+        pattern = os.path.join(base_dir, "*_UTM*.txt")
+        matches = glob.glob(pattern)
+        return matches[0] if matches else None
+
+    def _detect_utm_from_flight_log(self, path: str) -> str | None:
+        """Extract UTM zone from flight log filename. E.g. 'NA173_H2102_UTM57N.txt' -> '57N'"""
+        import re
+        match = re.search(r'UTM(\d{1,2}[NS])', os.path.basename(path), re.IGNORECASE)
+        return match.group(1) if match else None
 
     # ------------------------------------------------------------------ #
     # Main run
@@ -536,16 +402,11 @@ class ModelGeneration(RCModule):
             )
         self.logger.info("=" * 60)
 
-        all_exports = []
-        for r in successful:
-            all_exports.extend(r.get("ExportedFiles", []))
-
         return {
             "Success": len(failed) == 0,
             "ComponentsProcessed": len(results),
             "Successful": len(successful),
             "Failed": len(failed),
             "Duration": total_elapsed,
-            "ExportedFiles": all_exports,
             "Results": results,
         }

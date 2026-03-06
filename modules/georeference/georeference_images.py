@@ -244,7 +244,8 @@ class GeoreferenceImages(RCModule):
             return utm_x, utm_y, altitude
 
     def _convert_to_rc_orientation(self, heading_mag: float | None, pitch_vehicle: float | None,
-                                   roll_vehicle: float | None, camera_offset: float,
+                                   roll_vehicle: float | None, pitch_offset: float,
+                                   yaw_offset: float, roll_offset: float,
                                    decl_deg: float) -> tuple[float | None, float | None, float | None]:
         """
         Convert vehicle orientation to RealityCapture conventions.
@@ -253,7 +254,9 @@ class GeoreferenceImages(RCModule):
         - heading_mag: magnetic heading, 0=North, 90=East, 180=South, 270=West (clockwise)
         - pitch_vehicle: vehicle pitch from horizontal, negative=nose down
         - roll_vehicle: vehicle roll, negative=left wing down, positive=right wing down
-        - camera_offset: camera down angle from vehicle (positive = down)
+        - pitch_offset: camera down angle from vehicle (positive = down)
+        - yaw_offset: camera yaw mounting offset in degrees
+        - roll_offset: camera roll mounting offset in degrees
 
         RealityCapture conventions (standard aerial photogrammetry):
         - Yaw: 0=North, 90=East, 180=South, 270=West
@@ -261,22 +264,22 @@ class GeoreferenceImages(RCModule):
         - Roll: 0=level, positive=right wing down
         """
         try:
-            # Yaw: Convert magnetic heading to true north, then use directly as RC yaw
+            # Yaw: Convert magnetic heading to true north, apply yaw offset
             if heading_mag is not None:
-                true_heading = heading_mag + decl_deg
+                true_heading = heading_mag + decl_deg + yaw_offset
                 rc_yaw = self._wrap360(true_heading)
             else:
                 rc_yaw = None
 
             # Pitch: Convert vehicle pitch and camera offset to RC pitch
             if pitch_vehicle is not None:
-                camera_pitch_from_horiz = pitch_vehicle - camera_offset
+                camera_pitch_from_horiz = pitch_vehicle - pitch_offset
                 rc_pitch = 90.0 + camera_pitch_from_horiz
             else:
                 rc_pitch = None
 
-            # Roll: Pass through directly (same convention)
-            rc_roll = roll_vehicle
+            # Roll: Apply roll mounting offset
+            rc_roll = roll_vehicle + roll_offset if roll_vehicle is not None else roll_vehicle
 
             return rc_yaw, rc_pitch, rc_roll
 
@@ -535,6 +538,8 @@ class GeoreferenceImages(RCModule):
         accepted_missing_utm = 0
         accepted_missing_orientation = 0
 
+        logged_camera_offsets = set()
+
         bar = self._initialize_loading_bar(len(image_data), "Estimating Location")
 
         for image in image_data:
@@ -566,6 +571,15 @@ class GeoreferenceImages(RCModule):
 
                     # Get camera position offsets
                     forward_m, lateral_m, down_m = self._get_camera_offsets(filename)
+
+                    # Log camera GPS mounting offset once per camera type
+                    cam_type = self._get_camera_type(filename)
+                    if cam_type not in logged_camera_offsets:
+                        logged_camera_offsets.add(cam_type)
+                        self.logger.info(
+                            "Applying camera GPS mounting offset for %s: forward=%.1fm, lateral=%.1fm, down=%.1fm",
+                            filename, forward_m, lateral_m, down_m
+                        )
 
                     # Apply position offsets to get camera location
                     camera_utm_x, camera_utm_y, camera_alt = self._apply_camera_position_offset(
@@ -699,7 +713,7 @@ class GeoreferenceImages(RCModule):
         with open(output_path, 'w', encoding='utf-8') as f:
             # Write header
             f.write(
-                "filename;X (East);Y (North);Alt;X Accuracy;Y Accuracy;Alt Accuracy;Yaw;Pitch;Roll;Yaw Accuracy;Pitch Accuracy;Roll Accuracy\n")
+                "filename;X (East);Y (North);Alt;X Accuracy;Y Accuracy;Alt Accuracy;Yaw;Pitch;Roll;Yaw Accuracy;Pitch Accuracy;Roll Accuracy;FocalLength;PrincipalU;PrincipalV\n")
 
             # Write data for all accepted images
             for image in accepted_images:
@@ -728,7 +742,7 @@ class GeoreferenceImages(RCModule):
                 pitch_acc = image.get("PITCH_ACC", 5.0)
                 roll_acc = image.get("ROLL_ACC", 3.0)
 
-                # Build line (13 columns matching RC format GUID {B438A617...})
+                # Build line (16 columns matching RC format GUID {B438A617...})
                 line = ";".join([
                     flight_log_name,
                     fmt(utm_x),
@@ -742,7 +756,10 @@ class GeoreferenceImages(RCModule):
                     fmt(rc_roll),
                     fmt(yaw_acc),
                     fmt(pitch_acc),
-                    fmt(roll_acc)
+                    fmt(roll_acc),
+                    fmt(image.get("FOCAL_LENGTH")),
+                    fmt(image.get("PP_U", 0.0)),
+                    fmt(image.get("PP_V", 0.0))
                 ])
 
                 f.write(line + "\n")
@@ -794,11 +811,16 @@ class GeoreferenceImages(RCModule):
                 filename = image.get("FILENAME", "")
 
                 # Convert orientation to RealityCapture conventions
+                profile = self._get_camera_profile(filename)
+                yaw_off = profile.get("yaw_offset_deg", 0.0) if profile else 0.0
+                roll_off = profile.get("roll_offset_deg", 0.0) if profile else 0.0
                 rc_yaw, rc_pitch, rc_roll = self._convert_to_rc_orientation(
                     image.get("HEADING_MAG"),
                     image.get("PITCH_VEHICLE"),
                     image.get("ROLL_VEHICLE"),
                     self._get_camera_pitch_offset(filename),
+                    yaw_off,
+                    roll_off,
                     mag_decl
                 )
 
@@ -816,18 +838,20 @@ class GeoreferenceImages(RCModule):
                     "YAW_ACC": yaw_acc,
                     "PITCH_ACC": pitch_acc,
                     "ROLL_ACC": roll_acc,
-                    "FOCAL_LENGTH": focal_length
+                    "FOCAL_LENGTH": focal_length,
+                    "PP_U": profile.get("pp_u", 0.0) if profile else 0.0,
+                    "PP_V": profile.get("pp_v", 0.0) if profile else 0.0,
                 })
 
             # Generate output path with expedition_dive_UTM{zone}{hemisphere} naming
             project_title = self.__get_project_title()
             utm_suffix = self._get_utm_suffix()
             if project_title and utm_suffix:
-                output_path = os.path.join(input_dir, f"flight_log_{project_title}_{utm_suffix}.txt")
+                output_path = os.path.join(input_dir, f"{project_title}_{utm_suffix}.txt")
             elif project_title:
-                output_path = os.path.join(input_dir, f"flight_log_{project_title}.txt")
+                output_path = os.path.join(input_dir, f"{project_title}.txt")
             elif utm_suffix:
-                output_path = os.path.join(input_dir, f"flight_log_{utm_suffix}.txt")
+                output_path = os.path.join(input_dir, f"{utm_suffix}.txt")
             else:
                 output_path = os.path.join(input_dir, "flight_log.txt")
 

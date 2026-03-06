@@ -22,6 +22,115 @@ class RealityCaptureAlignment(RCModule):
     def __init__(self, logger):
         super().__init__("RealityCapture Alignment", logger)
 
+    def _rc_startup_check(self) -> bool:
+        """Verify RC instance is running and images are loaded.
+
+        Returns True to proceed, False to abort.
+        Warns but allows override if RC is not reachable (for Linux dev testing).
+        """
+        import sys
+
+        rc_exe_param = self.params.get("rc_executable_path") or self.params.get("rc_exe")
+        rc_exe = rc_exe_param.get_value() if rc_exe_param else None
+        instance_param = self.params.get("rc_instance_name")
+        instance_name = instance_param.get_value() if instance_param else "*"
+
+        if not rc_exe:
+            self.logger.warning("No RealityScan executable configured.")
+            return True  # Allow override
+
+        try:
+            from modules.rc_common.rc_delegation import RCDelegationClient
+            client = RCDelegationClient(rc_exe, instance_name=instance_name, logger=self.logger)
+
+            if not client.verify_connection():
+                self.logger.warning(
+                    "No RealityScan instance found. Please launch RealityScan and load your images."
+                )
+                try:
+                    response = input("Continue anyway? (y/N): ").strip().lower()
+                    if response != 'y':
+                        return False
+                except EOFError:
+                    return True  # Non-interactive mode, continue
+            else:
+                # Check if images are loaded
+                try:
+                    rev = client.get_revision()
+                    if rev == 0:
+                        self.logger.warning("RealityScan appears to have no images loaded.")
+                except Exception:
+                    pass  # Non-fatal
+
+        except Exception as e:
+            self.logger.warning("Could not check RC connection: %s", e)
+
+        # Copy XML presets (Windows only)
+        self._copy_xml_presets()
+
+        return True
+
+    def _copy_xml_presets(self):
+        """Copy in-project XML presets to RealityScan AppData directories."""
+        import sys
+        import shutil as _shutil
+
+        if sys.platform != 'win32':
+            self.logger.info("Skipping XML preset copy (not Windows)")
+            return
+
+        source_dir = Path(os.path.dirname(os.path.abspath(__file__))) / "RC_CLI" / "Metadata"
+        if not source_dir.is_dir():
+            self.logger.warning("XML source directory not found: %s", source_dir)
+            return
+
+        local_appdata = os.environ.get("LOCALAPPDATA", "")
+        if not local_appdata:
+            self.logger.warning("LOCALAPPDATA environment variable not set")
+            return
+
+        copied_count = 0
+        for version in ["2.0", "2.1"]:
+            dest = Path(local_appdata) / "Capturing Reality" / "RealityScan" / version
+            try:
+                dest.mkdir(parents=True, exist_ok=True)
+                for xml_file in source_dir.glob("*.xml"):
+                    _shutil.copy2(str(xml_file), str(dest / xml_file.name))
+                    copied_count += 1
+            except OSError as e:
+                self.logger.warning("Failed to copy XML presets to %s: %s", dest, e)
+
+        # Also copy flightlogs.xml from project root
+        project_root = Path(os.path.dirname(os.path.abspath(__file__))).parent.parent
+        fl_xml = project_root / "flightlogs.xml"
+        if fl_xml.is_file():
+            for version in ["2.0", "2.1"]:
+                dest = Path(local_appdata) / "Capturing Reality" / "RealityScan" / version
+                try:
+                    _shutil.copy2(str(fl_xml), str(dest / fl_xml.name))
+                    copied_count += 1
+                except OSError:
+                    pass
+
+        if copied_count > 0:
+            self.logger.info("Copied %d XML preset files to RealityScan directories", copied_count)
+
+    def _validate_expedition_dive_vs_flight_log(self, expedition: str, dive: str, flight_log_path: str):
+        """Warn if expedition/dive don't match the flight log filename."""
+        fl_basename = os.path.basename(flight_log_path)
+        if expedition and expedition not in fl_basename:
+            self.logger.warning(
+                "Expedition '%s' not found in flight log filename '%s'. "
+                "Verify the correct flight log is being used.",
+                expedition, fl_basename
+            )
+        if dive and dive not in fl_basename:
+            self.logger.warning(
+                "Dive '%s' not found in flight log filename '%s'. "
+                "Verify the correct flight log is being used.",
+                dive, fl_basename
+            )
+
     def get_parameters(self) -> dict[str, Parameter]:
         additional_params = {}
 
@@ -185,6 +294,28 @@ class RealityCaptureAlignment(RCModule):
             default_value=None,
             description='Directory containing pre-existing .rsalign files from a previous RealityScan run. '
                         'If present, matching zones will skip alignment and import these files directly.',
+            parameter_group='Alignment',
+        )
+
+        additional_params['rc_alignment_scope'] = Parameter(
+            name='Alignment Scope',
+            cli_short='r_scope',
+            cli_long='r_alignment_scope',
+            type=str,
+            default_value='batch',
+            description='Alignment scope: "batch" (all zones) or "specific_zone"',
+            prompt_user=True,
+            parameter_group='Alignment',
+        )
+
+        additional_params['rc_alignment_zone'] = Parameter(
+            name='Alignment Zone Number',
+            cli_short='r_zone',
+            cli_long='r_alignment_zone',
+            type=int,
+            default_value=None,
+            description='Specific zone number to align (only used when scope is specific_zone)',
+            prompt_user=False,
             parameter_group='Alignment',
         )
 
@@ -1114,6 +1245,10 @@ class RealityCaptureAlignment(RCModule):
         return output_data
 
     def run(self):
+        # RC startup verification
+        if not self._rc_startup_check():
+            return {"Success": False, "Error": "RC startup check failed — user cancelled."}
+
         success, message = self.validate_parameters()
         if not success:
             self.logger.error(message)
@@ -1165,6 +1300,25 @@ class RealityCaptureAlignment(RCModule):
             zone_folders = [f for f in os.listdir(input_folder)
                             if os.path.isdir(os.path.join(input_folder, f)) and f.startswith('zone_')]
 
+            # Apply alignment scope filtering
+            scope = self.params.get('rc_alignment_scope')
+            scope_val = scope.get_value() if scope else 'batch'
+            zone_param = self.params.get('rc_alignment_zone')
+
+            if scope_val == 'specific_zone':
+                zone_num = zone_param.get_value() if zone_param else None
+                if zone_num is None:
+                    try:
+                        zone_num = int(input("Enter zone number to align: "))
+                    except (ValueError, EOFError):
+                        self.logger.error("Invalid zone number")
+                        return {"Success": False}
+                # Filter zone_folders to only the matching zone
+                zone_folders = [d for d in zone_folders if f"zone_{zone_num}" == d or f"zone_{zone_num:03d}" == d]
+                if not zone_folders:
+                    self.logger.error("Zone %d not found in batch directory", zone_num)
+                    return {"Success": False}
+
             if not zone_folders:
                 self.logger.error(f"No zone folders found in {input_folder}")
                 return {'Success': False, 'Error': 'No zone folders found'}
@@ -1175,6 +1329,8 @@ class RealityCaptureAlignment(RCModule):
 
                 if not flight_log_path:
                     self.logger.warning(f"No flight log found in {zone_folder}")
+                else:
+                    self._validate_expedition_dive_vs_flight_log(expedition, dive, flight_log_path)
 
                 try:
                     zone_name = self.__get_component_file_name_from_zone(zone_path)
@@ -1190,6 +1346,8 @@ class RealityCaptureAlignment(RCModule):
                 })
         else:
             flight_log_path = self.__get_flight_log_path(input_folder)
+            if flight_log_path:
+                self._validate_expedition_dive_vs_flight_log(expedition, dive, flight_log_path)
 
             try:
                 zone_name = os.path.basename(input_folder)

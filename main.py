@@ -17,8 +17,15 @@ from modules.image_enhancement.image_enhancement import ImageEnhancement
 from modules.camera_setup.camera_setup import CameraSetup
 from modules.component_export.component_export import ComponentExportModule as ComponentExport
 from modules.model_generation.model_generation import ModelGeneration
+from modules.prepare_model.prepare_model import PrepareModel
+from modules.model_export.model_export import ModelExport
 from modules.rc_common.session import SessionState
 from modules.rc_common.progress import ProgressReporter, TqdmBackend, LogBackend
+
+RC_TRACK_MODULES = {
+    'Camera Setup', 'RealityCapture Alignment', 'Export Components',
+    'Model Generation', 'Prepare Model', 'Model Export',
+}
 
 def initialize_logger() -> logging.Logger:
     logging.basicConfig(level=logging.INFO)
@@ -33,14 +40,18 @@ def initialize_modules(logger) -> dict[str, RCModule]:
     - RC_NO_INTERACTIVE: any truthy value disables interactive prompts and enables all or RC_MODULES selection
     """
     available_modules: dict[str, RCModule] = {
+        # ── Preparation ──
         'Extract Images': ExtractImages(logger),
         'Enhance Images': ImageEnhancement(logger),
         'Georeference Images': GeoreferenceImages(logger),
         'Batch Directory': BatchDirectory(logger),
+        # ── RC Alignment & Model ──
         'Camera Setup': CameraSetup(logger),
         'RealityCapture Alignment': RealityCaptureAlignment(logger),
-        'Component Export': ComponentExport(logger),
+        'Export Components': ComponentExport(logger),
         'Model Generation': ModelGeneration(logger),
+        'Prepare Model': PrepareModel(logger),
+        'Model Export': ModelExport(logger),
     }
 
     # Non-interactive selection via environment
@@ -67,7 +78,20 @@ def initialize_modules(logger) -> dict[str, RCModule]:
         inquirer.Checkbox(
             'modules',
             message='Select modules to enable (arrow keys to move, space to select, enter to confirm)',
-            choices=list(available_modules.keys()),
+            choices=[
+                inquirer.Separator('── Preparation ──'),
+                'Extract Images',
+                'Enhance Images',
+                'Georeference Images',
+                'Batch Directory',
+                inquirer.Separator('── RC Alignment & Model ──'),
+                'Camera Setup',
+                'RealityCapture Alignment',
+                'Export Components',
+                'Model Generation',
+                'Prepare Model',
+                'Model Export',
+            ],
             default=list(available_modules.keys()),
             carousel=True
         )
@@ -382,7 +406,16 @@ def main(argv) -> None:
     overall_data: dict[str, object] = {}
     module_names = list(modules.keys())
 
+    rc_startup_done = False
     for idx, (name, mod) in enumerate(modules.items()):
+        # RC startup guard — run once before first RC-track module
+        if name in RC_TRACK_MODULES and not rc_startup_done:
+            if hasattr(mod, '_rc_startup_check'):
+                if not mod._rc_startup_check():
+                    logger.error("RC startup check failed. Aborting RC track.")
+                    break
+            rc_startup_done = True
+
         # Skip already-completed steps if resuming session
         if session.is_step_complete(name):
             logger.info(f"Skipping completed step: {name}")

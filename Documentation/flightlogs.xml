@@ -18,6 +18,28 @@
         </parser>
     </format>
 
+
+    <format id="{B438A617-2434-5A24-C1B7-58980F28345A}" descID="2345" desc="Name, X(E), Y(N), Alt, XAcc, YAcc, AltAcc, Yaw, Pitch, Roll, YawAcc, PitchAcc, RollAcc, Focal, PpU, PpV" reader="RealityScan.Import.CSVFlightLog">
+        <parser allowedSeparators=",; &tab;" comment="#" showIgnoreFirstline="true" qualifiers="&quot;optional">
+            <Image index="0" format="name.ext"/>
+            <X index="1" format="value"/>
+            <Y index="2" format="value"/>
+            <Altitude index="3" format="value"/>
+            <XAccuracy index="4" format="value"/>
+            <YAccuracy index="5" format="value"/>
+            <AltitudeAccuracy index="6" format="value"/>
+            <Yaw index="7" format="value"/>
+            <Pitch index="8" format="value"/>
+            <Roll index="9" format="value"/>
+            <YawAccuracy index="10" format="value"/>
+            <PitchAccuracy index="11" format="value"/>
+            <RollAccuracy index="12" format="value"/>
+            <FocalLength index="13" format="value"/>
+            <PrincipalU index="14" format="value"/>
+            <PrincipalV index="15" format="value"/>
+            </parser>
+        </format>
+
     <format id="{45881112-C09A-49FD-92E1-5170016D9AB5}" descID="8398" desc="Name, X (East), Y (North), Alt (character-separated)" reader="RealityScan.Import.CSVFlightLog">
         <parser allowedSeparators=",; &tab;" comment="#" showIgnoreFirstline="true" qualifiers="&quot;optional" >
             <Image index="0" format="name.ext"/>

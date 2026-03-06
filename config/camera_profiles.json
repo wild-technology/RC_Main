@@ -8,10 +8,14 @@
       "focal_length_mm": 18,
       "calibration_group": 1,
       "lens_group": 1,
-      "distortion_model": "Brown3",
-      "position_offsets": {"forward_m": 1.0, "lateral_m": 0.0, "down_m": 1.0},
-      "accuracy": {"x_m": 10.0, "y_m": 10.0, "alt_m": 1.0, "yaw_deg": 3.0, "pitch_deg": 5.0, "roll_deg": 3.0},
-      "pitch_offset_deg": 10
+      "distortion_model": "Division",
+      "position_offsets": {"forward_m": 1.0, "lateral_m": 0.0, "down_m": 1.2},
+      "accuracy": {"x_m": 1.0, "y_m": 1.0, "alt_m": 1.0, "yaw_deg": 3.0, "pitch_deg": 5.0, "roll_deg": 3.0},
+      "pitch_offset_deg": 10,
+      "yaw_offset_deg": 0.0,
+      "roll_offset_deg": 0.0,
+      "pp_u": 0.0,
+      "pp_v": 0.0
     },
     {
       "name": "CamMid",
@@ -21,10 +25,14 @@
       "focal_length_mm": 14,
       "calibration_group": 2,
       "lens_group": 2,
-      "distortion_model": "Brown3WithTangential2",
+      "distortion_model": "Division",
       "position_offsets": {"forward_m": 1.0, "lateral_m": 0.0, "down_m": 1.0},
       "accuracy": {"x_m": 10.0, "y_m": 10.0, "alt_m": 1.0, "yaw_deg": 3.0, "pitch_deg": 10.0, "roll_deg": 3.0},
-      "pitch_offset_deg": 20
+      "pitch_offset_deg": 20,
+      "yaw_offset_deg": 0.0,
+      "roll_offset_deg": 0.0,
+      "pp_u": 0.0,
+      "pp_v": 0.0
     },
     {
       "name": "CamUpper",
@@ -34,10 +42,14 @@
       "focal_length_mm": 12,
       "calibration_group": 3,
       "lens_group": 3,
-      "distortion_model": "Brown3WithTangential2",
-      "position_offsets": {"forward_m": 1.0, "lateral_m": 0.0, "down_m": 1.0},
+      "distortion_model": "Division",
+      "position_offsets": {"forward_m": 1.0, "lateral_m": 0.0, "down_m": 0.0},
       "accuracy": {"x_m": 10.0, "y_m": 10.0, "alt_m": 1.0, "yaw_deg": 3.0, "pitch_deg": 10.0, "roll_deg": 3.0},
-      "pitch_offset_deg": 70
+      "pitch_offset_deg": 70,
+      "yaw_offset_deg": 0.0,
+      "roll_offset_deg": 0.0,
+      "pp_u": 0.0,
+      "pp_v": 0.0
     },
     {
       "name": "Zeuss",
@@ -47,10 +59,14 @@
       "focal_length_mm": 28,
       "calibration_group": 4,
       "lens_group": 4,
-      "distortion_model": "Brown3",
-      "position_offsets": {"forward_m": 0.0, "lateral_m": 0.0, "down_m": 0.0},
+      "distortion_model": "Division",
+      "position_offsets": {"forward_m": 0.5, "lateral_m": 0.0, "down_m": 0.8},
       "accuracy": {"x_m": 10.0, "y_m": 10.0, "alt_m": 1.0, "yaw_deg": 3.0, "pitch_deg": 30.0, "roll_deg": 3.0},
-      "pitch_offset_deg": 0
+      "pitch_offset_deg": 0,
+      "yaw_offset_deg": 0.0,
+      "roll_offset_deg": 0.0,
+      "pp_u": 0.0,
+      "pp_v": 0.0
     }
   ]
 }

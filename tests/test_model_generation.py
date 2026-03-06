@@ -28,10 +28,9 @@ class TestModelGenerationParameters:
         assert "model_enabled" in params
         assert "model_alignment_dir" in params
         assert "model_export_dir" in params
-        assert "model_large_triangle_threshold" in params
-        assert "model_enable_simplify" in params
-        assert "model_export_fbx" in params
-        assert "model_export_cesium" in params
+        assert "model_project_prefix" in params
+        assert "model_test_mode" in params
+        assert "model_texture_params" in params
 
     def test_parameter_groups(self, module):
         params = module.get_parameters()
@@ -42,17 +41,11 @@ class TestModelGenerationParameters:
         params = module.get_parameters()
         assert params["model_enabled"].default_value is True
         assert params["model_test_mode"].default_value is True
-        assert params["model_large_triangle_threshold"].default_value == 2.0
-        assert params["model_small_hole_max_edges"].default_value == 5000
-        assert params["model_large_hole_max_edges"].default_value == 600000
-        assert params["model_simplify_passes"].default_value == 2
-        assert params["model_export_fbx"].default_value is True
-        assert params["model_export_cesium"].default_value is True
-        assert params["model_export_obj"].default_value is False
+        assert params["model_project_prefix"].default_value == "model"
 
     def test_parameter_count(self, module):
         params = module.get_parameters()
-        assert len(params) == 18  # 18 parameters total
+        assert len(params) == 6  # 6 parameters after refactor
 
 
 class TestModelGenerationValidation:
@@ -157,22 +150,10 @@ class TestModelGenerationRun:
             "model_export_dir": Parameter("e", "e", "e", str, str(export_dir)),
             "model_project_prefix": Parameter("p", "p", "p", str, "test"),
             "model_test_mode": Parameter("t", "t", "t", bool, True),
-            "model_large_triangle_threshold": Parameter("lt", "lt", "lt", float, 2.0),
-            "model_small_hole_max_edges": Parameter("sh", "sh", "sh", int, 5000),
-            "model_large_hole_max_edges": Parameter("lh", "lh", "lh", int, 600000),
-            "model_enable_simplify": Parameter("s", "s", "s", bool, False),
-            "model_simplify_passes": Parameter("sp", "sp", "sp", int, 2),
-            "model_export_fbx": Parameter("fbx", "fbx", "fbx", bool, True),
-            "model_export_cesium": Parameter("ces", "ces", "ces", bool, False),
-            "model_export_obj": Parameter("obj", "obj", "obj", bool, False),
+            "model_texture_params": Parameter("txml", "txml", "txml", str, None),
             "rc_executable_path": Parameter("rc", "rc", "rc", str, "/fake/RealityScan.exe"),
             "rc_instance_name": Parameter("ri", "ri", "ri", str, "*"),
             "rc_checkpoint_dir": Parameter("ckpt", "ckpt", "ckpt", str, str(tmp_path / "ckpt")),
-            "model_simplify_params": Parameter("sxml", "sxml", "sxml", str, None),
-            "model_texture_params": Parameter("txml", "txml", "txml", str, None),
-            "model_smooth_params": Parameter("smxml", "smxml", "smxml", str, None),
-            "model_unwrap_params": Parameter("uxml", "uxml", "uxml", str, None),
-            "model_reprojection_params": Parameter("rxml", "rxml", "rxml", str, None),
         })
 
         result = module.run()

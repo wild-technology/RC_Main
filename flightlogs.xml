@@ -19,7 +19,7 @@
     </format>
 
 
-    <format id="{B438A617-2434-5A24-C1B7-58980F28345A}" descID="2345" desc="filename,X (East), Y (North), Altitude, XAccuracy, YAccuracy, AltitudeAccuracy, YawAccuracy, PitchAccuracy, RollAccuracy" reader="RealityScan.Import.CSVFlightLog">
+    <format id="{B438A617-2434-5A24-C1B7-58980F28345A}" descID="2345" desc="Name, X(E), Y(N), Alt, XAcc, YAcc, AltAcc, Yaw, Pitch, Roll, YawAcc, PitchAcc, RollAcc, Focal, PpU, PpV" reader="RealityScan.Import.CSVFlightLog">
         <parser allowedSeparators=",; &tab;" comment="#" showIgnoreFirstline="true" qualifiers="&quot;optional">
             <Image index="0" format="name.ext"/>
             <X index="1" format="value"/>
@@ -34,6 +34,9 @@
             <YawAccuracy index="10" format="value"/>
             <PitchAccuracy index="11" format="value"/>
             <RollAccuracy index="12" format="value"/>
+            <FocalLength index="13" format="value"/>
+            <PrincipalU index="14" format="value"/>
+            <PrincipalV index="15" format="value"/>
             </parser>
         </format>
 
