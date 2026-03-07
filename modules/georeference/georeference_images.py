@@ -846,14 +846,15 @@ class GeoreferenceImages(RCModule):
             # Generate output path with expedition_dive_UTM{zone}{hemisphere} naming
             project_title = self.__get_project_title()
             utm_suffix = self._get_utm_suffix()
+            output_dir = self.params['output_dir'].get_value() or input_dir
             if project_title and utm_suffix:
-                output_path = os.path.join(input_dir, f"{project_title}_{utm_suffix}.txt")
+                output_path = os.path.join(output_dir, f"{project_title}_{utm_suffix}.txt")
             elif project_title:
-                output_path = os.path.join(input_dir, f"{project_title}.txt")
+                output_path = os.path.join(output_dir, f"{project_title}.txt")
             elif utm_suffix:
-                output_path = os.path.join(input_dir, f"{utm_suffix}.txt")
+                output_path = os.path.join(output_dir, f"{utm_suffix}.txt")
             else:
-                output_path = os.path.join(input_dir, "flight_log.txt")
+                output_path = os.path.join(output_dir, "flight_log.txt")
 
             # Generate flight log
             try:
