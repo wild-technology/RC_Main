@@ -175,8 +175,8 @@ class ExtractImages(RCModule):
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             self.logger.error(f"Video file {video_path} could not be opened")
+            # --- FIXED LINE ---
             output_data['Success'] = False
-            output_data['Error'] = f"Could not open video file: {video_path}"
             return output_data
 
         # Get the video's timestamp
@@ -289,16 +289,6 @@ class ExtractImages(RCModule):
             mov_files = [filename for filename in os.listdir(input_path) if
                          os.path.splitext(filename)[1].lower() == ".mp4"]
 
-        if not mov_files:
-            self.logger.error(f"No MP4 files found in {input_path}")
-            return {
-                'Success': False,
-                'Error': 'No MP4 files found in input path',
-                'Total Input Frame Count': 0,
-                'Total Extracted Frame Count': 0,
-                'Number of Videos': 0
-            }
-
         bar = self._initialize_loading_bar(len(mov_files), "Extracting Videos")
 
         overall_output_data = {}
@@ -363,23 +353,16 @@ class ExtractImages(RCModule):
                 return False, 'Input file does not exist'
 
             if os.path.splitext(input_video)[1].lower() != '.mp4':
-                return False, 'Input path is not an mp4 file'
+                return False, 'Input path is not an mov file'
 
         if os.path.isdir(output_dir) and os.listdir(output_dir):
-            # Allow automation via environment variables
-            auto_overwrite = os.environ.get('RC_OVERWRITE', '').strip().lower() in ('1', 'true', 'yes', 'y') or \
-                             os.environ.get('RC_NO_PROMPT', '').strip().lower() in ('1', 'true', 'yes', 'y')
-            if auto_overwrite:
-                self.logger.warning('Extracted images folder exists. Auto-overwriting due to RC_OVERWRITE/RC_NO_PROMPT.')
-                shutil.rmtree(output_dir)
-            else:
-                self.logger.warning('Extracted images folder already exists. Overwrite? (y/n)')
-                overwrite = input()
+            self.logger.warning('Extracted images folder already exists. Overwrite? (y/n)')
+            overwrite = input()
 
-                if overwrite.lower() != 'y':
-                    return False, 'Extracted images folder not created'
-                else:
-                    shutil.rmtree(output_dir)
+            if overwrite.lower() != 'y':
+                return False, 'Extracted images folder not created'
+            else:
+                shutil.rmtree(output_dir)
 
         if not os.path.isdir(output_dir):
             os.makedirs(output_dir)

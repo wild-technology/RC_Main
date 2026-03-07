@@ -4,30 +4,7 @@ from __future__ import annotations
 import sys
 import logging
 import argparse
-import os
 import inquirer
-import os
-import csv
-from datetime import datetime, timedelta
-from PIL import Image
-import utm
-import math
-import os
-import shutil
-import numpy as np
-import pandas as pd
-import geopandas as gpd
-from sklearn.cluster import KMeans
-from sklearn.neighbors import KernelDensity
-from scipy.spatial import cKDTree, ConvexHull
-from shapely.geometry import Point
-from sklearn.preprocessing import StandardScaler
-import matplotlib
-import matplotlib.pyplot as plt
-import seaborn as sns
-import warnings
-import glob
-from typing import Optional, List
 
 from module_base.parameter import Parameter
 from module_base.rc_module import RCModule
@@ -36,7 +13,7 @@ from modules.georeference.georeference_images import GeoreferenceImages
 from modules.image_batcher.batch_directory import BatchDirectory
 from modules.realitycapture_interface.realitycapture_interface import RealityCaptureAlignment
 
-def initialize_logger() -> logging.Logger:
+def intialize_logger() -> logging.Logger:
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
     return logger
@@ -44,9 +21,6 @@ def initialize_logger() -> logging.Logger:
 def initialize_modules(logger) -> dict[str, RCModule]:
     """
     Initializes the modules and returns a dict of the active modules.
-    Honors optional environment variables:
-    - RC_MODULES: comma-separated list of module names to enable (use display names as shown)
-    - RC_NO_INTERACTIVE: any truthy value disables interactive prompts and enables all or RC_MODULES selection
     """
     available_modules: dict[str, RCModule] = {
         'Extract Images': ExtractImages(logger),
@@ -55,19 +29,6 @@ def initialize_modules(logger) -> dict[str, RCModule]:
         'RealityCapture Alignment': RealityCaptureAlignment(logger)
     }
 
-    # Non-interactive selection via environment
-    no_interactive = os.environ.get('RC_NO_INTERACTIVE', '').strip().lower() in ('1', 'true', 'yes', 'y')
-    modules_env = os.environ.get('RC_MODULES')
-    if no_interactive or modules_env:
-        selected = list(available_modules.keys())
-        if modules_env:
-            requested = [m.strip() for m in modules_env.split(',') if m.strip()]
-            selected = [m for m in requested if m in available_modules]
-            if not selected:
-                selected = list(available_modules.keys())
-        return {name: available_modules[name] for name in selected}
-
-    # Fallback to interactive prompt
     module_choices = [
         inquirer.Checkbox(
             'modules',
@@ -78,16 +39,12 @@ def initialize_modules(logger) -> dict[str, RCModule]:
         )
     ]
 
-    answers = inquirer.prompt(module_choices) or {}
+    answers = inquirer.prompt(module_choices)
 
     enabled_modules: dict[str, RCModule] = {}
     for name, mod in available_modules.items():
         if name in answers.get('modules', []):
             enabled_modules[name] = mod
-
-    # If user cancelled or nothing selected, default to all
-    if not enabled_modules:
-        enabled_modules = available_modules
 
     return enabled_modules
 
@@ -131,45 +88,23 @@ def initialize_parameters(modules) -> dict[str, Parameter]:
                         continue
             params[pname] = p
 
-    # Auto-disable batch_input_image_dir prompt when both Georeference and Batch are active
-    if 'Georeference Images' in modules and 'Batch Directory' in modules:
-        if 'batch_input_image_dir' in params:
-            params['batch_input_image_dir'].prompt_user = False
-
     return params
 
 def parse_arguments(argv, params, logger) -> None:
     """
     Parses CLI args and prompts for any missing values.
-    Honors RC_NO_INTERACTIVE env var to skip prompts and use defaults.
-    Also skips RealityCapture model-related prompts when model generation is disabled.
     """
-    no_interactive = os.environ.get('RC_NO_INTERACTIVE', '').strip().lower() in ('1', 'true', 'yes', 'y')
-
     parser = argparse.ArgumentParser()
     for p in params.values():
-        if p.get_type() is bool:
-            parser.add_argument(f'-{p.cli_short}', f'--{p.cli_long}', action='store_true', default=None, help=p.get_description())
-        else:
-            parser.add_argument(f'-{p.cli_short}', f'--{p.cli_long}', type=p.get_type(), help=p.get_description())
+        parser.add_argument(f'-{p.cli_short}', f'--{p.cli_long}',
+                            type=p.get_type(), help=p.get_description())
     args = parser.parse_args(argv[1:])
-
-    # Track whether RC model generation is disabled to skip dependent prompts
-    rc_model_generate_value = None
 
     for p in params.values():
         val = getattr(args, p.cli_long, None)
-
-        # If we've already determined rc_model_generate is False, skip prompts for its dependents
-        if rc_model_generate_value is False and p.cli_long in ('r_model_cull_poly', 'r_model_texture', 'r_model_simplify'):
-            # Do not prompt; force False to avoid confusion
-            val = False if val is None else val
-        elif val is None and p.prompt_user and not no_interactive:
+        if val is None and p.prompt_user:
             try:
-                inp = input(f'{p.get_description()}: ').strip()
-                # Strip surrounding quotes if present
-                if inp and inp[0] in ('"', "'") and inp[-1] == inp[0]:
-                    inp = inp[1:-1]
+                inp = input(f'{p.get_description()}: ')
                 if p.get_type() is bool:
                     val = inp.lower() in ('true', 't', 'yes', 'y')
                 else:
@@ -177,13 +112,9 @@ def parse_arguments(argv, params, logger) -> None:
             except ValueError:
                 logger.warning(f'Invalid value for {p.get_name()}, using default {p.get_default_value()}')
                 val = p.get_default_value()
-        if val is None:
+        if val is None and not p.prompt_user:
             val = p.get_default_value()
         p.set_value(val)
-
-        # Capture rc_model_generate choice as soon as it's set
-        if p.cli_long == 'r_model_generate':
-            rc_model_generate_value = bool(val)
 
 def update_parameters(params, modules) -> None:
     """
@@ -205,7 +136,7 @@ def log_output_data(logger, output_data: dict[str, object], indent: int = 0) -> 
             logger.info(f'{pad}{key}: {val}')
 
 def main(argv) -> None:
-    logger = initialize_logger()
+    logger = intialize_logger()
     modules = initialize_modules(logger)
     params = initialize_parameters(modules)
     parse_arguments(argv, params, logger)
@@ -215,52 +146,18 @@ def main(argv) -> None:
     for name, p in params.items():
         logger.info(f'  {name} ({p.cli_short}): {p.get_value()}')
 
-    # Validate output directory early
-    if 'output_dir' in params:
-        output_dir = params['output_dir'].get_value()
-        if output_dir:
-            # Try to create output directory if it doesn't exist
-            try:
-                os.makedirs(output_dir, exist_ok=True)
-            except Exception as e:
-                logger.error(f"Cannot create output directory {output_dir}: {e}")
-                return
-
-            # Verify it's writable
-            if not os.access(output_dir, os.W_OK):
-                logger.error(f"Output directory {output_dir} is not writable")
-                return
-
-            logger.info(f"Output directory validated: {output_dir}")
-
     overall_data: dict[str, object] = {}
     for idx, mod in enumerate(modules.values()):
         ok, msg = mod.validate_parameters()
         if not ok:
-            logger.error(f"Module {mod.get_name()} validation failed: {msg}")
+            logger.error(msg)
             return
 
         logger.info(f'Running module: {mod.get_name()}')
-        try:
-            out = mod.run()
-        except Exception as e:
-            logger.error(f"Module {mod.get_name()} failed with exception: {e}")
-            mod.finish()
-            return
-
+        out = mod.run()
         mod.finish()
         logger.info(f'Finished module: {mod.get_name()}')
-
-        # Check for module failure
-        if out is None:
-            logger.error(f"Module {mod.get_name()} returned None - treating as failure")
-            return
-
-        if isinstance(out, dict) and out.get('Success') == False:
-            logger.error(f"Module {mod.get_name()} reported failure")
-            return
-
-        overall_data[mod.get_name()] = out
+        overall_data[mod.get_name()] = out or {}
 
         if not params['continue_automatically'].get_value() and idx < len(modules) - 1:
             input("Press enter to continue...")
