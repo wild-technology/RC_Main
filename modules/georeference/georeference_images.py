@@ -717,10 +717,9 @@ class GeoreferenceImages(RCModule):
 
             # Write data for all accepted images
             for image in accepted_images:
-                # Use bare filename — downstream modules (batcher, RC interface) match on filenames
-                flight_log_name = os.path.basename(
-                    image.get("ABSOLUTE_PATH", image.get("FILENAME", ""))
-                )
+                # Use absolute path so RealityScan can locate the exact file after
+                # batching creates duplicate filenames across zone subdirectories
+                flight_log_name = image.get("ABSOLUTE_PATH", image.get("FILENAME", ""))
 
                 # Extract position data
                 utm_x = image.get("UTM_X")
