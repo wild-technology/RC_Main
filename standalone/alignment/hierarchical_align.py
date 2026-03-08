@@ -105,11 +105,12 @@ class MergeStepResult:
 # ---------------------------------------------------------------------------
 
 class RCController:
-    """Manages a headless RealityScan instance via -delegateTo * delegation."""
+    """Manages a RealityScan instance via -delegateTo * delegation."""
 
-    def __init__(self, rc_exe: str, error_dir: str):
+    def __init__(self, rc_exe: str, error_dir: str, headless: bool = True):
         self.rc_exe = rc_exe
         self.error_dir = error_dir
+        self.headless = headless
         os.makedirs(error_dir, exist_ok=True)
 
     # -- Low-level helpers --------------------------------------------------
@@ -179,16 +180,21 @@ class RCController:
     # -- Instance lifecycle -------------------------------------------------
 
     def start(self):
-        """Launch headless RC instance if not already running."""
+        """Launch RC instance if not already running.
+
+        When headless=True (default), runs with -headless -stdConsole flags
+        and suppresses the GUI window. When headless=False (--no-headless),
+        launches with a visible GUI for debugging and visual verification.
+        """
         if self.is_running():
             logger.info("RealityScan instance already running, creating new scene")
             self.execute("-newScene", "-deleteAutosave")
             return
 
-        logger.info("Starting new RealityScan instance (headless)...")
+        mode = "headless" if self.headless else "GUI"
+        logger.info("Starting new RealityScan instance (%s)...", mode)
         cmd = [
             self.rc_exe,
-            "-headless", "-stdConsole",
             "-silent", self.error_dir,
             "-setInstanceName", "RC1",
             "-set", "appAutoSaveMode=false",
@@ -197,12 +203,17 @@ class RCController:
             "-set", "RealityCaptureProcessActionTime=0",
             "-set", "RealityCaptureProcessAction=ExecuteProgram",
         ]
-        subprocess.Popen(
-            cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
+        if self.headless:
+            cmd.insert(1, "-headless")
+            cmd.insert(2, "-stdConsole")
+
+        popen_kwargs = {}
+        if self.headless:
+            popen_kwargs["stdout"] = subprocess.DEVNULL
+            popen_kwargs["stderr"] = subprocess.DEVNULL
+            popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+        subprocess.Popen(cmd, **popen_kwargs)
 
         # Wait for instance to become reachable
         for _ in range(120):  # up to 2 minutes
@@ -459,23 +470,33 @@ def consolidate_zone(
     logger.info("  %d components after initial alignment (%d total cameras)",
                 len(components), total_cameras)
 
-    # Attempt 1: Standard merge
+    # Attempt 1: Standard merge (uses default feature source)
     logger.info("  Consolidation attempt 1: mergeComponents")
     rc.execute("-mergeComponents")
     components = rc.list_components(report_dir)
     if len(components) <= 1:
         return components, [], 1
 
-    # Attempt 2: Re-align (RC uses merge-oriented algorithms on re-align)
-    logger.info("  Consolidation attempt 2: re-align + mergeComponents")
-    rc.execute("-align")
+    # Attempt 2: Merge using overlaps (setFeatureSource 0)
+    # Focuses only on shared images/points in overlap regions between components
+    logger.info("  Consolidation attempt 2: merge using overlaps")
+    rc.execute("-selectAllImages")
+    rc.execute("-setFeatureSource", "0")
     rc.execute("-mergeComponents")
     components = rc.list_components(report_dir)
     if len(components) <= 1:
         return components, [], 2
 
-    # Attempt 3: Aggressive settings
-    logger.info("  Consolidation attempt 3: aggressive re-align")
+    # Attempt 3: Re-align (RC uses merge-oriented algorithms on re-align)
+    logger.info("  Consolidation attempt 3: re-align + mergeComponents")
+    rc.execute("-align")
+    rc.execute("-mergeComponents")
+    components = rc.list_components(report_dir)
+    if len(components) <= 1:
+        return components, [], 3
+
+    # Attempt 4: Aggressive settings
+    logger.info("  Consolidation attempt 4: aggressive re-align + force rematch")
     rc.execute("-set", "sfmForceComponentRematch=true")
     rc.execute("-set", "sfmImagesOverlap=Low")
     rc.execute("-align")
@@ -483,9 +504,9 @@ def consolidate_zone(
     rc.execute("-set", "sfmForceComponentRematch=false")  # reset
     components = rc.list_components(report_dir)
     if len(components) <= 1:
-        return components, [], 3
+        return components, [], 4
 
-    # Attempt 4: Keep maximal, discard small fragments
+    # Attempt 5: Keep maximal, discard small fragments
     logger.info("  Consolidation: %d components remain after all merge attempts",
                 len(components))
 
@@ -513,7 +534,7 @@ def consolidate_zone(
     for d in discarded:
         logger.info("    Discarding: %s (%d cameras)", d.name, d.camera_count)
 
-    return [maximal], discarded, 4
+    return [maximal], discarded, 5
 
 
 def align_zone(
@@ -1058,6 +1079,8 @@ Examples:
                         help="Discard zone components with fewer cameras (default: 5)")
     parser.add_argument("--warn-discard-threshold", type=float, default=0.9,
                         help="Warn if maximal component has less than this fraction of cameras (default: 0.9)")
+    parser.add_argument("--no-headless", action="store_true",
+                        help="Launch RealityScan with visible GUI instead of headless mode (useful for debugging)")
 
     return parser.parse_args()
 
@@ -1118,7 +1141,7 @@ def main():
                      i + 1, z.zone_number, z.image_count, z.centroid_x, z.centroid_y)
 
     # Initialize RC
-    rc = RCController(args.rc_exe, error_dir)
+    rc = RCController(args.rc_exe, error_dir, headless=not args.no_headless)
 
     zone_results = []
     merge_results = []
