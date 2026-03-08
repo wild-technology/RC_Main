@@ -1,6 +1,8 @@
 from __future__ import annotations
 from module_base.rc_module import RCModule
 from module_base.parameter import Parameter
+from ..camera_config import camera_subfolder_name
+from ..batch_core import rewrite_flight_log_filenames
 
 import os
 import shutil
@@ -487,17 +489,8 @@ class BatchDirectory(RCModule):
         self.logger.info(f"Batch zones plot saved to: {zones_plot_path}")
 
     def __determine_camera_subfolder(self, filename):
-        """Determine camera subfolder based on filename."""
-        if "HERC" in filename:
-            return "zeuss"
-        elif filename.startswith("camlower"):
-            return "camlower"
-        elif filename.startswith("cammid"):
-            return "cammid"
-        elif filename.startswith("camupper"):
-            return "camupper"
-        else:
-            return "other"
+        """Determine camera subfolder based on filename using shared camera config."""
+        return camera_subfolder_name(filename)
 
     def __copy_files(self, input_dir, batch_folder_dir, files):
         """Copy files to camera-specific subfolders and generate XMP sidecars."""
@@ -630,29 +623,24 @@ class BatchDirectory(RCModule):
             unique_zone_files = list(dict.fromkeys(zone_files))
             self.__copy_files(input_dir, batch_folder_dir, unique_zone_files)
 
-            # Create flight log per zone
+            # Create flight log per zone with filenames rewritten to match
+            # the batch directory structure (camera_subfolder/basename)
             if flight_log_df is not None:
-                # Maintain full column order
-                zone_flight_log_df = flight_log_df.loc[
-                    flight_log_df.index.isin(unique_zone_files)
-                ].copy()
-
-                # Keep original columns even if some missing
-                missing = [col for col in flight_log_df.columns if col not in zone_flight_log_df.columns]
-                for col in missing:
-                    zone_flight_log_df[col] = ""
-
-                # Write out zone-specific flight log
-                batch_flight_log_name = f'flight_log{self.utm_zone_suffix}_UTM.txt'
-                batch_flight_log_path = os.path.join(batch_folder_dir, batch_flight_log_name)
-
-                zone_flight_log_df.to_csv(
-                    batch_flight_log_path,
-                    sep=';',
-                    index=True,
-                    index_label='filename',
-                    columns=flight_log_df.columns  # preserve column order
+                zone_flight_log_df = rewrite_flight_log_filenames(
+                    flight_log_df, unique_zone_files
                 )
+
+                if not zone_flight_log_df.empty:
+                    # Write out zone-specific flight log
+                    batch_flight_log_name = f'flight_log{self.utm_zone_suffix}_UTM.txt'
+                    batch_flight_log_path = os.path.join(batch_folder_dir, batch_flight_log_name)
+
+                    zone_flight_log_df.to_csv(
+                        batch_flight_log_path,
+                        sep=';',
+                        index=True,
+                        index_label='filename',
+                    )
 
             self._update_loading_bar(bar, 1)
 

@@ -1,28 +1,39 @@
-﻿# DEPRECATED: Use standalone/colmap/colmap_processor.py instead (parameterized paths).
-import warnings
-warnings.warn(
-    "colmap_processor.py is deprecated. Use standalone/colmap/colmap_processor.py instead.",
-    DeprecationWarning, stacklevel=1
-)
-
-import os
+﻿import os
+import sys
 import subprocess
 import json
 import psutil
 import shutil
+import argparse
 from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import time
 import threading
 from datetime import datetime
 
-# Configuration
-BASE_DIR = Path("E:/RUMI/NA173_H2102")
+
+def _parse_args():
+    parser = argparse.ArgumentParser(description='COLMAP hierarchical processing by zone')
+    parser.add_argument('--base-dir', required=True, type=Path,
+                        help='Project base directory (e.g., /path/to/NA173_H2102)')
+    parser.add_argument('--colmap-bin', type=Path, default=Path('colmap'),
+                        help='Path to COLMAP executable (default: colmap)')
+    parser.add_argument('--vocab-tree', type=Path, default=None,
+                        help='Path to vocabulary tree file (default: <base-dir>/vocab_tree_faiss_256K.bin)')
+    parser.add_argument('--zones', nargs='+', default=None,
+                        help='Zone names to process (default: auto-detect from batched_images_by_zone)')
+    parser.add_argument('--parallel-zones', type=int, default=1,
+                        help='Number of zones to process in parallel (default: 1)')
+    return parser.parse_args()
+
+
+_args = _parse_args()
+BASE_DIR = _args.base_dir
 BATCHED_IMAGES = BASE_DIR / "batched_images_by_zone"
-COLMAP_BIN = Path("C:/colmap/bin/colmap.exe")
+COLMAP_BIN = _args.colmap_bin
 OUTPUT_DIR = BASE_DIR / "colmap_hierarchical"
-VOCAB_TREE_PATH = BASE_DIR / "vocab_tree_faiss_256K.bin"
-NUM_PARALLEL_ZONES = 1  # Reduced from 5 to avoid GPU contention
+VOCAB_TREE_PATH = _args.vocab_tree or (BASE_DIR / "vocab_tree_faiss_256K.bin")
+NUM_PARALLEL_ZONES = _args.parallel_zones
 
 # Camera model detection patterns
 CAMERA_PATTERNS = {
@@ -31,7 +42,13 @@ CAMERA_PATTERNS = {
 	"zeuss": {"pattern": "_HERC_", "model": "OPENCV"}
 }
 
-ZONES = ["zone_1", "zone_2", "zone_3", "zone_4", "zone_5"]
+# Auto-detect zones or use provided list
+if _args.zones:
+    ZONES = _args.zones
+elif BATCHED_IMAGES.exists():
+    ZONES = sorted([d.name for d in BATCHED_IMAGES.iterdir() if d.is_dir() and d.name.startswith("zone_")])
+else:
+    ZONES = ["zone_1", "zone_2", "zone_3", "zone_4", "zone_5"]
 
 # Resource monitoring
 monitoring_active = False

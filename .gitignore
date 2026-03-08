@@ -10,6 +10,8 @@
 /modules/image_batcher/__pycache__
 /modules/realitycapture_interface/__pycache__
 
+/standalone/**/__pycache__
+
 /modules/realitycapture_interface/RC_CLI/Errors/errors.txt
 /modules/realitycapture_interface/RC_CLI/Errors/progress.txt
 main.py.lprof

@@ -1,14 +1,7 @@
 """
 COLMAP Vocabulary Tree Training Script - PARALLEL VERSION
 Handles multiple camera models - RESUMABLE
-
-DEPRECATED: Use standalone/colmap/vocabtrainer_shallow.py instead.
 """
-import warnings
-warnings.warn(
-    "vocabtrainer_shallow.py is deprecated. Use standalone/colmap/vocabtrainer_shallow.py instead.",
-    DeprecationWarning, stacklevel=1
-)
 
 import subprocess
 import os
@@ -19,7 +12,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import multiprocessing
 import sqlite3
 
-COLMAP_PATH = r"C:\COLMAP\bin\colmap.exe"
+COLMAP_PATH = os.environ.get("COLMAP_PATH", "colmap")
 
 
 class COLMAPVocabTrainer:
@@ -418,11 +411,23 @@ def main():
 
     print()
 
-    output_path = r"D:\colmap_vocab_training"
+    import argparse
+    parser = argparse.ArgumentParser(description='COLMAP vocab tree training (shallow)')
+    parser.add_argument('--output-dir', required=True, help='Output directory for training')
+    parser.add_argument('--image-dirs', nargs='+', required=True,
+                        help='Image directories (format: path:label pairs, e.g. /images:my_opencv)')
+    args = parser.parse_args()
 
-    dataset_config = {
-        r"D:\NA173 Shallow": "na173_shallow_opencv",
-    }
+    output_path = args.output_dir
+
+    dataset_config = {}
+    for item in args.image_dirs:
+        if ':' in item:
+            path, label = item.rsplit(':', 1)
+        else:
+            path = item
+            label = Path(item).name + "_opencv"
+        dataset_config[path] = label
 
     trainer = COLMAPVocabTrainer(output_path)
 

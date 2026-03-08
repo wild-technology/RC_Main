@@ -4,14 +4,7 @@ Image Decimation Script
 
 Decimates a folder of images by copying a user-selected percentage
 to a new destination folder.
-
-DEPRECATED: Use standalone/image_tools/decimator.py instead.
 """
-import warnings
-warnings.warn(
-    "decimator.py is deprecated. Use standalone/image_tools/decimator.py instead.",
-    DeprecationWarning, stacklevel=1
-)
 
 import os
 import shutil

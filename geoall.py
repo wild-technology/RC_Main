@@ -4,7 +4,16 @@ Processes underwater images from multiple dives and generates RealityCapture fli
 Copies matched images into dive-specific subdirectories.
 Validates copied images and removes corrupt files after confirmation.
 Optimized with multiprocessing and binary search for speed.
+
+DEPRECATED: Use standalone/georeference/geo_multi_dive.py instead.
 """
+import warnings
+warnings.warn(
+    "geoall.py is deprecated. Use standalone/georeference/geo_multi_dive.py instead, "
+    "which has parameterized paths, shared core imports, and cross-dive matching bug fixes.",
+    DeprecationWarning,
+    stacklevel=1
+)
 
 from __future__ import annotations
 import os
@@ -841,11 +850,25 @@ def main():
             data_rows = read_csv_data(csv_path)
             print(f"  Loaded {len(data_rows)} data rows")
 
+            # Sort before printing time range (Bug fix: was printing unsorted range)
             if data_rows:
+                data_rows.sort(key=lambda row: row["TIME"])
                 print(f"  CSV time range: {data_rows[0]['TIME']} to {data_rows[-1]['TIME']}")
 
+            # Filter images to this dive's time range to prevent cross-dive false matching
+            # (Bug fix: previously ALL images were matched against every dive's CSV)
+            dive_images = []
+            if data_rows:
+                from datetime import timedelta
+                csv_start = data_rows[0]["TIME"] - timedelta(seconds=60)
+                csv_end = data_rows[-1]["TIME"] + timedelta(seconds=60)
+                dive_images = [img for img in all_images if csv_start <= img["TIMESTAMP"] <= csv_end]
+                print(f"  Images in dive time range: {len(dive_images)} (of {len(all_images)} total)")
+            else:
+                dive_images = []
+
             utm_zone_cache = {}
-            matched_images, stats = estimate_location(all_images, data_rows, utm_zone_cache)
+            matched_images, stats = estimate_location(dive_images, data_rows, utm_zone_cache)
 
             utm_zone = utm_zone_cache.get('zone')
 
@@ -862,7 +885,7 @@ def main():
                     overall_stats['overall_camera_counts'][camera_type] += count
 
                 dive_image_dir = os.path.join(OUTPUT_DIR, dive_number)
-                print_dive_summary(dive_number, len(data_rows), len(all_images), stats,
+                print_dive_summary(dive_number, len(data_rows), len(dive_images), stats,
                                  flight_log_path, utm_zone, copied_count, failed_count,
                                  camera_copy_counts, dive_image_dir)
 
@@ -870,10 +893,10 @@ def main():
             else:
                 print(f"\nNo images matched for dive {dive_number}")
                 dive_image_dir = os.path.join(OUTPUT_DIR, dive_number)
-                print_dive_summary(dive_number, len(data_rows), len(all_images), stats,
+                print_dive_summary(dive_number, len(data_rows), len(dive_images), stats,
                                  "N/A", utm_zone, 0, 0, {}, dive_image_dir)
 
-            overall_stats['total_images_processed'] += len(all_images)
+            overall_stats['total_images_processed'] += len(dive_images)
 
         except Exception as e:
             print(f"Error processing dive {dive_number}: {e}")
