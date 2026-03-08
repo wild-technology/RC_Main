@@ -3,14 +3,7 @@
 Script to rename image files with timestamp-first format and validate JPEG integrity.
 Processes files matching pattern: cam*_YYYYMMDDTHHMMSSZ.jpg
 Renames to: YYYYMMDDTHHMMSSZ_cam*.jpg
-
-DEPRECATED: Use standalone/image_tools/image_renamer.py instead.
 """
-import warnings
-warnings.warn(
-    "masking.py is deprecated. Use standalone/image_tools/image_renamer.py instead.",
-    DeprecationWarning, stacklevel=1
-)
 
 import os
 import re

@@ -1,14 +1,7 @@
 """
 COLMAP Vocabulary Tree Training Script - PARALLEL VERSION
 Handles multiple camera models and decimates by 50% using timestamp-based sequential sampling
-
-DEPRECATED: Use standalone/colmap/vocabtrainer_shipwrecks2.py instead.
 """
-import warnings
-warnings.warn(
-    "vocabtrainer_shipwrecks2.py is deprecated. Use standalone/colmap/vocabtrainer_shipwrecks2.py instead.",
-    DeprecationWarning, stacklevel=1
-)
 
 import subprocess
 import os
@@ -23,7 +16,7 @@ import sqlite3
 import time
 import random
 
-COLMAP_PATH = r"C:\COLMAP\bin\colmap.exe"
+COLMAP_PATH = os.environ.get("COLMAP_PATH", "colmap")
 
 # Pipeline control flags - set to True to skip steps
 SKIP_DECIMATION = False  # Run decimation to create smaller staging folder
@@ -365,12 +358,32 @@ def main():
     print("=" * 60)
     print()
 
-    output_path = r"Z:\colmap vocab training"
+    import argparse
+    parser = argparse.ArgumentParser(description='COLMAP vocab tree training (shipwrecks v2 - random decimation)')
+    parser.add_argument('--output-dir', required=True, help='Output directory for training')
+    parser.add_argument('--skip-decimation', action='store_true')
+    parser.add_argument('--skip-extraction', action='store_true')
+    parser.add_argument('--skip-training', action='store_true')
+    parser.add_argument('--target-per-camera', type=int, default=4500,
+                        help='Target images per camera after decimation')
+    args = parser.parse_args()
+
+    if args.skip_decimation:
+        global SKIP_DECIMATION
+        SKIP_DECIMATION = True
+    if args.skip_extraction:
+        global SKIP_FEATURE_EXTRACTION
+        SKIP_FEATURE_EXTRACTION = True
+    if args.skip_training:
+        global SKIP_TRAINING
+        SKIP_TRAINING = True
+
+    output_path = args.output_dir
     trainer = COLMAPVocabTrainer(output_path)
 
     try:
         if not SKIP_DECIMATION:
-            decimated_staging = trainer.decimate_staging_folder(target_images_per_camera=4500)
+            decimated_staging = trainer.decimate_staging_folder(target_images_per_camera=args.target_per_camera)
             trainer.staging_dir = decimated_staging
 
         trainer.extract_features_parallel(max_workers=3)

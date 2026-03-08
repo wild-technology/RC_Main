@@ -1,14 +1,7 @@
 """
 COLMAP Vocabulary Tree Training Script - PARALLEL VERSION
 Handles multiple camera models and decimates by 50% using timestamp-based sequential sampling
-
-DEPRECATED: Use standalone/colmap/vocabtrainer_shipwrecks.py instead.
 """
-import warnings
-warnings.warn(
-    "vocabtrainer_shipwrecks.py is deprecated. Use standalone/colmap/vocabtrainer_shipwrecks.py instead.",
-    DeprecationWarning, stacklevel=1
-)
 
 import subprocess
 import os
@@ -22,7 +15,7 @@ import multiprocessing
 import sqlite3
 import time
 
-COLMAP_PATH = r"C:\COLMAP\bin\colmap.exe"
+COLMAP_PATH = os.environ.get("COLMAP_PATH", "colmap")
 
 # Pipeline control flags - set to True to skip steps
 SKIP_DECIMATION = True
@@ -647,17 +640,35 @@ def main():
     print(f"  SKIP_TRAINING = {SKIP_TRAINING}")
     print()
 
-    output_path = r"Z:\colmap vocab training"
+    import argparse
+    parser = argparse.ArgumentParser(description='COLMAP vocab tree training (shipwrecks - timestamp decimation)')
+    parser.add_argument('--output-dir', required=True, help='Output directory for training')
+    parser.add_argument('--image-dirs', nargs='+', required=True,
+                        help='Image dirs (format: path:label:decimate, e.g. /imgs:lower_opencv:false)')
+    parser.add_argument('--skip-decimation', action='store_true')
+    parser.add_argument('--skip-extraction', action='store_true')
+    parser.add_argument('--skip-training', action='store_true')
+    args = parser.parse_args()
 
-    dataset_config = {
-        r"Z:\ToSort\NA173\lower": ("lower_opencv", False),
-        r"Z:\ToSort\NA173\mid": ("mid_fisheye", False),
-        r"Z:\ToSort\NA173\upper": ("upper_fisheye", False),
-        r"Z:\ToSort\NA173\Zeuss\H2102\raw_images": ("zeuss_h2102_opencv", True),
-        r"Z:\ToSort\NA173\Zeuss\H2103\raw_images": ("zeuss_h2103_opencv", True),
-        r"Z:\ToSort\NA173\Zeuss\H2104\raw_images": ("zeuss_h2104_opencv", True),
-        r"Z:\ToSort\NA173\Zeuss\H2105\raw_images": ("zeuss_h2105_opencv", True),
-    }
+    if args.skip_decimation:
+        global SKIP_DECIMATION
+        SKIP_DECIMATION = True
+    if args.skip_extraction:
+        global SKIP_FEATURE_EXTRACTION
+        SKIP_FEATURE_EXTRACTION = True
+    if args.skip_training:
+        global SKIP_TRAINING
+        SKIP_TRAINING = True
+
+    output_path = args.output_dir
+
+    dataset_config = {}
+    for item in args.image_dirs:
+        parts = item.split(':')
+        path = parts[0]
+        label = parts[1] if len(parts) > 1 else Path(path).name + "_opencv"
+        decimate = parts[2].lower() == 'true' if len(parts) > 2 else False
+        dataset_config[path] = (label, decimate)
 
     trainer = COLMAPVocabTrainer(output_path)
 
@@ -697,21 +708,6 @@ def main():
         print(f"\nERROR: {e}")
         print(f"\nPartial results may be in: {output_path}")
         raise
-
-    trainer = COLMAPVocabTrainer(output_path)
-
-    try:
-        # Decimate existing staging folder
-        decimated_staging = trainer.decimate_staging_folder(target_images_per_camera=3000)
-
-        # Point to decimated folder
-        trainer.staging_dir = decimated_staging
-
-        # Extract features from decimated set only
-        trainer.extract_features_parallel(max_workers=3)
-
-        # Train (no subsampling needed - already small enough)
-        trainer.train_vocabulary_tree(num_visual_words=256000, num_iterations=12)
 
 
 if __name__ == "__main__":

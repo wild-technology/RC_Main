@@ -1,3 +1,10 @@
+# DEPRECATED: Use standalone/image_tools/image_organizer.py instead (parameterized paths).
+import warnings
+warnings.warn(
+    "test.py is deprecated. Use standalone/image_tools/image_organizer.py instead.",
+    DeprecationWarning, stacklevel=1
+)
+
 import os
 import re
 from pathlib import Path
