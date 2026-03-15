@@ -1,31 +1,46 @@
 #!/usr/bin/env python3
 """
-rc_to_colmap.py — Convert a RealityCapture COLMAP text export to COLMAP binary format.
+rc_to_colmap.py — Drive an open RealityCapture project to export a COLMAP
+registration + undistorted images, then convert to COLMAP binary format.
 
-Workflow:
-  1. Verify the three RC text files exist (cameras.txt, images.txt, points3D.txt)
-  2. Copy them into <output_dir>/sparse/0/
-  3. Run `colmap model_converter` to produce binary files (.bin)
-  4. Validate that all three binary files were created and are non-empty
-  5. Remove the text originals from the output tree
+Automates the three manual steps documented in the export guide:
+
+  Step 1  -exportRegistration  → cameras.txt / images.txt / points3D.txt
+  Step 2  -exportUndistoredImages  → <output_dir>/images/*.jpg
+  Step 3  colmap model_converter (text → binary), validate, clean up text
+
+All steps communicate with a running RealityScan instance via the
+existing RCDelegationClient (two-phase idle detection, no hardcoded
+operation timeouts).
 
 Usage (Windows):
   python scripts/rc_to_colmap.py ^
-      --rc_export_dir C:\\temp\\rc_colmap_export ^
-      --output_dir    C:\\Users\\WildTech\\Desktop\\H2103d_Northampton\\colmap
+      --rc_exe      "C:\\Program Files\\Capturing Reality\\RealityScan\\RealityScan.exe" ^
+      --output_dir  "C:\\Users\\WildTech\\Desktop\\H2103d_Northampton" ^
+      [--instance   "*"] ^
+      [--keep_text]
 
-Usage (Linux / testing):
-  python scripts/rc_to_colmap.py \\
-      --rc_export_dir /tmp/rc_colmap_export \\
-      --output_dir    /tmp/h2103d_northampton/colmap
+Output layout produced:
+  <output_dir>/
+    images/               ← undistorted JPEGs from RC
+    colmap/sparse/0/      ← cameras.bin, images.bin, points3D.bin
 """
 
 import argparse
 import logging
+import os
 import shutil
 import subprocess
 import sys
+import tempfile
+import uuid
 from pathlib import Path
+
+# Allow running from the repo root without installing the package.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from modules.rc_common.rc_delegation import RCDelegationClient  # noqa: E402
+from modules.rc_common.rc_xml import write_rc_xml               # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -37,64 +52,64 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-# Files produced by RC's COLMAP text export
+# ---------------------------------------------------------------------------
+# RC note: "exportUndistoredImages" is RC's own spelling — do not fix it.
+# ---------------------------------------------------------------------------
 COLMAP_TEXT_FILES = ("cameras.txt", "images.txt", "points3D.txt")
-# Corresponding binary files produced by colmap model_converter
 COLMAP_BIN_FILES  = ("cameras.bin", "images.bin", "points3D.bin")
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# XML parameter builders
 # ---------------------------------------------------------------------------
 
-def find_colmap() -> str:
-    """Return the colmap executable path, or raise if not found."""
+def _write_registration_xml(path: Path) -> None:
+    """Write export-registration params: COLMAP Text format."""
+    write_rc_xml(
+        path=str(path),
+        params={
+            "exportFormat":        "colmap",   # COLMAP Text Format
+            "exportType":          "txt",
+        },
+    )
+
+
+def _write_undistorted_xml(path: Path) -> None:
+    """Write undistorted-image export params matching the guide settings."""
+    write_rc_xml(
+        path=str(path),
+        params={
+            "fitType":             "innerRegion",   # Fit: Inner Region
+            "resolutionType":      "fit",           # Resolution: Fit (original)
+            "imageFormat":         "jpg",           # Format: JPEG
+            "namingConvention":    "original",      # Naming: Original filename
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# COLMAP helpers
+# ---------------------------------------------------------------------------
+
+def _find_colmap() -> str:
     colmap = shutil.which("colmap")
     if colmap:
         return colmap
-    # Common Windows install location
     win_default = Path(r"C:\Program Files\COLMAP\COLMAP.bat")
     if win_default.exists():
         return str(win_default)
     raise FileNotFoundError(
         "colmap executable not found on PATH. "
-        "Install COLMAP and ensure it is on your PATH."
+        "Install COLMAP and make sure it is on your PATH."
     )
 
 
-def verify_rc_export(rc_dir: Path) -> None:
-    """Raise if any expected RC text file is missing or empty."""
-    missing = []
-    for name in COLMAP_TEXT_FILES:
-        p = rc_dir / name
-        if not p.exists():
-            missing.append(name)
-        elif p.stat().st_size == 0:
-            missing.append(f"{name} (empty)")
-    if missing:
-        raise FileNotFoundError(
-            f"RC export directory '{rc_dir}' is missing or has empty files: "
-            + ", ".join(missing)
-        )
-
-
-def copy_text_files(rc_dir: Path, sparse_dir: Path) -> None:
-    """Copy the three text files into sparse_dir."""
-    sparse_dir.mkdir(parents=True, exist_ok=True)
-    for name in COLMAP_TEXT_FILES:
-        src = rc_dir / name
-        dst = sparse_dir / name
-        shutil.copy2(src, dst)
-        log.info("Copied  %s  →  %s", src, dst)
-
-
-def run_model_converter(colmap_exe: str, sparse_dir: Path) -> None:
-    """Run colmap model_converter on sparse_dir (text → binary in-place)."""
+def _run_model_converter(colmap_exe: str, text_dir: Path, bin_dir: Path) -> None:
     cmd = [
         colmap_exe,
         "model_converter",
-        "--input_path",  str(sparse_dir),
-        "--output_path", str(sparse_dir),
+        "--input_path",  str(text_dir),
+        "--output_path", str(bin_dir),
         "--output_type", "BIN",
     ]
     log.info("Running: %s", " ".join(cmd))
@@ -104,59 +119,55 @@ def run_model_converter(colmap_exe: str, sparse_dir: Path) -> None:
     if result.returncode != 0:
         log.error("colmap stderr:\n%s", result.stderr.strip())
         raise RuntimeError(
-            f"colmap model_converter failed (exit {result.returncode}). "
-            "See stderr above."
+            f"colmap model_converter failed (exit {result.returncode})"
         )
 
 
-def validate_binary_output(sparse_dir: Path) -> None:
-    """Raise if any expected binary file is missing or empty."""
+def _validate_text_export(text_dir: Path) -> None:
+    missing = []
+    for name in COLMAP_TEXT_FILES:
+        p = text_dir / name
+        if not p.exists() or p.stat().st_size == 0:
+            missing.append(name)
+    if missing:
+        raise RuntimeError(
+            f"RC registration export incomplete in '{text_dir}': "
+            + ", ".join(missing)
+        )
+
+
+def _validate_binary_output(bin_dir: Path) -> None:
     bad = []
     for name in COLMAP_BIN_FILES:
-        p = sparse_dir / name
-        if not p.exists():
-            bad.append(f"{name} (missing)")
-        elif p.stat().st_size == 0:
-            bad.append(f"{name} (empty)")
+        p = bin_dir / name
+        if not p.exists() or p.stat().st_size == 0:
+            bad.append(name)
     if bad:
         raise RuntimeError(
-            "model_converter did not produce valid binary files: "
+            "colmap model_converter did not produce valid binary files: "
             + ", ".join(bad)
         )
     for name in COLMAP_BIN_FILES:
-        p = sparse_dir / name
-        log.info("Validated  %-18s  (%d bytes)", name, p.stat().st_size)
-
-
-def remove_text_files(sparse_dir: Path) -> None:
-    """Delete the text originals that were copied into sparse_dir."""
-    for name in COLMAP_TEXT_FILES:
-        p = sparse_dir / name
-        if p.exists():
-            p.unlink()
-            log.info("Removed text file  %s", p)
+        log.info("  %-18s  %d bytes", name, (bin_dir / name).stat().st_size)
 
 
 # ---------------------------------------------------------------------------
-# Main
+# Main pipeline
 # ---------------------------------------------------------------------------
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Convert a RealityCapture COLMAP text export into COLMAP binary "
-            "format ready for NeRF / Gaussian Splatting pipelines."
+            "Export COLMAP registration + undistorted images from an open "
+            "RealityScan project, then convert to COLMAP binary format."
         )
     )
     parser.add_argument(
-        "--rc_export_dir",
+        "--rc_exe",
         required=True,
         type=Path,
-        metavar="DIR",
-        help=(
-            "Folder containing cameras.txt, images.txt, points3D.txt "
-            "exported from RealityCapture."
-        ),
+        metavar="PATH",
+        help="Path to RealityScan.exe",
     )
     parser.add_argument(
         "--output_dir",
@@ -164,19 +175,26 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         metavar="DIR",
         help=(
-            "Root output directory. Binary files are written to "
-            "<output_dir>/sparse/0/."
+            "Root project output directory. "
+            "Undistorted images → <output_dir>/images/, "
+            "COLMAP binary     → <output_dir>/colmap/sparse/0/"
         ),
+    )
+    parser.add_argument(
+        "--instance",
+        default="*",
+        metavar="NAME",
+        help="RC instance name to delegate to (default: '*' = first available).",
     )
     parser.add_argument(
         "--keep_text",
         action="store_true",
-        help="Keep the text files alongside the binary files (default: remove them).",
+        help="Keep COLMAP text files alongside the binary files.",
     )
     parser.add_argument(
         "--verbose",
         action="store_true",
-        help="Show colmap output.",
+        help="Enable debug logging.",
     )
     return parser.parse_args()
 
@@ -187,54 +205,140 @@ def main() -> int:
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    rc_dir    = args.rc_export_dir.resolve()
-    sparse_dir = args.output_dir.resolve() / "sparse" / "0"
+    rc_exe     = args.rc_exe.resolve()
+    output_dir = args.output_dir.resolve()
+    images_dir = output_dir / "images"
+    sparse_dir = output_dir / "colmap" / "sparse" / "0"
 
-    log.info("RC export dir : %s", rc_dir)
-    log.info("Output sparse : %s", sparse_dir)
-
-    # 1. Verify RC export
-    log.info("Step 1/4 — Verifying RC export …")
-    try:
-        verify_rc_export(rc_dir)
-    except FileNotFoundError as exc:
-        log.error("%s", exc)
-        return 1
-    log.info("  All three text files present.")
-
-    # 2. Copy text files
-    log.info("Step 2/4 — Copying text files …")
-    copy_text_files(rc_dir, sparse_dir)
-
-    # 3. Convert to binary
-    log.info("Step 3/4 — Converting to COLMAP binary format …")
-    try:
-        colmap_exe = find_colmap()
-    except FileNotFoundError as exc:
-        log.error("%s", exc)
+    if not rc_exe.exists():
+        log.error("RealityScan executable not found: %s", rc_exe)
         return 1
 
-    try:
-        run_model_converter(colmap_exe, sparse_dir)
-    except RuntimeError as exc:
-        log.error("%s", exc)
-        return 1
+    images_dir.mkdir(parents=True, exist_ok=True)
+    sparse_dir.mkdir(parents=True, exist_ok=True)
 
-    # 4. Validate binary output
-    log.info("Step 4/4 — Validating binary output …")
-    try:
-        validate_binary_output(sparse_dir)
-    except RuntimeError as exc:
-        log.error("%s", exc)
-        return 1
+    log.info("RC executable : %s", rc_exe)
+    log.info("Output root   : %s", output_dir)
+    log.info("RC instance   : %s", args.instance)
 
-    # 5. Clean up text files (unless --keep_text)
-    if not args.keep_text:
-        log.info("Removing text originals …")
-        remove_text_files(sparse_dir)
+    client = RCDelegationClient(str(rc_exe), args.instance)
+    client.on_progress = lambda op, pct, elapsed, eta: log.info(
+        "  [%s]  %.1f%%  elapsed=%.0fs  eta=%.0fs", op, pct, elapsed, eta
+    )
 
-    log.info("Done. COLMAP sparse model at: %s", sparse_dir)
+    # ── Startup: clear any queued commands ──────────────────────────────────
+    log.info("Clearing RC command queue …")
+    client.clear_queue()
+
+    # ── Build XML param files in a temp directory ───────────────────────────
+    with tempfile.TemporaryDirectory(prefix="rc_colmap_") as tmp:
+        tmp_path         = Path(tmp)
+        reg_xml_path     = tmp_path / "export_registration.xml"
+        undist_xml_path  = tmp_path / "export_undistorted.xml"
+        colmap_text_dir  = tmp_path / "colmap_text"
+        colmap_text_dir.mkdir()
+
+        _write_registration_xml(reg_xml_path)
+        _write_undistorted_xml(undist_xml_path)
+
+        # ── Step 1: Export COLMAP registration (text) ───────────────────────
+        # RC writes cameras.txt / images.txt / points3D.txt to the given path.
+        # We give it a path ending in the directory; RC uses it as a prefix.
+        reg_output_prefix = str(colmap_text_dir / "export")
+        log.info("Step 1/4 — Exporting COLMAP registration …")
+        client.delegate("-exportRegistration", reg_output_prefix, str(reg_xml_path))
+        client.wait_idle_two_phase("Export COLMAP registration")
+
+        # RC may write directly to colmap_text_dir or use "export_cameras.txt"
+        # etc. — normalise whatever it produced to the canonical names.
+        _normalise_registration_files(colmap_text_dir)
+
+        log.info("Validating registration export …")
+        try:
+            _validate_text_export(colmap_text_dir)
+        except RuntimeError as exc:
+            log.error("%s", exc)
+            return 1
+        log.info("  Registration export OK.")
+
+        # ── Step 2: Export undistorted images ────────────────────────────────
+        log.info("Step 2/4 — Exporting undistorted images → %s …", images_dir)
+        # RC spelling: exportUndistoredImages (one 't') — this is correct.
+        client.delegate(
+            "-exportUndistoredImages", str(images_dir), str(undist_xml_path)
+        )
+        client.wait_idle_two_phase("Export undistorted images")
+
+        jpg_count = len(list(images_dir.glob("*.jpg")))
+        if jpg_count == 0:
+            log.error("No JPEG files found in %s after export.", images_dir)
+            return 1
+        log.info("  Exported %d images.", jpg_count)
+
+        # ── Step 3: Convert text → binary ───────────────────────────────────
+        log.info("Step 3/4 — Converting COLMAP text → binary …")
+        try:
+            colmap_exe = _find_colmap()
+        except FileNotFoundError as exc:
+            log.error("%s", exc)
+            return 1
+
+        try:
+            _run_model_converter(colmap_exe, colmap_text_dir, sparse_dir)
+        except RuntimeError as exc:
+            log.error("%s", exc)
+            return 1
+
+        # ── Step 4: Validate + optional cleanup ──────────────────────────────
+        log.info("Step 4/4 — Validating binary output …")
+        try:
+            _validate_binary_output(sparse_dir)
+        except RuntimeError as exc:
+            log.error("%s", exc)
+            return 1
+
+        if not args.keep_text:
+            log.info("Removing COLMAP text files …")
+            for name in COLMAP_TEXT_FILES:
+                p = sparse_dir / name
+                if p.exists():
+                    p.unlink()
+        # tmp directory (including colmap_text_dir and XML files) auto-deleted
+        # when the `with` block exits.
+
+    log.info("Done.")
+    log.info("  Undistorted images : %s", images_dir)
+    log.info("  COLMAP binary      : %s", sparse_dir)
     return 0
+
+
+def _normalise_registration_files(directory: Path) -> None:
+    """Map whatever RC produced to the canonical COLMAP filenames.
+
+    RC may write the registration into a single file (e.g. ``export.txt``)
+    or with prefixed names (``export_cameras.txt`` etc.).  We rename
+    them to the names colmap model_converter expects.
+    """
+    # If the canonical names already exist, nothing to do.
+    if all((directory / name).exists() for name in COLMAP_TEXT_FILES):
+        return
+
+    # Prefixed pattern: export_cameras.txt, export_images.txt, export_points3D.txt
+    mapping = {
+        "cameras.txt":  ["export_cameras.txt",  "cameras.txt"],
+        "images.txt":   ["export_images.txt",   "images.txt"],
+        "points3D.txt": ["export_points3D.txt", "points3D.txt"],
+    }
+    for canonical, candidates in mapping.items():
+        dst = directory / canonical
+        if dst.exists():
+            continue
+        for candidate in candidates:
+            src = directory / candidate
+            if src.exists():
+                src.rename(dst)
+                log.debug("Renamed %s → %s", src.name, canonical)
+                break
 
 
 if __name__ == "__main__":
