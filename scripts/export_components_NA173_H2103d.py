@@ -1,93 +1,155 @@
+#!/usr/bin/env python3
 """
-Standalone component exporter for NA173 / H2103d.
-Run from the RC_Main directory:
+Standalone component exporter — NA173 / H2103d
+Selects each component by name and exports it as .rsalign.
+
+Component naming pattern in this project:
+    Component 0
+    Component 0 (1)
+    Component 0 (2)
+    Component 1
+    Component 1 (1)
+    Component 1 (2)
+    ...
+    Component 32
+    Component 32 (1)
+    Component 32 (2)
+
+Run from RC_Main directory:
     python scripts/export_components_NA173_H2103d.py
 """
-import logging
-import shutil
+
+import subprocess
+import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
-import sys
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# ── Settings ──────────────────────────────────────────────────────────────────
+OUTPUT_DIR        = Path(r"C:\Users\Public\Documents\Final_NA173_datasets")
+BASE_NAME         = "NA173_H2103d"
+NUM_COMPONENTS    = 33   # Component 0 .. Component 32
+SUBS_PER_COMP     = 3    # main + (1) + (2)  per component
 
-from modules.rc_common.rc_delegation import RCDelegationClient
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s", datefmt="%H:%M:%S")
-log = logging.getLogger(__name__)
-
-# ── Hardcoded settings ────────────────────────────────────────────────────────
-OUTPUT_DIR          = Path(r"C:\Users\Public\Documents\Final_NA173_datasets")
-BASE_NAME           = "NA173_H2103d"
-MAX_COMPONENT_INDEX = 98   # 33 components × 3 sub-components, indices 0–98
-MIN_COMPONENT_SIZE  = 44
-
-RC_EXE = None  # auto-detect below
-for _candidate in [
+RC_EXE = None
+for _p in [
     r"C:\Program Files\Epic Games\RealityScan_2.1\RealityScan.exe",
     r"C:\Program Files\Epic Games\RealityScan_2.0\RealityScan.exe",
     r"C:\Program Files\Epic Games\RealityScan\RealityScan.exe",
     r"C:\Program Files\Capturing Reality\RealityScan 2.1\RealityScan.exe",
     r"C:\Program Files\Capturing Reality\RealityScan 2.0\RealityScan.exe",
-    r"C:\Program Files\Capturing Reality\RealityScan\RealityScan.exe",
 ]:
-    if Path(_candidate).exists():
-        RC_EXE = _candidate
+    if Path(_p).exists():
+        RC_EXE = Path(_p)
         break
+
 if RC_EXE is None:
-    RC_EXE = shutil.which("RealityScan") or r"C:\Program Files\Epic Games\RealityScan_2.1\RealityScan.exe"
+    print("ERROR: Could not find RealityScan.exe — edit RC_EXE in this script.")
+    sys.exit(1)
 # ─────────────────────────────────────────────────────────────────────────────
+
+
+def delegate(*args):
+    cmd = [str(RC_EXE), "-delegateTo", "*"] + list(args)
+    return subprocess.run(cmd, capture_output=True, text=True)
+
+
+def wait_completed():
+    cmd = [str(RC_EXE), "-waitCompleted", "*"]
+    subprocess.run(cmd, capture_output=True, text=True)
+
+
+def get_revision():
+    cmd = [str(RC_EXE), "-getStatus", "*"]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    for part in result.stdout.split():
+        if part.startswith("rev:"):
+            try:
+                return int(part.split(":", 1)[1])
+            except ValueError:
+                pass
+    return None
+
+
+def generate_component_names():
+    """Yield (component_name, label) for every sub-component."""
+    for n in range(NUM_COMPONENTS):
+        yield f"Component {n}", f"comp{n:02d}_main"
+        for s in range(1, SUBS_PER_COMP):
+            yield f"Component {n} ({s})", f"comp{n:02d}_sub{s}"
+
+
+def try_export(component_name, output_file):
+    if output_file.exists():
+        output_file.unlink()
+
+    rev_before = get_revision()
+    delegate("-selectComponent", component_name)
+    wait_completed()
+    time.sleep(0.3)
+    rev_after = get_revision()
+
+    if rev_before is not None and rev_after == rev_before:
+        return False   # component doesn't exist — revision unchanged
+
+    delegate("-exportSelectedComponentFile", str(output_file))
+    wait_completed()
+    time.sleep(0.3)
+
+    if output_file.exists() and output_file.stat().st_size > 0:
+        return True
+
+    if output_file.exists():
+        output_file.unlink()
+    return False
 
 
 def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    print(f"RC exe    : {RC_EXE}")
+    print(f"Output    : {OUTPUT_DIR}")
+    print(f"Pattern   : Component 0 / Component 0 (1) / Component 0 (2) ...")
+    print()
 
-    client = RCDelegationClient(rc_exe=Path(RC_EXE), instance_name="*", logger=log)
-    client.on_progress = lambda op, pct, elapsed, eta: log.info(
-        "  [%s] %.1f%%  elapsed=%.0fs  eta=%.0fs", op, pct, elapsed, eta
-    )
+    # Verify RC is reachable
+    cmd = [str(RC_EXE), "-getStatus", "*"]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if not result.stdout.strip():
+        print("ERROR: No response from RealityScan — make sure a project is open.")
+        sys.exit(1)
+    print(f"Connected. Status: {result.stdout.strip()}")
+    print()
 
-    if not client.verify_connection():
-        log.error("Cannot reach RealityScan — make sure a project is open.")
-        return
-
-    log.info("Clearing RC command queue …")
-    client.clear_queue()
-
-    exported = []
     export_index = 0
+    log = []
 
-    for idx in range(MAX_COMPONENT_INDEX + 1):
-        client.run_quick(f"setMinComponentSize", "-setMinComponentSize", str(MIN_COMPONENT_SIZE))
+    for component_name, label in generate_component_names():
+        out_file = OUTPUT_DIR / f"{BASE_NAME}_comp{export_index:02d}.rsalign"
 
-        rev_before = client.get_revision()
-        client.run_quick(f"selectComponent({idx})", "-selectComponent", str(idx))
-        time.sleep(0.3)
-        rev_after = client.get_revision()
-
-        if rev_after == rev_before:
-            log.info("  [%d] no component (revision unchanged)", idx)
-            continue
-
-        out_path = OUTPUT_DIR / f"{BASE_NAME}_comp{export_index:02d}.rsalign"
-        log.info("  [%d] exporting → %s", idx, out_path.name)
-
-        client.delegate("-exportSelectedComponent", str(out_path))
-        try:
-            client.wait_idle_two_phase(f"export_component_{idx}")
-        except TimeoutError:
-            log.warning("  [%d] pickup timeout, falling back to waitCompleted", idx)
-            client.wait_completed()
-            time.sleep(3.0)
-
-        if out_path.exists() and out_path.stat().st_size > 0:
-            log.info("  [%d] OK  (%d bytes)", idx, out_path.stat().st_size)
-            exported.append(out_path)
+        print(f"Trying '{component_name}' ...", end=" ", flush=True)
+        if try_export(component_name, out_file):
+            print(f"OK  ->  {out_file.name}  ({out_file.stat().st_size} bytes)")
+            log.append((component_name, out_file.name))
             export_index += 1
+            time.sleep(5.0)
         else:
-            log.warning("  [%d] file not created", idx)
+            print("not found")
+            time.sleep(1.0)
 
-    log.info("Done — %d component(s) exported to %s", len(exported), OUTPUT_DIR)
+    # Summary
+    print()
+    print("=" * 60)
+    print(f"Exported {len(log)} component(s)  [{datetime.now():%Y-%m-%d %H:%M:%S}]")
+    print("=" * 60)
+    for orig, fname in log:
+        print(f"  {orig:<28} ->  {fname}")
+
+    summary_path = OUTPUT_DIR / f"{BASE_NAME}_export_summary.txt"
+    with open(summary_path, "w") as f:
+        f.write(f"NA173 H2103d component export — {datetime.now():%Y-%m-%d %H:%M:%S}\n\n")
+        for orig, fname in log:
+            f.write(f"{orig:<28} -> {fname}\n")
+    print(f"\nSummary saved: {summary_path}")
 
 
 if __name__ == "__main__":
