@@ -180,6 +180,9 @@ class ComponentExportModule(RCModule):
             # Fallback: try common Windows defaults.
             import shutil
             for candidate in [
+                r"C:\Program Files\Epic Games\RealityScan_2.1\RealityScan.exe",
+                r"C:\Program Files\Epic Games\RealityScan_2.0\RealityScan.exe",
+                r"C:\Program Files\Epic Games\RealityScan\RealityScan.exe",
                 r"C:\Program Files\Capturing Reality\RealityScan 2.1\RealityScan.exe",
                 r"C:\Program Files\Capturing Reality\RealityScan 2.0\RealityScan.exe",
                 r"C:\Program Files\Capturing Reality\RealityScan\RealityScan.exe",
@@ -188,7 +191,7 @@ class ComponentExportModule(RCModule):
                     rc_exe = candidate
                     break
             if rc_exe is None:
-                rc_exe = shutil.which("RealityScan") or r"C:\Program Files\Capturing Reality\RealityScan 2.1\RealityScan.exe"
+                rc_exe = shutil.which("RealityScan") or r"C:\Program Files\Epic Games\RealityScan_2.1\RealityScan.exe"
 
         instance_param = self.params.get("rc_instance_name")
         instance_name = instance_param.get_value() if instance_param else "*"

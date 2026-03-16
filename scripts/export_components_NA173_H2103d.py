@@ -24,6 +24,9 @@ MIN_COMPONENT_SIZE  = 44
 
 RC_EXE = None  # auto-detect below
 for _candidate in [
+    r"C:\Program Files\Epic Games\RealityScan_2.1\RealityScan.exe",
+    r"C:\Program Files\Epic Games\RealityScan_2.0\RealityScan.exe",
+    r"C:\Program Files\Epic Games\RealityScan\RealityScan.exe",
     r"C:\Program Files\Capturing Reality\RealityScan 2.1\RealityScan.exe",
     r"C:\Program Files\Capturing Reality\RealityScan 2.0\RealityScan.exe",
     r"C:\Program Files\Capturing Reality\RealityScan\RealityScan.exe",
@@ -32,7 +35,7 @@ for _candidate in [
         RC_EXE = _candidate
         break
 if RC_EXE is None:
-    RC_EXE = shutil.which("RealityScan") or r"C:\Program Files\Capturing Reality\RealityScan 2.1\RealityScan.exe"
+    RC_EXE = shutil.which("RealityScan") or r"C:\Program Files\Epic Games\RealityScan_2.1\RealityScan.exe"
 # ─────────────────────────────────────────────────────────────────────────────
 
 
