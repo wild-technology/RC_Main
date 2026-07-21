@@ -11,6 +11,13 @@ from pathlib import Path
 from PIL import Image
 import argparse
 
+try:
+    from module_base.settings_store import SettingsStore
+except ImportError:
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+    from module_base.settings_store import SettingsStore
+
 
 def extract_timestamp_and_prefix(filename):
     """
@@ -135,8 +142,8 @@ def main():
     parser.add_argument(
         'directory',
         nargs='?',
-        default='.',
-        help='Directory containing image files (default: current directory)'
+        default=None,
+        help='Directory containing image files (default: prompt, remembering the last-used directory)'
     )
     parser.add_argument(
         '--dry-run',
@@ -146,7 +153,15 @@ def main():
 
     args = parser.parse_args()
 
-    process_directory(args.directory, dry_run=args.dry_run)
+    settings = SettingsStore()
+    if args.directory is not None:
+        directory = args.directory
+        settings.set("masking", "directory", directory)
+    else:
+        directory = settings.prompt("masking", "directory",
+                                    "Directory containing image files", ".")
+
+    process_directory(directory, dry_run=args.dry_run)
 
 
 if __name__ == '__main__':

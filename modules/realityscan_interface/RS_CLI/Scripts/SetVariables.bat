@@ -1,30 +1,52 @@
-:: These scripts were created by Epic Games Slovakia, who doesn't carry any liability in case issues related to the sample occur.
+:: Shared variables for every RealityScan CLI workflow script.
+:: Based on the Epic Games Slovakia CLI samples, adapted for RealityScan 2.2.
 
 :: Switch on/off console output.
 @echo off
-REM setlocal EnableDelayedExpansion
 
-:: Path to RealityCapture application.
-set RealityCapture=""C:\Program%20Files\Epic%20Games\RealityScan_2.0\RealityScan.exe"
+:: Path to the RealityScan executable.
+:: Resolution order: RS_EXECUTABLE environment variable (set by the Python
+:: orchestrator or the user), then standard install locations, newest first.
+if defined RS_EXECUTABLE (
+    set RealityScan="%RS_EXECUTABLE%"
+    goto :exeResolved
+)
+for %%P in (
+    "C:\Program Files\Epic Games\RealityScan_2.2\RealityScan.exe"
+    "C:\Program Files\Capturing Reality\RealityScan 2.2\RealityScan.exe"
+    "C:\Program Files\Epic Games\RealityScan_2.1\RealityScan.exe"
+    "C:\Program Files\Capturing Reality\RealityScan 2.1\RealityScan.exe"
+    "C:\Program Files\Epic Games\RealityScan_2.0\RealityScan.exe"
+) do (
+    if not defined RealityScan if exist %%P set RealityScan=%%P
+)
+:exeResolved
+if not defined RealityScan (
+    echo ERROR: RealityScan.exe not found in any standard install location.
+    echo Set the RS_EXECUTABLE environment variable to the full path of RealityScan.exe.
+    exit /b 1
+)
 
-:: Root path to work folders where all the datasets are stored 
-set RootFolder=%~dp0\\..\\
+:: Name of the headless instance all commands are delegated to. Override
+:: RS_INSTANCE to run several instances in parallel (e.g. one per GPU).
+if not defined RS_INSTANCE set RS_INSTANCE=RS1
+
+:: Root path to work folders where all the datasets are stored
+set RootFolder=%~dp0..\
 
 :: Variable storing path to working directory
 set workingDir=%~dp0
 
 :: A path to the metadata folder.
-set Metadata=%RootFolder%\Metadata
+set Metadata=%RootFolder%Metadata
 
 :: A path to the models folder.
-set Models=%RootFolder%\Models
-::creates folder "Models" if it does not exists
+set Models=%RootFolder%Models
 if not exist "%Models%" mkdir "%Models%"
 
-:: A path to the Error folder.
-set ErrorPath=%RootFolder%\Errors
-::creates folder "Models" if it does not exists
-if not exist "%Errors%" mkdir "%Errors%"
+:: A path to the Errors folder (progress/results/error marker files).
+set ErrorPath=%RootFolder%Errors
+if not exist "%ErrorPath%" mkdir "%ErrorPath%"
 
 :: Variable storing name of file with Error write script.
 set ErrorWriter=%ErrorPath%\ErrorWriter.bat
@@ -87,4 +109,4 @@ set Simplify50per=%Metadata%\Simplify50Per_Params.xml
 set SmoothingParams=%Metadata%\Smoothing_02_2_Params.xml
 
 ::set variable "reconRegion" for counting files in
-set ReconRegion=%RootFolder%\ReconRegion
+set ReconRegion=%RootFolder%ReconRegion

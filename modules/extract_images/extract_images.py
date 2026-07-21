@@ -7,7 +7,7 @@ import logging
 from datetime import datetime
 from tqdm import tqdm
 
-from module_base.rc_module import RCModule
+from module_base.rs_module import RSModule
 from module_base.parameter import Parameter
 
 import os
@@ -21,7 +21,7 @@ import numpy as np
 # from decord import VideoReader
 # from decord import cpu, gpu
 
-class ExtractImages(RCModule):
+class ExtractImages(RSModule):
     def __init__(self, logger):
         super().__init__("Extract Images", logger)
 

@@ -1,5 +1,5 @@
 from __future__ import annotations
-from module_base.rc_module import RCModule
+from module_base.rs_module import RSModule
 from module_base.parameter import Parameter
 
 import os
@@ -19,7 +19,7 @@ import warnings
 import glob
 
 
-class BatchDirectory(RCModule):
+class BatchDirectory(RSModule):
     ACCEPTED_EXTENSIONS = [".png", ".jpg", ".jpeg"]
 
     def __init__(self, logger):
@@ -539,7 +539,7 @@ class BatchDirectory(RCModule):
 
     def __generate_xmp_sidecar(self, image_filename: str, output_path: str, camera_type: str) -> None:
         """
-        Generate XMP sidecar file for RealityCapture camera calibration.
+        Generate XMP sidecar file for RealityScan camera calibration.
 
         Args:
             image_filename: Name of the image file

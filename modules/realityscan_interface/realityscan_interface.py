@@ -1,21 +1,27 @@
 from __future__ import annotations
-from module_base.rc_module import RCModule
+from module_base.rs_module import RSModule
 from module_base.parameter import Parameter
 
-import subprocess
-import time
 import os
 import shutil
 from ..file_metadata_parser import parse_timestamp, parse_timestamp_str, parse_frame_number, parse_frame_number_str
+from .realityscan_cli import RealityScanCLI, METADATA_DIR
 
-class RealityCaptureAlignment(RCModule):
+# Component/scene files as exported by RealityScan (legacy RealityCapture
+# extensions still accepted so older outputs keep working).
+COMPONENT_EXTENSIONS = ('.rsalign', '.rcalign')
+SCENE_EXTENSIONS = ('.rsproj', '.rcproj')
+
+
+class RealityScanAlignment(RSModule):
 	def __init__(self, logger):
-		super().__init__("RealityCapture Alignment", logger)
+		super().__init__("RealityScan Alignment", logger)
+		self.cli = RealityScanCLI(logger)
 
 	def get_parameters(self) -> dict[str, Parameter]:
 		additional_params = {}
 
-		additional_params['rc_input_image_dir'] = Parameter(
+		additional_params['rs_input_image_dir'] = Parameter(
 			name='Input Image Folder',
 			cli_short='r_i',
 			cli_long='r_input',
@@ -26,17 +32,17 @@ class RealityCaptureAlignment(RCModule):
 			disable_when_module_active='Batch Directory'
 		)
 
-		additional_params['rc_display_output'] = Parameter(
+		additional_params['rs_display_output'] = Parameter(
 			name='Display Output',
 			cli_short='r_d',
 			cli_long='r_display_output',
 			type=bool,
 			default_value=False,
-			description='Whether to display the RealityCapture output',
+			description='Whether to display the RealityScan output',
 			prompt_user=True
 		)
 
-		additional_params['rc_flight_log_path'] = Parameter(
+		additional_params['rs_flight_log_path'] = Parameter(
 			name='Flight Log Path',
 			cli_short='r_f',
 			cli_long='r_flight_log',
@@ -47,7 +53,7 @@ class RealityCaptureAlignment(RCModule):
 			disable_when_module_active=['Batch Directory', 'Georeference Images']
 		)
 
-		additional_params['rc_model_generate'] = Parameter(
+		additional_params['rs_model_generate'] = Parameter(
 			name='Generate Model',
 			cli_short='r_m',
 			cli_long='r_model_generate',
@@ -57,7 +63,7 @@ class RealityCaptureAlignment(RCModule):
 			prompt_user=True
 		)
 
-		additional_params['rc_model_cull_poly'] = Parameter(
+		additional_params['rs_model_cull_poly'] = Parameter(
 			name='Model Polygon Culling',
 			cli_short='r_c',
 			cli_long='r_model_cull_poly',
@@ -67,7 +73,7 @@ class RealityCaptureAlignment(RCModule):
 			prompt_user=True
 		)
 
-		additional_params['rc_model_texture'] = Parameter(
+		additional_params['rs_model_texture'] = Parameter(
 			name='Model Texturing',
 			cli_short='r_t',
 			cli_long='r_model_texture',
@@ -77,7 +83,7 @@ class RealityCaptureAlignment(RCModule):
 			prompt_user=True
 		)
 
-		additional_params['rc_model_simplify'] = Parameter(
+		additional_params['rs_model_simplify'] = Parameter(
 			name='Model Simplification',
 			cli_short='r_s',
 			cli_long='r_model_simplify',
@@ -94,40 +100,22 @@ class RealityCaptureAlignment(RCModule):
 		Checks if a folder exists, if not, creates it.
 		"""
 		if not os.path.isdir(path):
-			os.mkdir(path)
+			os.makedirs(path)
 			self.logger.info(f"Created folder: {path}")
-
-	def __run_subprocess(self, command, cwd, log_folder, display_output=False):
-		"""
-		Runs a subprocess command and waits for it to finish.
-		"""
-		self.__check_and_create_folder(os.path.join(cwd, log_folder))
-
-		cur_time = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
-		output_path = os.path.join(cwd, log_folder, f"output_{cur_time}.txt")
-
-		output_file = open(output_path, "w")
-
-		result = subprocess.Popen(command, cwd=cwd, stdout=output_file, stderr=output_file, 
-								creationflags=subprocess.CREATE_NO_WINDOW if not display_output else subprocess.CREATE_NEW_CONSOLE)
-		stdout, stderr = result.communicate()
-
-		if stderr:
-			self.logger.error(f"Command error: {stderr}")
 
 	def __get_flight_log_path(self, batch_path=None):
 		"""
 		Returns the path to the flight log file.
 		"""
-		
+
 		# if batch_path is specified that means we are using batched images, so use the batched flight log
 		# if it isn't specified, we are using a single folder of images, so we need to return the overall flight log
 		if batch_path is not None:
 			return os.path.join(batch_path, "flight_log.txt")
-		
+
 		# if the flight log path is specified, use that
-		if 'rc_flight_log_path' in self.params:
-			return self.params['rc_flight_log_path'].get_value()
+		if 'rs_flight_log_path' in self.params:
+			return self.params['rs_flight_log_path'].get_value()
 
 		# Geo module will output flight log to the output directory only if the extract images module is active
 		# Otherwise it will output to the geo_input_image_dir directory
@@ -139,17 +127,17 @@ class RealityCaptureAlignment(RCModule):
 	def __align_images(self, input_folder, output_folder, component_file_name, flight_log_path, flight_log_params_path, display_output=False, generate_model=True, cull_polygons=False, texture_model=False, simplify_model=False):
 		"""
 		Aligns images in a folder and saves the component file to the output folder.
+
+		All RealityScan execution goes through RealityScanCLI, which handles
+		instance locking, progress monitoring, error detection, and verified
+		instance shutdown (see realityscan_cli.py).
 		"""
 
 		if not input_folder:
 			raise ValueError("Input folder is not specified")
 
 		if not os.path.isdir(input_folder):
-			raise ValueError("Input folder {input_folder} is not a directory")
-		
-		if not os.path.isdir(output_folder):
-			self.logger.info(f"Output folder does not exist. Creating folder: {output_folder}")
-			os.mkdir(output_folder)
+			raise ValueError(f"Input folder {input_folder} is not a directory")
 
 		self.__check_and_create_folder(output_folder)
 
@@ -159,9 +147,6 @@ class RealityCaptureAlignment(RCModule):
 		if flight_log_params_path is None or not os.path.isfile(flight_log_params_path) or flight_log_path == "":
 			flight_log_params_path = ""
 
-		this_file_dir = os.path.dirname(os.path.realpath(__file__))
-		scripts_dir = os.path.join(this_file_dir, 'RC_CLI', 'Scripts')
-
 		generate_model_str = "true" if generate_model else "false"
 		cull_polygons_str = "true" if cull_polygons else "false"
 		texture_model_str = "true" if texture_model else "false"
@@ -169,20 +154,19 @@ class RealityCaptureAlignment(RCModule):
 
 		log_dir = os.path.join(os.path.dirname(output_folder), "logs")
 
-		self.__run_subprocess(["cmd", "/c", "AlignImagesFromFolder.bat", input_folder, output_folder, flight_log_path, flight_log_params_path, generate_model_str, cull_polygons_str, component_file_name, texture_model_str, simplify_model_str],
-					scripts_dir, log_dir, display_output)
+		result = self.cli.run_batch_script(
+			'AlignImagesFromFolder.bat',
+			[input_folder, output_folder, flight_log_path, flight_log_params_path,
+			 generate_model_str, cull_polygons_str, component_file_name,
+			 texture_model_str, simplify_model_str],
+			log_dir, display_output)
 
-		# subprocess returns early, wait for the program to finish before continuing
-		while True:
-			reality_capture_running = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq RealityCapture.exe'],
-													stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+		if not result.success:
+			self.logger.error(f"RealityScan workflow failed for {input_folder}: "
+							  f"{result.errors or f'exit code {result.return_code}'} (log: {result.log_path})")
+			return {'Success': False, 'Component Count': 0}, {'Success': False}
 
-			if 'RealityCapture.exe' not in reality_capture_running.stdout:
-				break
-
-			time.sleep(1)
-
-		generated_component_files = [f for f in os.listdir(output_folder) if f.startswith("Component") and f.endswith(".rcalign")]
+		generated_component_files = [f for f in os.listdir(output_folder) if f.startswith("Component") and f.endswith(COMPONENT_EXTENSIONS)]
 		component_path_base = os.path.join(output_folder, component_file_name)
 
 		outputted_component_count = 0
@@ -194,7 +178,8 @@ class RealityCaptureAlignment(RCModule):
 		# use index for loop so we can index the name
 		for index, generated_component_file in enumerate(generated_component_files):
 			generated_component_path = os.path.join(output_folder, generated_component_file)
-			component_path = f"{component_path_base}_{index}.rcalign"
+			extension = os.path.splitext(generated_component_file)[1]
+			component_path = f"{component_path_base}_{index}{extension}"
 
 			if os.path.exists(component_path):
 				self.logger.warning('Component "%s" already exists. Overwrite? (y/n)', component_path)
@@ -206,15 +191,16 @@ class RealityCaptureAlignment(RCModule):
 					continue
 				else:
 					os.remove(component_path)
-				
+
 			os.rename(generated_component_path, component_path)
 			outputted_component_count += 1
 
-		generated_scene_files = [f for f in os.listdir(output_folder) if f.startswith("Scene") and f.endswith(".rcproj")]
+		generated_scene_files = [f for f in os.listdir(output_folder) if f.startswith("Scene") and f.endswith(SCENE_EXTENSIONS)]
 
 		if generated_scene_files and len(generated_scene_files) == 1:
 			generated_scene_path = os.path.join(output_folder, generated_scene_files[0])
-			scene_path = f"{component_path_base}.rcproj"
+			extension = os.path.splitext(generated_scene_files[0])[1]
+			scene_path = f"{component_path_base}{extension}"
 
 			if os.path.exists(scene_path):
 				self.logger.warning('Scene "%s" already exists. Overwrite? (y/n)', scene_path)
@@ -261,10 +247,8 @@ class RealityCaptureAlignment(RCModule):
 		component_metadata_ext = start_file.replace(start_timestamp, timestamp_segment)
 		component_metadata_ext = component_metadata_ext.replace(f"_frame{parse_frame_number_str(start_file)}", "")
 		component_metadata = os.path.splitext(component_metadata_ext)[0]
-		
-		component_name = f"{component_metadata}.rcalign"
 
-		return component_name
+		return component_metadata
 
 	def run(self):
 		# Validate parameters
@@ -272,24 +256,22 @@ class RealityCaptureAlignment(RCModule):
 		if not success:
 			self.logger.error(message)
 			return {'Success': False}
-		
-		output_dir = os.path.join(self.params['output_dir'].get_value(), "aligned_components")
-		display_output = self.params['rc_display_output'].get_value()
-		generate_model = self.params['rc_model_generate'].get_value()
-		cull_polygons = self.params['rc_model_cull_poly'].get_value()
-		texture_model = self.params['rc_model_texture'].get_value()
-		simplify_model = self.params['rc_model_simplify'].get_value()
 
-		this_file_dir = os.path.dirname(os.path.realpath(__file__))
-		metadata_dir = os.path.join(this_file_dir, 'RC_CLI', 'Metadata')
-		flight_log_params_path = os.path.join(metadata_dir, "FlightLogParams.xml")
+		output_dir = os.path.join(self.params['output_dir'].get_value(), "aligned_components")
+		display_output = self.params['rs_display_output'].get_value()
+		generate_model = self.params['rs_model_generate'].get_value()
+		cull_polygons = self.params['rs_model_cull_poly'].get_value()
+		texture_model = self.params['rs_model_texture'].get_value()
+		simplify_model = self.params['rs_model_simplify'].get_value()
+
+		flight_log_params_path = os.path.join(METADATA_DIR, "FlightLogParams.xml")
 
 		process_data = []
 
 		def queue_folder_to_process(local_input_folder, local_output_dir, local_flight_log_path, local_flight_log_params_path, local_display_output):
 			if not os.path.isdir(local_input_folder):
 				raise ValueError(f"Input folder {local_input_folder} is not a directory")
-			
+
 			local_image_files = [f for f in os.listdir(local_input_folder) if f.endswith((".png", ".heif", ".jpg", ".jpeg"))]
 
 			# only process the folder if there are image files in it
@@ -313,8 +295,8 @@ class RealityCaptureAlignment(RCModule):
 				queue_folder_to_process(subfolder_path, local_output_dir, local_flight_log_path, local_flight_log_params_path, local_display_output)
 
 		# single folder input (not running after batched images module)
-		if 'rc_input_image_dir' in self.params:
-			input_folder = self.params['rc_input_image_dir'].get_value()
+		if 'rs_input_image_dir' in self.params:
+			input_folder = self.params['rs_input_image_dir'].get_value()
 			overall_flight_log_path = self.__get_flight_log_path()
 
 			try:
@@ -344,7 +326,9 @@ class RealityCaptureAlignment(RCModule):
 
 		bar = self._initialize_loading_bar(len(process_data), "Aligning Batches")
 
-		# process the data
+		# process the data sequentially - each run gets exclusive use of the
+		# RealityScan instance (enforced by RealityScanCLI's lock) and the
+		# instance is verified to have shut down before the next run starts
 		for data in process_data:
 			input_folder = data['input_folder']
 			output_dir = data['output_dir']
@@ -354,39 +338,46 @@ class RealityCaptureAlignment(RCModule):
 			display_output = data['display_output']
 
 			component_path = os.path.join(output_dir, component_file_name)
-			scene_path = os.path.join(output_dir, component_file_name + ".rcproj")
-			
+			scene_path = os.path.join(output_dir, component_file_name + ".rsproj")
+
 			try:
 				component_data, scene_data = self.__align_images(input_folder, output_dir, component_file_name, flight_log_path, flight_log_params_path, display_output, generate_model, cull_polygons, texture_model, simplify_model)
 				output_data['Components'][component_path] = component_data
 				output_data['Scenes'][scene_path] = scene_data
 			except Exception as e:
 				self.logger.error(f"Error aligning images: {e}")
-			
+
 			self._update_loading_bar(bar, 1)
 
 		return output_data
-	
+
 	def validate_parameters(self) -> (bool, str):
 		success, message = super().validate_parameters()
 		if not success:
 			return success, message
-		
-		if not 'rc_display_output' in self.params:
+
+		if not 'rs_display_output' in self.params:
 			return False, 'Display output parameter not found'
-		
-		if not 'rc_model_generate' in self.params:
+
+		if not 'rs_model_generate' in self.params:
 			return False, 'Generate model parameter not found'
-		
-		if not 'rc_model_cull_poly' in self.params:
-			self.params['rc_model_cull_poly'] = False
 
-		if not 'rc_model_texture' in self.params:
-			self.params['rc_model_texture'] = False
+		if not 'rs_model_cull_poly' in self.params:
+			self.params['rs_model_cull_poly'] = False
 
-		if not 'rc_model_simplify' in self.params:
-			self.params['rc_model_simplify'] = False
-			
+		if not 'rs_model_texture' in self.params:
+			self.params['rs_model_texture'] = False
+
+		if not 'rs_model_simplify' in self.params:
+			self.params['rs_model_simplify'] = False
+
+		# fail fast if RealityScan itself cannot be found
+		try:
+			executable = self.cli.find_executable()
+			self.logger.info(f"Using RealityScan executable: {executable}")
+		except FileNotFoundError as e:
+			return False, str(e)
+
 		# Validate output directory
 		output_dir = os.path.join(self.params['output_dir'].get_value(), 'aligned_components')
 
@@ -402,5 +393,5 @@ class RealityCaptureAlignment(RCModule):
 
 		if not os.path.isdir(output_dir):
 			os.makedirs(output_dir)
-		
+
 		return True, None

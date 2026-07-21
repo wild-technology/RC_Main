@@ -11,6 +11,13 @@ import shutil
 from pathlib import Path
 from typing import List, Tuple
 
+try:
+    from module_base.settings_store import SettingsStore
+except ImportError:
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+    from module_base.settings_store import SettingsStore
+
 
 def get_image_files(directory: Path) -> List[Path]:
     """
@@ -32,11 +39,15 @@ def get_image_files(directory: Path) -> List[Path]:
     return sorted(image_files)
 
 
-def get_valid_directory(prompt: str, must_exist: bool = True) -> Path:
+def get_valid_directory(settings: SettingsStore, key: str, prompt: str,
+                        must_exist: bool = True) -> Path:
     """
     Prompt user for a directory path and validate it.
+    The last-entered value is offered as the default.
 
     Args:
+        settings: SettingsStore holding the last-entered values
+        key: Settings key under the "decimator" section
         prompt: Message to display to user
         must_exist: Whether directory must already exist
 
@@ -44,7 +55,7 @@ def get_valid_directory(prompt: str, must_exist: bool = True) -> Path:
         Valid Path object
     """
     while True:
-        path_str = input(prompt).strip()
+        path_str = settings.prompt("decimator", key, prompt)
         path = Path(path_str).expanduser().resolve()
 
         if must_exist and not path.exists():
@@ -58,9 +69,10 @@ def get_valid_directory(prompt: str, must_exist: bool = True) -> Path:
         return path
 
 
-def get_decimation_ratio() -> int:
+def get_decimation_ratio(settings: SettingsStore) -> int:
     """
     Prompt user to select decimation ratio in 20% increments.
+    The last-entered choice is offered as the default.
 
     Returns:
         Percentage of images to keep (20, 40, 60, 80, or 100)
@@ -76,7 +88,8 @@ def get_decimation_ratio() -> int:
 
     while True:
         try:
-            choice = int(input("Enter choice (1-5): ").strip())
+            choice = int(settings.prompt("decimator", "decimation_choice",
+                                         "Enter choice (1-5)"))
             if choice in ratio_map:
                 return ratio_map[choice]
             else:
@@ -176,9 +189,12 @@ def main():
     print("Image Decimation Tool")
     print("=" * 60)
 
+    settings = SettingsStore()
+
     # Get source directory
     source_dir = get_valid_directory(
-        "\nEnter path to source image folder: ",
+        settings, "source_dir",
+        "\nEnter path to source image folder",
         must_exist=True
     )
 
@@ -193,11 +209,12 @@ def main():
     print(f"Found {len(image_files)} image files")
 
     # Get decimation ratio
-    keep_percentage = get_decimation_ratio()
+    keep_percentage = get_decimation_ratio(settings)
 
     # Get destination directory
     dest_dir = get_valid_directory(
-        "\nEnter path to destination folder: ",
+        settings, "dest_dir",
+        "\nEnter path to destination folder",
         must_exist=False
     )
 

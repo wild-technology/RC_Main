@@ -2,7 +2,7 @@
 setlocal enabledelayedexpansion
 
 echo ============================================================
-echo RealityCapture Zone Alignment Script
+echo RealityScan Zone Alignment Script
 echo ============================================================
 echo.
 
@@ -14,12 +14,9 @@ if errorlevel 1 (
     exit /b 1
 )
 
-set RootFolder=%~dp0..\
-set MetadataDir=%RootFolder%Metadata
+set MetadataDir=%Metadata%
 set AlignmentParams=%MetadataDir%\AlignmentParams.xml
 set FlightLogParams=%MetadataDir%\FlightLogParams.xml
-set ErrorPath=%RootFolder%Errors
-set ErrorWriter=%ErrorPath%\ErrorWriter.bat
 
 rem Validate metadata files exist
 if not exist "%AlignmentParams%" (
@@ -71,12 +68,6 @@ echo.
 
 rem Create required directories
 echo [3/10] Creating required directories...
-if not exist "%ErrorPath%" (
-    mkdir "%ErrorPath%"
-    echo    Created error directory: %ErrorPath%
-)
-
-rem Create output directory
 if not exist "%zone_output%" (
     mkdir "%zone_output%"
     if errorlevel 1 (
@@ -89,59 +80,42 @@ if not exist "%zone_output%" (
 )
 echo.
 
-rem Start RealityCapture
-echo [4/10] Starting RealityCapture...
-call startRealityCapture.bat
+rem Start RealityScan (headless instance %RS_INSTANCE% with monitoring hooks)
+echo [4/10] Starting RealityScan...
+call "%~dp0startRealityScan.bat"
 if errorlevel 1 (
-    echo ERROR: Failed to start RealityCapture
+    echo ERROR: Failed to start RealityScan
     exit /b 1
 )
-echo    SUCCESS: RealityCapture started
+echo    SUCCESS: RealityScan started
 echo.
 
 rem Create new project
 echo [5/10] Creating new project...
-%RealityCapture% -newScene
-if errorlevel 1 (
-    echo ERROR: Failed to create new scene
-    %RealityCapture% -quit
-    exit /b 1
-)
+call :run -newScene || goto :fail
 echo    SUCCESS: New scene created
 echo.
 
 rem Add images from zone folder
 echo [6/10] Adding images from zone folder...
 echo    This may take several minutes for large image sets...
-%RealityCapture% -addFolder "%zone_input%"
-if errorlevel 1 (
-    echo ERROR: Failed to add images from folder
-    %RealityCapture% -quit
-    exit /b 1
-)
+call :run -addFolder "%zone_input%" || goto :fail
 echo    SUCCESS: Images added from %zone_input%
 echo.
 
 rem Find and import flight log
 echo [7/10] Importing flight log...
 set flight_log_found=0
-for %%F in (%zone_input%\flight_log*.txt) do (
+for %%F in ("%zone_input%\flight_log*.txt") do (
     echo    Importing: %%F
-    %RealityCapture% -importFlightLog "%%F" "%FlightLogParams%"
-    if errorlevel 1 (
-        echo ERROR: Failed to import flight log: %%F
-        %RealityCapture% -quit
-        exit /b 1
-    ) else (
-        echo    SUCCESS: Flight log imported
-        set flight_log_found=1
-    )
+    call :run -importFlightLog "%%F" "%FlightLogParams%" || goto :fail
+    echo    SUCCESS: Flight log imported
+    set flight_log_found=1
 )
 if %flight_log_found% == 0 (
     echo ERROR: No flight log found in %zone_input%
     echo    Flight log is REQUIRED for georeferenced alignment
-    %RealityCapture% -quit
-    exit /b 1
+    goto :fail
 )
 echo.
 
@@ -154,20 +128,13 @@ for /r "%zone_input%" %%F in (*.xmp) do (
 if %xmp_count% == 0 (
     echo ERROR: No XMP sidecar files found in %zone_input%
     echo    XMP files are REQUIRED for camera calibration priors
-    %RealityCapture% -quit
-    exit /b 1
+    goto :fail
 )
 echo    Found %xmp_count% XMP files
 
 rem Import XMP sidecars with calibration priors
 echo    Importing XMP sidecars...
-%RealityCapture% -importXMP
-if errorlevel 1 (
-    echo ERROR: Failed to import XMP sidecars
-    echo    Camera calibration priors are REQUIRED
-    %RealityCapture% -quit
-    exit /b 1
-)
+call :run -importXMP || goto :fail
 echo    SUCCESS: XMP sidecars imported with camera priors
 echo.
 
@@ -175,54 +142,65 @@ rem Run alignment
 echo [9/10] Running alignment with custom parameters...
 echo    This may take a significant amount of time...
 echo    Please wait...
-%RealityCapture% -align %AlignmentParams%
-if errorlevel 1 (
-    echo ERROR: Alignment failed
-    echo    Check RealityCapture window for details
-    %RealityCapture% -quit
-    exit /b 1
-)
+call :run -align "%AlignmentParams%" || goto :fail
 echo    SUCCESS: Alignment completed
 echo.
 
 rem Export components
 echo [10/10] Exporting aligned components...
-%RealityCapture% -selectAllComponents
-if errorlevel 1 (
-    echo ERROR: Failed to select components
-    %RealityCapture% -quit
-    exit /b 1
-)
-
-%RealityCapture% -exportSelectedComponentDir "%zone_output%"
-if errorlevel 1 (
-    echo WARNING: Failed to export components
-    echo    Project will still be saved
-) else (
-    echo    SUCCESS: Components exported to %zone_output%
-)
+call :run -selectAllComponents || goto :fail
+call :run -exportSelectedComponentDir "%zone_output%" || goto :fail
+echo    SUCCESS: Components exported to %zone_output%
 echo.
 
 rem Save project
 echo Saving project...
-for %%Z in (%zone_input%) do set zone_name=%%~nxZ
-%RealityCapture% -save "%zone_input%\%zone_name%.rcproj"
-if errorlevel 1 (
-    echo ERROR: Failed to save project
-    %RealityCapture% -quit
-    exit /b 1
-)
-echo    SUCCESS: Project saved as %zone_input%\%zone_name%.rcproj
+for %%Z in ("%zone_input%") do set zone_name=%%~nxZ
+call :run -save "%zone_input%\%zone_name%.rsproj" || goto :fail
+echo    SUCCESS: Project saved as %zone_input%\%zone_name%.rsproj
 echo.
 
-echo Closing RealityCapture...
-%RealityCapture% -quit
+echo Closing RealityScan...
+%RealityScan% -delegateTo %RS_INSTANCE% -quit
 
 echo ============================================================
 echo PROCESSING COMPLETE
 echo ============================================================
 echo Zone: %zone_name%
 echo Components: %zone_output%
-echo Project: %zone_input%\%zone_name%.rcproj
+echo Project: %zone_input%\%zone_name%.rsproj
 echo ============================================================
+exit /b 0
+
+:fail
+echo ERROR: Zone workflow failed - see %ErrorPath%\errors.txt and the RealityScan log
+%RealityScan% -delegateTo %RS_INSTANCE% -quit
+exit /b 1
+
+:: ------------------------------------------------------------------
+:: :run <command...> - delegate one operation to %RS_INSTANCE%, wait for it
+:: to finish, and fail if RealityScan reported an error.
+::
+:: -waitCompleted is issued twice with a grace period because it can return
+:: prematurely when called before the instance has picked up the queued
+:: command. errors.txt is written by RealityScan's own process trigger
+:: (appProcessExecCmd -> ErrorWriter.bat), so a non-empty file means an
+:: operation genuinely failed even if the delegating call returned 0.
+:: ------------------------------------------------------------------
+:run
+%RealityScan% -delegateTo %RS_INSTANCE% %*
+if errorlevel 1 (
+    echo ERROR: Failed to delegate command: %*
+    exit /b 1
+)
+ping -n 2 127.0.0.1 >nul
+%RealityScan% -waitCompleted %RS_INSTANCE%
+ping -n 2 127.0.0.1 >nul
+%RealityScan% -waitCompleted %RS_INSTANCE%
+if exist "%ErrorPath%\errors.txt" (
+    for %%A in ("%ErrorPath%\errors.txt") do if %%~zA GTR 0 (
+        echo ERROR: RealityScan reported a failure during: %*
+        exit /b 1
+    )
+)
 exit /b 0

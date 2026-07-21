@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 from module_base.parameter import Parameter
 
-class RCModule(abc.ABC):
+class RSModule(abc.ABC):
     """
     Base class for all ROV-processing modules.
     """

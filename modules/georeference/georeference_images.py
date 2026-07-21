@@ -8,11 +8,11 @@ import utm
 import math
 
 from ..file_metadata_parser import parse_timestamp_str, parse_timestamp
-from module_base.rc_module import RCModule
+from module_base.rs_module import RSModule
 from module_base.parameter import Parameter
 
 
-class GeoreferenceImages(RCModule):
+class GeoreferenceImages(RSModule):
     TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
     WCA_FILENAME_TIMESTAMP_FORMAT = "%Y%m%d%H%M%S"
     ZEUSS_FILENAME_TIMESTAMP_FORMAT = "%Y%m%d%H%M%S"
@@ -171,7 +171,7 @@ class GeoreferenceImages(RCModule):
                                    roll_vehicle: float | None, camera_offset: float,
                                    decl_deg: float) -> tuple[float | None, float | None, float | None]:
         """
-        Convert vehicle orientation to RealityCapture conventions.
+        Convert vehicle orientation to RealityScan conventions.
 
         Input conventions:
         - heading_mag: magnetic heading, 0=North, 90=East, 180=South, 270=West (clockwise)
@@ -179,7 +179,7 @@ class GeoreferenceImages(RCModule):
         - roll_vehicle: vehicle roll, negative=left wing down, positive=right wing down
         - camera_offset: camera down angle from vehicle (positive = down)
 
-        RealityCapture conventions (standard aerial photogrammetry):
+        RealityScan conventions (standard aerial photogrammetry):
         - Yaw: 0=North, 90=East, 180=South, 270=West
         - Pitch: 0=nadir (straight down), 90=horizontal, -90=straight up
         - Roll: 0=level, positive=right wing down

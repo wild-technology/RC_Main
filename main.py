@@ -7,26 +7,27 @@ import argparse
 import inquirer
 
 from module_base.parameter import Parameter
-from module_base.rc_module import RCModule
+from module_base.rs_module import RSModule
+from module_base.settings_store import SettingsStore
 from modules.extract_images.extract_images import ExtractImages
 from modules.georeference.georeference_images import GeoreferenceImages
 from modules.image_batcher.batch_directory import BatchDirectory
-from modules.realitycapture_interface.realitycapture_interface import RealityCaptureAlignment
+from modules.realityscan_interface.realityscan_interface import RealityScanAlignment
 
 def intialize_logger() -> logging.Logger:
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
     return logger
 
-def initialize_modules(logger) -> dict[str, RCModule]:
+def initialize_modules(logger) -> dict[str, RSModule]:
     """
     Initializes the modules and returns a dict of the active modules.
     """
-    available_modules: dict[str, RCModule] = {
+    available_modules: dict[str, RSModule] = {
         'Extract Images': ExtractImages(logger),
         'Georeference Images': GeoreferenceImages(logger),
         'Batch Directory': BatchDirectory(logger),
-        'RealityCapture Alignment': RealityCaptureAlignment(logger)
+        'RealityScan Alignment': RealityScanAlignment(logger)
     }
 
     module_choices = [
@@ -41,7 +42,7 @@ def initialize_modules(logger) -> dict[str, RCModule]:
 
     answers = inquirer.prompt(module_choices)
 
-    enabled_modules: dict[str, RCModule] = {}
+    enabled_modules: dict[str, RSModule] = {}
     for name, mod in available_modules.items():
         if name in answers.get('modules', []):
             enabled_modules[name] = mod
@@ -93,6 +94,9 @@ def initialize_parameters(modules) -> dict[str, Parameter]:
 def parse_arguments(argv, params, logger) -> None:
     """
     Parses CLI args and prompts for any missing values.
+
+    Prompted values are persisted to rs_settings.json (section "main") and
+    offered as the default on the next run - press enter to reuse them.
     """
     parser = argparse.ArgumentParser()
     for p in params.values():
@@ -100,18 +104,28 @@ def parse_arguments(argv, params, logger) -> None:
                             type=p.get_type(), help=p.get_description())
     args = parser.parse_args(argv[1:])
 
+    settings = SettingsStore()
+
     for p in params.values():
         val = getattr(args, p.cli_long, None)
         if val is None and p.prompt_user:
+            last_value = settings.get('main', p.cli_long, p.get_default_value())
+            prompt = f'{p.get_description()}'
+            if last_value is not None:
+                prompt += f' [{last_value}]'
             try:
-                inp = input(f'{p.get_description()}: ')
-                if p.get_type() is bool:
+                inp = input(f'{prompt}: ')
+                if not inp.strip() and last_value is not None:
+                    val = last_value
+                elif p.get_type() is bool:
                     val = inp.lower() in ('true', 't', 'yes', 'y')
                 else:
                     val = p.get_type()(inp)
             except ValueError:
                 logger.warning(f'Invalid value for {p.get_name()}, using default {p.get_default_value()}')
                 val = p.get_default_value()
+            if val is not None:
+                settings.set('main', p.cli_long, val)
         if val is None and not p.prompt_user:
             val = p.get_default_value()
         p.set_value(val)

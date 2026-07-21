@@ -1,6 +1,6 @@
 """
 Standalone Georeference Images Script
-Processes underwater images from multiple dives and generates RealityCapture flight logs.
+Processes underwater images from multiple dives and generates RealityScan flight logs.
 Copies matched images into dive-specific subdirectories.
 Validates copied images and removes corrupt files after confirmation.
 Optimized with multiprocessing and binary search for speed.
@@ -23,10 +23,18 @@ import bisect
 from multiprocessing import Pool, cpu_count
 from functools import partial
 
-# Hardcoded paths
-IMAGE_BASE_DIR = r"Z:\NA173_All_Images_Corrected\NA173\sorted"
-ROV_DATA_DIR = r"Z:\alldatatables"
-OUTPUT_DIR = r"Z:\alldatatables"
+try:
+    from module_base.settings_store import SettingsStore
+except ImportError:
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+    from module_base.settings_store import SettingsStore
+
+# Default paths (offered as prompt defaults on first run; afterwards the
+# last-entered values from rs_settings.json are offered instead)
+DEFAULT_IMAGE_BASE_DIR = r"Z:\NA173_All_Images_Corrected\NA173\sorted"
+DEFAULT_ROV_DATA_DIR = r"Z:\alldatatables"
+DEFAULT_OUTPUT_DIR = r"Z:\alldatatables"
 
 # Timestamp formats
 TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
@@ -144,7 +152,7 @@ def apply_camera_position_offset(utm_x: float | None, utm_y: float | None,
 def convert_to_rc_orientation(heading_mag: float | None, pitch_vehicle: float | None,
                               roll_vehicle: float | None, camera_offset: float,
                               decl_deg: float) -> tuple[float | None, float | None, float | None]:
-    """Convert vehicle orientation to RealityCapture conventions."""
+    """Convert vehicle orientation to RealityScan conventions."""
     if heading_mag is not None:
         true_heading = heading_mag + decl_deg
         rc_yaw = wrap360(true_heading)
@@ -713,7 +721,7 @@ def generate_flight_log(matched_images: list[dict], dive_number: str, utm_zone: 
             def fmt(val):
                 return f"{val:.6f}" if val is not None else ""
 
-            # Include camera subfolder in the image path for RealityCapture
+            # Include camera subfolder in the image path for RealityScan
             image_path = f"{image['CAMERA_TYPE']}/{image['FILENAME']}"
 
             line = ";".join([
@@ -774,12 +782,26 @@ def print_dive_summary(dive_number: str, csv_rows: int, examined: int, stats: di
 
 def main():
     """Main execution function."""
+    settings = SettingsStore()
+    image_base_dir = settings.prompt(
+        "geoall", "image_base_dir",
+        "Image base directory (contains 'edt' subdirectories)",
+        DEFAULT_IMAGE_BASE_DIR)
+    rov_data_dir = settings.prompt(
+        "geoall", "rov_data_dir",
+        "ROV data directory (dive datatable CSVs)",
+        DEFAULT_ROV_DATA_DIR)
+    output_dir = settings.prompt(
+        "geoall", "output_dir",
+        "Output directory (flight logs and copied images)",
+        DEFAULT_OUTPUT_DIR)
+
     print("="*80)
     print("GEOREFERENCE IMAGES - MULTI-DIVE PROCESSOR (OPTIMIZED)")
     print("="*80)
-    print(f"Image Base Directory:  {IMAGE_BASE_DIR}")
-    print(f"ROV Data Directory:    {ROV_DATA_DIR}")
-    print(f"Output Directory:      {OUTPUT_DIR}")
+    print(f"Image Base Directory:  {image_base_dir}")
+    print(f"ROV Data Directory:    {rov_data_dir}")
+    print(f"Output Directory:      {output_dir}")
     print(f"Match Threshold:       {MATCH_THRESHOLD_SEC} seconds")
     print(f"Magnetic Declination:  {MAGNETIC_DECLINATION_DEG}°")
     print(f"Worker Processes:      {NUM_WORKERS}")
@@ -793,7 +815,7 @@ def main():
     print("="*80)
 
     print("\nSearching for 'edt' subdirectories...")
-    edt_dirs = find_all_edt_directories(IMAGE_BASE_DIR)
+    edt_dirs = find_all_edt_directories(image_base_dir)
     print(f"Found {len(edt_dirs)} edt directories")
 
     if not edt_dirs:
@@ -801,7 +823,7 @@ def main():
         return
 
     print("\nSearching for ROV datafiles...")
-    dive_files = find_rov_datafiles(ROV_DATA_DIR)
+    dive_files = find_rov_datafiles(rov_data_dir)
     print(f"Found {len(dive_files)} dive datafiles:")
     for dive_num in sorted(dive_files.keys()):
         print(f"  {dive_num}: {os.path.basename(dive_files[dive_num])}")
@@ -850,9 +872,9 @@ def main():
             utm_zone = utm_zone_cache.get('zone')
 
             if matched_images:
-                copied_count, failed_count, camera_copy_counts = copy_matched_images(matched_images, dive_number, OUTPUT_DIR)
+                copied_count, failed_count, camera_copy_counts = copy_matched_images(matched_images, dive_number, output_dir)
 
-                flight_log_path = generate_flight_log(matched_images, dive_number, utm_zone, OUTPUT_DIR)
+                flight_log_path = generate_flight_log(matched_images, dive_number, utm_zone, output_dir)
 
                 overall_stats['total_matches'] += stats['matches_made']
                 overall_stats['total_copied'] += copied_count
@@ -861,7 +883,7 @@ def main():
                 for camera_type, count in camera_copy_counts.items():
                     overall_stats['overall_camera_counts'][camera_type] += count
 
-                dive_image_dir = os.path.join(OUTPUT_DIR, dive_number)
+                dive_image_dir = os.path.join(output_dir, dive_number)
                 print_dive_summary(dive_number, len(data_rows), len(all_images), stats,
                                  flight_log_path, utm_zone, copied_count, failed_count,
                                  camera_copy_counts, dive_image_dir)
@@ -869,7 +891,7 @@ def main():
                 processed_dives.append(dive_number)
             else:
                 print(f"\nNo images matched for dive {dive_number}")
-                dive_image_dir = os.path.join(OUTPUT_DIR, dive_number)
+                dive_image_dir = os.path.join(output_dir, dive_number)
                 print_dive_summary(dive_number, len(data_rows), len(all_images), stats,
                                  "N/A", utm_zone, 0, 0, {}, dive_image_dir)
 
@@ -895,13 +917,13 @@ def main():
         for camera_type in sorted(overall_stats['overall_camera_counts'].keys()):
             print(f"  {camera_type:15s}     {overall_stats['overall_camera_counts'][camera_type]}")
 
-    print(f"\nOutput Directory:              {OUTPUT_DIR}")
+    print(f"\nOutput Directory:              {output_dir}")
     print(f"Image Organization:            By dive, then by camera type in subdirectories")
     print(f"Flight Log Format:             Includes camera subfolder paths (e.g., CamUpper/image.jpg)")
     print(f"{'='*80}\n")
 
     if processed_dives and overall_stats['total_copied'] > 0:
-        validation_stats = validate_and_cleanup_images(OUTPUT_DIR, processed_dives)
+        validation_stats = validate_and_cleanup_images(output_dir, processed_dives)
 
         if validation_stats.get('deleted', 0) > 0:
             print(f"\nFinal image count after cleanup: {overall_stats['total_copied'] - validation_stats['deleted']}")

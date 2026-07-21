@@ -8,8 +8,17 @@
 /modules/extract_images/__pycache__
 /modules/georeference/__pycache__
 /modules/image_batcher/__pycache__
-/modules/realitycapture_interface/__pycache__
+/modules/realityscan_interface/__pycache__
 
-/modules/realitycapture_interface/RC_CLI/Errors/errors.txt
-/modules/realitycapture_interface/RC_CLI/Errors/progress.txt
+# Runtime marker files written by the RealityScan instance / ErrorWriter hook
+/modules/realityscan_interface/RS_CLI/Errors/errors.txt
+/modules/realityscan_interface/RS_CLI/Errors/progress.txt
+/modules/realityscan_interface/RS_CLI/Errors/results.log
+/modules/realityscan_interface/RS_CLI/Errors/*.lock
+/modules/realityscan_interface/RS_CLI/Models/
+
+# Per-user persisted prompt defaults (see module_base/settings_store.py)
+/rs_settings.json
+/rs_settings.json.corrupt
+
 main.py.lprof

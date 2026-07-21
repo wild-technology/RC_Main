@@ -4,6 +4,13 @@ from pathlib import Path
 from datetime import datetime
 import shutil
 
+try:
+    from module_base.settings_store import SettingsStore
+except ImportError:
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+    from module_base.settings_store import SettingsStore
+
 
 def extract_date_from_filename(filename):
     """
@@ -70,5 +77,9 @@ def organize_images_by_date(source_dir):
 
 
 if __name__ == "__main__":
-    source_directory = r"D:\NA173 Shallow"
+    settings = SettingsStore()
+    source_directory = settings.prompt(
+        "organize_by_date", "source_dir",
+        "Folder containing images to organize by date",
+        r"D:\NA173 Shallow")
     organize_images_by_date(source_directory)
