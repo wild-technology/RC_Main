@@ -5,7 +5,9 @@
 ::   -writeProgress          progress stream tailed by the Python orchestrator
 ::   appProcessAction /      RealityScan itself runs ErrorWriter.bat when a
 ::   appProcessExecCmd       process finishes, logging every completion to
-::                           results.log and failures to errors.txt
+::                           results_<instance>.log and failures to
+::                           errors_<instance>.txt (files are namespaced per
+::                           instance so parallel instances stay isolated)
 @echo off
 
 if not defined RealityScan call "%~dp0SetVariables.bat"
@@ -25,7 +27,12 @@ echo Starting new RealityScan instance %RS_INSTANCE%
 :: CUDA devices visible to this instance. Unset = use all GPUs.
 if defined RS_GPU_DEVICES set CUDA_VISIBLE_DEVICES=%RS_GPU_DEVICES%
 
-start "" %RealityScan% -headless -stdConsole -silent "%ErrorPath%" -setInstanceName %RS_INSTANCE% -set "appAutoSaveMode=false" -set "appQuitOnError=false" -set "appProcessActionTime=0" -set "appProcessAction=ExecuteProgram" -set "appProcessExecCmd=%ErrorWriter% $(processResult) $(processId) $(processDuration:d) %ErrorPath%" -writeProgress "%ErrorPath%\progress.txt" 600
+:: The ErrorWriter path is wrapped in escaped quotes (\") because checkout
+:: paths routinely contain spaces; without them the process trigger would
+:: silently launch nothing and all error detection would vanish. cmd /c is
+:: required for CreateProcess to run a .bat. The hook writes its marker
+:: files next to itself, so no other path has to survive this command line.
+start "" %RealityScan% -headless -stdConsole -silent "%ErrorPath%" -setInstanceName %RS_INSTANCE% -set "appAutoSaveMode=false" -set "appQuitOnError=false" -set "appProcessActionTime=0" -set "appProcessAction=ExecuteProgram" -set "appProcessExecCmd=cmd /c \"%ErrorWriter%\" $(processResult) $(processId) $(processDuration:d) %RS_INSTANCE%" -writeProgress "%ErrorPath%\progress_%RS_INSTANCE%.txt" 600
 
 echo Waiting until the RealityScan instance %RS_INSTANCE% is ready
 

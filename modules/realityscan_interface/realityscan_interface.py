@@ -154,6 +154,12 @@ class RealityScanAlignment(RSModule):
 
 		log_dir = os.path.join(os.path.dirname(output_folder), "logs")
 
+		# Snapshot the output folder so newly exported component files can be
+		# identified regardless of what RealityScan names them (exports are
+		# named after the component, e.g. "Merged.rsalign", and earlier
+		# batches' renamed components already live in this folder).
+		files_before = set(os.listdir(output_folder))
+
 		result = self.cli.run_batch_script(
 			'AlignImagesFromFolder.bat',
 			[input_folder, output_folder, flight_log_path, flight_log_params_path,
@@ -166,11 +172,11 @@ class RealityScanAlignment(RSModule):
 							  f"{result.errors or f'exit code {result.return_code}'} (log: {result.log_path})")
 			return {'Success': False, 'Component Count': 0}, {'Success': False}
 
-		generated_component_files = [f for f in os.listdir(output_folder) if f.startswith("Component") and f.endswith(COMPONENT_EXTENSIONS)]
+		generated_component_files = [f for f in os.listdir(output_folder)
+									 if f not in files_before and f.endswith(COMPONENT_EXTENSIONS)]
 		component_path_base = os.path.join(output_folder, component_file_name)
 
 		outputted_component_count = 0
-		outputted_scene = False
 
 		if not generated_component_files or len(generated_component_files) == 0:
 			return {'Success': False, 'Component Count': 0}, {'Success': False}
@@ -195,34 +201,25 @@ class RealityScanAlignment(RSModule):
 			os.rename(generated_component_path, component_path)
 			outputted_component_count += 1
 
-		generated_scene_files = [f for f in os.listdir(output_folder) if f.startswith("Scene") and f.endswith(SCENE_EXTENSIONS)]
+		# The workflow saves the project directly as <component name>.rsproj
+		# in the output folder; verify it actually exists and is non-empty
+		# instead of trusting the workflow's exit status alone.
+		scene_success = False
+		for extension in SCENE_EXTENSIONS:
+			scene_file = f"{component_path_base}{extension}"
+			if os.path.isfile(scene_file) and os.path.getsize(scene_file) > 0:
+				scene_success = True
+				break
 
-		if generated_scene_files and len(generated_scene_files) == 1:
-			generated_scene_path = os.path.join(output_folder, generated_scene_files[0])
-			extension = os.path.splitext(generated_scene_files[0])[1]
-			scene_path = f"{component_path_base}{extension}"
-
-			if os.path.exists(scene_path):
-				self.logger.warning('Scene "%s" already exists. Overwrite? (y/n)', scene_path)
-				overwrite = input()
-
-				if overwrite.lower() != 'y':
-					self.logger.warning('Scene not created')
-					os.remove(generated_scene_path)
-				else:
-					os.remove(scene_path)
-					os.rename(generated_scene_path, scene_path)
-					outputted_scene = True
-			else:
-				os.rename(generated_scene_path, scene_path)
-				outputted_scene = True
+		if not scene_success:
+			self.logger.error(f'Project file "{component_path_base}.rsproj" was not created')
 
 		component_data = {}
 		component_data['Success'] = True
 		component_data['Component Count'] = outputted_component_count
 
 		scene_data = {}
-		scene_data['Success'] = True
+		scene_data['Success'] = scene_success
 		return component_data, scene_data
 
 	def __get_component_file_name(self, image_folder):
@@ -362,14 +359,13 @@ class RealityScanAlignment(RSModule):
 		if not 'rs_model_generate' in self.params:
 			return False, 'Generate model parameter not found'
 
-		if not 'rs_model_cull_poly' in self.params:
-			self.params['rs_model_cull_poly'] = False
-
-		if not 'rs_model_texture' in self.params:
-			self.params['rs_model_texture'] = False
-
-		if not 'rs_model_simplify' in self.params:
-			self.params['rs_model_simplify'] = False
+		# missing optional params get a real Parameter defaulting to False so
+		# run() can still call get_value() on them
+		for optional_param in ('rs_model_cull_poly', 'rs_model_texture', 'rs_model_simplify'):
+			if optional_param not in self.params:
+				self.params[optional_param] = Parameter(
+					name=optional_param, cli_short=None, cli_long=optional_param,
+					type=bool, default_value=False, prompt_user=False)
 
 		# fail fast if RealityScan itself cannot be found
 		try:

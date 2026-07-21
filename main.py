@@ -41,6 +41,9 @@ def initialize_modules(logger) -> dict[str, RSModule]:
     ]
 
     answers = inquirer.prompt(module_choices)
+    if answers is None:
+        # user cancelled (Ctrl-C) or no interactive terminal
+        sys.exit(1)
 
     enabled_modules: dict[str, RSModule] = {}
     for name, mod in available_modules.items():
@@ -98,10 +101,16 @@ def parse_arguments(argv, params, logger) -> None:
     Prompted values are persisted to rs_settings.json (section "main") and
     offered as the default on the next run - press enter to reuse them.
     """
+    def str_to_bool(value: str) -> bool:
+        # argparse with type=bool would treat any non-empty string
+        # (including "False") as True
+        return value.strip().lower() in ('true', 't', 'yes', 'y', '1')
+
     parser = argparse.ArgumentParser()
     for p in params.values():
+        arg_type = str_to_bool if p.get_type() is bool else p.get_type()
         parser.add_argument(f'-{p.cli_short}', f'--{p.cli_long}',
-                            type=p.get_type(), help=p.get_description())
+                            type=arg_type, help=p.get_description())
     args = parser.parse_args(argv[1:])
 
     settings = SettingsStore()

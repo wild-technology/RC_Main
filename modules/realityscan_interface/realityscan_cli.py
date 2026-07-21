@@ -32,9 +32,10 @@ mechanisms, in line with RealityScan's own CLI facilities:
 Race-condition rules enforced here:
 - A per-instance lock file prevents two orchestrators from driving the same
   instance name concurrently.
-- Marker files (``progress.txt``, ``errors.txt``, ``results.log``) are
-  cleared before every run so a previous run's state can never be misread
-  as the current run's.
+- Marker files (``progress_<instance>.txt``, ``errors_<instance>.txt``,
+  ``results_<instance>.log``) are namespaced per instance and cleared
+  before every run, so parallel instances and previous runs can never be
+  misread as the current run's state.
 - After a workflow finishes, we verify via ``-getStatus`` that the instance
   actually shut down before the next workflow starts, so consecutive runs
   can never share (and contaminate) a scene.
@@ -86,7 +87,10 @@ EXECUTABLE_CANDIDATES = [
 # a warning only — large datasets can legitimately be quiet for a long time.
 STALL_WARNING_SECONDS = 2 * 60 * 60
 PROGRESS_POLL_SECONDS = 2.0
-SHUTDOWN_VERIFY_TIMEOUT_SECONDS = 300
+# Closing a very large scene after -quit can take a long time; override via
+# "realityscan"/"shutdown_timeout" in rs_settings.json if 15 min is not enough.
+SHUTDOWN_VERIFY_TIMEOUT_SECONDS = 900
+STATUS_CALL_TIMEOUT_SECONDS = 60
 
 
 @dataclass
@@ -146,21 +150,44 @@ class RealityScanCLI:
 
 	def is_instance_running(self) -> bool:
 		exe = self.find_executable()
-		result = subprocess.run(
-			[exe, '-getStatus', self.instance_name],
-			stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-		)
+		try:
+			result = subprocess.run(
+				[exe, '-getStatus', self.instance_name],
+				stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+				timeout=STATUS_CALL_TIMEOUT_SECONDS
+			)
+		except subprocess.TimeoutExpired:
+			# A hung -getStatus means the instance exists but is unresponsive;
+			# treat it as running so callers stay conservative.
+			return True
 		return result.returncode == 0
 
-	def wait_for_instance_shutdown(self, timeout: float = SHUTDOWN_VERIFY_TIMEOUT_SECONDS) -> bool:
+	def wait_for_instance_shutdown(self, timeout: float = None) -> bool:
 		"""Block until the instance is gone. Returns False on timeout —
 		callers must treat that as 'do not start the next workflow'."""
+		if timeout is None:
+			timeout = self.settings.get('realityscan', 'shutdown_timeout', SHUTDOWN_VERIFY_TIMEOUT_SECONDS)
 		deadline = time.monotonic() + timeout
 		while time.monotonic() < deadline:
 			if not self.is_instance_running():
 				return True
 			time.sleep(PROGRESS_POLL_SECONDS)
 		return False
+
+	def shutdown_instance(self) -> bool:
+		"""Ask a running instance to quit and wait for it to disappear."""
+		if not self.is_instance_running():
+			return True
+		exe = self.find_executable()
+		try:
+			subprocess.run(
+				[exe, '-delegateTo', self.instance_name, '-quit'],
+				stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+				timeout=STATUS_CALL_TIMEOUT_SECONDS
+			)
+		except subprocess.TimeoutExpired:
+			pass
+		return self.wait_for_instance_shutdown()
 
 	# ------------------------------------------------------------------
 	# Locking (one orchestrator per instance name)
@@ -205,7 +232,14 @@ class RealityScanCLI:
 			os.remove(lock_path)
 
 		# O_EXCL closes the window between the check above and creation.
-		fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+		try:
+			fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+		except FileExistsError:
+			raise RuntimeError(
+				f'RealityScan instance "{self.instance_name}" was locked by '
+				'another orchestrator while this one was starting up. '
+				'Use a different instance_name to run workflows in parallel.'
+			)
 		with os.fdopen(fd, 'w', encoding='utf-8') as f:
 			f.write(str(os.getpid()))
 
@@ -219,17 +253,37 @@ class RealityScanCLI:
 	# Marker files written by the instance / ErrorWriter hook
 	# ------------------------------------------------------------------
 
-	def _marker(self, name: str) -> str:
-		return os.path.join(ERRORS_DIR, name)
+	# Marker files are namespaced per instance so parallel instances (e.g.
+	# one per GPU) can never read each other's state.
+
+	def _marker(self, kind: str) -> str:
+		names = {
+			'progress': f'progress_{self.instance_name}.txt',
+			'errors': f'errors_{self.instance_name}.txt',
+			'results': f'results_{self.instance_name}.log',
+		}
+		return os.path.join(ERRORS_DIR, names[kind])
 
 	def _clear_markers(self) -> None:
-		for name in ('progress.txt', 'errors.txt', 'results.log'):
-			path = self._marker(name)
-			if os.path.isfile(path):
+		for kind in ('progress', 'errors', 'results'):
+			path = self._marker(kind)
+			if not os.path.isfile(path):
+				continue
+			try:
 				os.remove(path)
+			except OSError:
+				# Windows cannot delete a file another process holds open; a
+				# live instance keeping progress.txt open means it must be
+				# shut down first, never written around.
+				raise RuntimeError(
+					f'Cannot clear marker file {path} - it appears to be held '
+					f'open, most likely by a still-running RealityScan '
+					f'instance "{self.instance_name}". Shut it down before '
+					'starting a new workflow.'
+				)
 
-	def _read_marker(self, name: str) -> str:
-		path = self._marker(name)
+	def _read_marker(self, kind: str) -> str:
+		path = self._marker(kind)
 		if not os.path.isfile(path):
 			return ''
 		try:
@@ -272,10 +326,22 @@ class RealityScanCLI:
 		self._acquire_lock()
 		start_time = time.monotonic()
 		try:
+			# A leftover instance from a crashed run may be hours into an old
+			# operation with our marker hooks still armed. Attaching to it
+			# would queue behind that work and mix its results into ours, so
+			# shut it down before starting anything.
 			if self.is_instance_running():
 				self.logger.warning(
-					'RealityScan instance "%s" is already running; the workflow '
-					'will attach to it and start a fresh scene.', self.instance_name)
+					'RealityScan instance "%s" is already running (probably left '
+					'over from an interrupted run); shutting it down before '
+					'starting the workflow.', self.instance_name)
+				if not self.shutdown_instance():
+					raise RuntimeError(
+						f'RealityScan instance "{self.instance_name}" is still '
+						'running and did not respond to -quit. Close it manually '
+						'(check for a long-running operation first!) before '
+						'starting a new workflow.'
+					)
 
 			self._clear_markers()
 
@@ -284,26 +350,43 @@ class RealityScanCLI:
 				creationflags = (subprocess.CREATE_NEW_CONSOLE if display_output
 								 else subprocess.CREATE_NO_WINDOW)
 
-			with open(log_path, 'w', encoding='utf-8', errors='replace') as log_file:
+			# display_output opens a visible console, so leave stdout attached
+			# to it; otherwise capture everything in the log file.
+			if display_output:
 				process = subprocess.Popen(
 					['cmd', '/c', script_name] + list(args),
 					cwd=SCRIPTS_DIR, env=env,
-					stdout=log_file, stderr=subprocess.STDOUT,
 					creationflags=creationflags,
 				)
 				self._monitor_until_exit(process)
+				log_path = None
+			else:
+				with open(log_path, 'w', encoding='utf-8', errors='replace') as log_file:
+					process = subprocess.Popen(
+						['cmd', '/c', script_name] + list(args),
+						cwd=SCRIPTS_DIR, env=env,
+						stdout=log_file, stderr=subprocess.STDOUT,
+						creationflags=creationflags,
+					)
+					self._monitor_until_exit(process)
 
 			return_code = process.returncode
-			errors = self._read_marker('errors.txt')
-			results = [line for line in self._read_marker('results.log').splitlines() if line.strip()]
 
 			# The workflow ends by delegating -quit; make sure the instance is
 			# really gone before anyone starts the next workflow.
-			if not self.wait_for_instance_shutdown():
+			shutdown_ok = self.wait_for_instance_shutdown()
+
+			# Read the markers only AFTER shutdown: the final operations can
+			# still be running when the batch script exits, so an error from
+			# them may arrive during the shutdown window.
+			errors = self._read_marker('errors')
+			results = [line for line in self._read_marker('results').splitlines() if line.strip()]
+
+			if not shutdown_ok:
 				self.logger.error(
-					'RealityScan instance "%s" did not shut down within %s s; '
+					'RealityScan instance "%s" did not shut down in time; '
 					'refusing to continue while it may still hold the scene.',
-					self.instance_name, SHUTDOWN_VERIFY_TIMEOUT_SECONDS)
+					self.instance_name)
 				return WorkflowResult(False, return_code, log_path, errors or 'instance did not shut down', results,
 									  time.monotonic() - start_time)
 
@@ -321,8 +404,9 @@ class RealityScanCLI:
 	def _monitor_until_exit(self, process: subprocess.Popen) -> None:
 		"""Poll the workflow process, relaying progress.txt updates and
 		warning on stalls. No overall timeout by design."""
-		progress_path = self._marker('progress.txt')
+		progress_path = self._marker('progress')
 		last_progress_line = ''
+		last_errors = ''
 		last_activity = time.monotonic()
 		stall_warned = False
 
@@ -336,12 +420,12 @@ class RealityScanCLI:
 				stall_warned = False
 				self.logger.info('RealityScan [%s]: %s', self.instance_name, line)
 
-			errors = self._read_marker('errors.txt')
-			if errors:
-				# The batch script aborts itself on errors.txt; we just make
-				# the failure visible immediately instead of at the end.
+			errors = self._read_marker('errors')
+			if errors and errors != last_errors:
+				# The batch script aborts itself on the errors marker; we just
+				# make the failure visible immediately instead of at the end.
+				last_errors = errors
 				self.logger.error('RealityScan [%s] reported an error: %s', self.instance_name, errors)
-				last_activity = time.monotonic()
 
 			if not stall_warned and time.monotonic() - last_activity > STALL_WARNING_SECONDS:
 				stall_warned = True

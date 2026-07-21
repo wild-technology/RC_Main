@@ -1,5 +1,5 @@
 @echo off
-setlocal enabledelayedexpansion
+setlocal
 
 echo ============================================================
 echo RealityScan Zone Alignment Script
@@ -14,9 +14,13 @@ if errorlevel 1 (
     exit /b 1
 )
 
-set MetadataDir=%Metadata%
-set AlignmentParams=%MetadataDir%\AlignmentParams.xml
-set FlightLogParams=%MetadataDir%\FlightLogParams.xml
+set "MetadataDir=%Metadata%"
+set "AlignmentParams=%MetadataDir%\AlignmentParams.xml"
+set "FlightLogParams=%MetadataDir%\FlightLogParams.xml"
+
+rem Per-instance marker files written by RealityScan / ErrorWriter.bat
+set "ResultsLog=%ErrorPath%\results_%RS_INSTANCE%.log"
+set "ErrorsFile=%ErrorPath%\errors_%RS_INSTANCE%.txt"
 
 rem Validate metadata files exist
 if not exist "%AlignmentParams%" (
@@ -35,13 +39,13 @@ echo [2/10] Parsing input arguments...
 if [%1] == [] (
     set /P zone_input="Zone Input Directory: "
 ) else (
-    set zone_input=%~1
+    set "zone_input=%~1"
 )
 
 if [%2] == [] (
     set /P zone_output="Zone Output Directory: "
 ) else (
-    set zone_output=%~2
+    set "zone_output=%~2"
 )
 
 rem Validate input directory exists
@@ -51,7 +55,7 @@ if not exist "%zone_input%" (
 )
 
 rem Count images in input directory
-set image_count=0
+set /a image_count=0
 for /r "%zone_input%" %%F in (*.jpg *.jpeg *.png *.heif) do (
     set /a image_count+=1
 )
@@ -105,12 +109,12 @@ echo.
 
 rem Find and import flight log
 echo [7/10] Importing flight log...
-set flight_log_found=0
+set /a flight_log_found=0
 for %%F in ("%zone_input%\flight_log*.txt") do (
     echo    Importing: %%F
     call :run -importFlightLog "%%F" "%FlightLogParams%" || goto :fail
     echo    SUCCESS: Flight log imported
-    set flight_log_found=1
+    set /a flight_log_found=1
 )
 if %flight_log_found% == 0 (
     echo ERROR: No flight log found in %zone_input%
@@ -121,7 +125,7 @@ echo.
 
 rem Verify XMP sidecars exist
 echo [8/10] Verifying XMP sidecars for camera calibration...
-set xmp_count=0
+set /a xmp_count=0
 for /r "%zone_input%" %%F in (*.xmp) do (
     set /a xmp_count+=1
 )
@@ -155,7 +159,7 @@ echo.
 
 rem Save project
 echo Saving project...
-for %%Z in ("%zone_input%") do set zone_name=%%~nxZ
+for %%Z in ("%zone_input%") do set "zone_name=%%~nxZ"
 call :run -save "%zone_input%\%zone_name%.rsproj" || goto :fail
 echo    SUCCESS: Project saved as %zone_input%\%zone_name%.rsproj
 echo.
@@ -173,7 +177,7 @@ echo ============================================================
 exit /b 0
 
 :fail
-echo ERROR: Zone workflow failed - see %ErrorPath%\errors.txt and the RealityScan log
+echo ERROR: Zone workflow failed - see %ErrorsFile% and the RealityScan log
 %RealityScan% -delegateTo %RS_INSTANCE% -quit
 exit /b 1
 
@@ -181,24 +185,37 @@ exit /b 1
 :: :run <command...> - delegate one operation to %RS_INSTANCE%, wait for it
 :: to finish, and fail if RealityScan reported an error.
 ::
-:: -waitCompleted is issued twice with a grace period because it can return
-:: prematurely when called before the instance has picked up the queued
-:: command. errors.txt is written by RealityScan's own process trigger
-:: (appProcessExecCmd -> ErrorWriter.bat), so a non-empty file means an
-:: operation genuinely failed even if the delegating call returned 0.
+:: Delegated commands are queued, and -waitCompleted can return prematurely
+:: when it runs before the instance has picked the queued command up. So we
+:: wait event-driven: RealityScan's process trigger appends one line to
+:: results_<instance>.log for every finished process (appProcessActionTime=0
+:: captures all of them), and we loop waitCompleted until the log grows.
+:: The loop is bounded so a command that never registers as a process
+:: cannot hang the workflow; errors_<instance>.txt is checked afterwards
+:: because it is written by RealityScan itself and is authoritative even
+:: when the delegating call returned 0.
 :: ------------------------------------------------------------------
 :run
+set /a rsBefore=0
+if exist "%ResultsLog%" for /f %%C in ('type "%ResultsLog%" ^| find /c /v ""') do set /a rsBefore=%%C
 %RealityScan% -delegateTo %RS_INSTANCE% %*
 if errorlevel 1 (
     echo ERROR: Failed to delegate command: %*
     exit /b 1
 )
-ping -n 2 127.0.0.1 >nul
+set /a rsWaits=0
+:runWait
 %RealityScan% -waitCompleted %RS_INSTANCE%
+set /a rsAfter=0
+if exist "%ResultsLog%" for /f %%C in ('type "%ResultsLog%" ^| find /c /v ""') do set /a rsAfter=%%C
+if %rsAfter% GTR %rsBefore% goto :runDone
+set /a rsWaits+=1
+if %rsWaits% GEQ 15 goto :runDone
 ping -n 2 127.0.0.1 >nul
-%RealityScan% -waitCompleted %RS_INSTANCE%
-if exist "%ErrorPath%\errors.txt" (
-    for %%A in ("%ErrorPath%\errors.txt") do if %%~zA GTR 0 (
+goto :runWait
+:runDone
+if exist "%ErrorsFile%" (
+    for %%A in ("%ErrorsFile%") do if %%~zA GTR 0 (
         echo ERROR: RealityScan reported a failure during: %*
         exit /b 1
     )

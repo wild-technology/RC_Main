@@ -80,26 +80,35 @@ The design (informed by hard-won lessons — see
    `RS1` (`-setInstanceName`), or attaches to it with a fresh scene if it
    already exists, and waits for readiness by polling `-getStatus` (bounded
    at 120 s).
-2. The instance is started with RealityScan's built-in monitoring hooks:
-   - `-writeProgress Errors\progress.txt 600` — progress stream, tailed
-     live by `RealityScanCLI` for logging and stall warnings;
+2. The instance is started with RealityScan's built-in monitoring hooks
+   (all marker files are namespaced per instance so parallel instances
+   stay isolated):
+   - `-writeProgress Errors\progress_<instance>.txt 600` — progress
+     stream, tailed live by `RealityScanCLI` for logging and stall
+     warnings;
    - `appProcessAction=ExecuteProgram` + `appProcessExecCmd` →
      `Errors\ErrorWriter.bat` — RealityScan itself reports every finished
      process (`$(processResult)`, `$(processId)`, `$(processDuration)`).
-     Completions append to `results.log`; failures (result codes other
-     than 0/1) append to `errors.txt`;
+     Completions append to `results_<instance>.log`; failures (result
+     codes other than 0/1) append to `errors_<instance>.txt`;
    - `-silent <Errors dir>` so crash dialogs can never hang an unattended
      run (a crash exits with code 3 and a minidump instead).
 3. Workflow scripts execute every operation through the `:run` subroutine:
-   `-delegateTo RS1 <cmd>` → **two** `-waitCompleted RS1` calls separated
-   by a grace period (a single wait can return prematurely if it runs
-   before the instance picks the queued command up) → abort the workflow
-   if `errors.txt` is non-empty. One command per delegation, always.
+   `-delegateTo <instance> <cmd>` → loop `-waitCompleted` until
+   `results_<instance>.log` grows (event-driven completion via
+   RealityScan's own process trigger; `-waitCompleted` alone can return
+   prematurely before the instance picks the queued command up), bounded
+   so commands that never register as a process cannot hang → abort the
+   workflow if `errors_<instance>.txt` is non-empty. One command per
+   delegation, always.
 4. `RealityScanCLI.run_batch_script()` wraps the whole workflow:
    - a per-instance **lock file** (with PID liveness check) prevents two
      orchestrators from driving the same instance name concurrently;
-   - marker files (`progress.txt`, `errors.txt`, `results.log`) are cleared
-     before each run so stale state can never be misread;
+   - a leftover instance from an interrupted run is shut down (never
+     silently attached to) before the workflow starts;
+   - marker files are cleared before each run so stale state can never be
+     misread, and read back only **after** verified shutdown so a failure
+     in the final save can never be missed;
    - **no overall timeout** — alignment/reconstruction on large datasets
      legitimately runs 10+ hours; a stall only logs a warning after 2 h of
      silence;
@@ -137,8 +146,9 @@ git history — see `git log`):
 
 - **Delegation pickup race**: `-waitCompleted` returns prematurely when
   called before the instance has picked up the queued command. Mitigation:
-  grace period + double wait, and RealityScan's process trigger
-  (`ErrorWriter.bat`) as the authoritative per-operation result.
+  wait until RealityScan's own process trigger (`ErrorWriter.bat` →
+  `results_<instance>.log`) confirms the operation finished; the trigger
+  is also the authoritative per-operation result.
 - **No operation timeouts**: 10+ hour alignments are normal on these
   datasets. Only *startup* (120 s) and *shutdown* (300 s) are bounded.
 - **Never detect completion by process name** — see the
